@@ -8,6 +8,7 @@ BENCH_APP ?= gui/bench_suite.uya
 TEST_ENTRY ?= gui/test_suite.uya
 RENDER_TEST_ENTRY ?= gui/render_test_suite.uya
 TEST_STACK_SIZE ?= 65536
+BENCH_STACK_SIZE ?= $(TEST_STACK_SIZE)
 TEXT_COMPARE_APP ?= gui/text_render_compare.uya
 LVGL_COMPARE_DIR ?= tools/lvgl_compare
 LVGL_COMPARE_BUILD_DIR ?= $(BUILD_DIR)/lvgl_compare
@@ -47,11 +48,16 @@ test:
 
 bench:
 	@mkdir -p $(BUILD_DIR)
-	$(UYA) run $(BENCH_APP) $(UYA_OPT)
+	$(UYA) run $(BENCH_APP) $(UYA_OPT) --stack-size $(BENCH_STACK_SIZE)
 
 bench-report:
 	@mkdir -p $(BUILD_DIR)
-	$(UYA) run $(BENCH_APP) -O3 2>&1 | sed -n '/^Phase5 benchmark\/report/,$$p' > $(BENCH_REPORT)
+	@raw_report="$(BENCH_REPORT).raw"; \
+	if ! $(UYA) run $(BENCH_APP) -O3 --stack-size $(BENCH_STACK_SIZE) > "$$raw_report" 2>&1; then \
+		cat "$$raw_report"; \
+		exit 1; \
+	fi; \
+	sed -n '/^Phase5 benchmark\/report/,$$p' "$$raw_report" > $(BENCH_REPORT)
 	@sed -n '1,240p' $(BENCH_REPORT)
 
 bench-json: bench-report
