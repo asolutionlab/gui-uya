@@ -27,7 +27,8 @@
     "gpu batch": { "unit": "ms", "baseline": 14, "max_allowed": 40 },
     "cache churn": { "unit": "ms", "baseline": 1, "max_allowed": 4 },
     "startup init": { "unit": "us", "baseline": 473, "max_allowed": 1200 },
-    "32 anims": { "unit": "ms", "baseline": 14, "max_allowed": 25 }
+    "32 anims": { "unit": "ms", "baseline": 14, "max_allowed": 25 },
+    "novel drag": { "unit": "us", "baseline": 2738, "max_allowed": 10000 }
   },
   "invariants": [
     { "type": "lte", "left": "batch opt", "right": "batch raw" }

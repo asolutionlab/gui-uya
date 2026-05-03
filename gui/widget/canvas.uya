@@ -4,6 +4,7 @@ use core.obj.IGuiRenderCallback;
 use core.rect.Rect;
 use platform.disp.FrameBuffer;
 use platform.disp.PixelFormat;
+use platform.disp.bytes_per_pixel;
 use platform.disp.empty_framebuffer;
 use platform.disp.framebuffer_new;
 use render.ctx.RenderCtx;
@@ -24,11 +25,14 @@ struct CanvasRenderAdapter : IGuiRenderCallback {}
 
 var CANVAS_RENDER_ADAPTER: IGuiRenderCallback = CanvasRenderAdapter{};
 
+extern fn memcpy(dst: &byte, src: &const byte, n: usize) &void;
+
 export struct Canvas {
     widget: Widget,
     draw_buffer: FrameBuffer,
     draw_ctx: RenderCtx,
     dirty: bool,
+    opaque: bool,
 }
 
 CanvasRenderAdapter {
@@ -55,6 +59,7 @@ Canvas {
             draw_buffer: empty_framebuffer(),
             draw_ctx: empty_render_ctx(),
             dirty: false,
+            opaque: false,
         };
     }
 
@@ -112,6 +117,15 @@ Canvas {
         });
     }
 
+    fn set_opaque(self: &Self, opaque: bool) &Canvas {
+        if self.opaque == opaque {
+            return self;
+        }
+        self.opaque = opaque;
+        self.widget.base.invalidate();
+        return self;
+    }
+
     fn clear(self: &Self, color: Color) void {
         if self.draw_buffer.pixels == null {
             return;
@@ -120,8 +134,51 @@ Canvas {
         self.dirty = true;
     }
 
+    fn copy_bytes(self: &Self, dst: &byte, src: &byte, len: usize) void {
+        _ = self;
+        if dst == null || src == null || len == 0usize {
+            return;
+        }
+        _ = memcpy(dst, src as &const byte, len);
+    }
+    fn render_opaque_fast(self: &Self, ctx: &RenderCtx, inner: Rect) bool {
+        if !self.opaque || ctx == null || ctx.fb.pixels == null || self.draw_buffer.pixels == null {
+            return false;
+        }
+        if inner.x < 0 || inner.y < 0 || inner.w != self.draw_buffer.size.w || inner.h != self.draw_buffer.size.h || ctx.fb.format != self.draw_buffer.format {
+            return false;
+        }
+        const clip: Rect = ctx.current_clip();
+        const draw_rect: Rect = clip.intersect(inner);
+        if draw_rect.x != inner.x || draw_rect.y != inner.y || draw_rect.w != inner.w || draw_rect.h != inner.h {
+            return false;
+        }
+        const pixel_bytes: usize = bytes_per_pixel(self.draw_buffer.format) as usize;
+        if pixel_bytes == 0usize {
+            return false;
+        }
+        const row_bytes: usize = inner.w as usize * pixel_bytes;
+        const dst_x: usize = (inner.x as! usize).value;
+        const dst_y: usize = (inner.y as! usize).value;
+        var row_index: usize = 0usize;
+        while row_index < inner.h as usize {
+            const dst_offset: usize = (dst_y + row_index) * ctx.fb.stride as usize + dst_x * pixel_bytes;
+            const src_offset: usize = row_index * self.draw_buffer.stride as usize;
+            self.copy_bytes(&ctx.fb.pixels[dst_offset], &self.draw_buffer.pixels[src_offset], row_bytes);
+            row_index = row_index + 1usize;
+        }
+        ctx.stats.pixel_ops = ctx.stats.pixel_ops + inner.w as u32 * inner.h as u32;
+        ctx.stats.image_ops = ctx.stats.image_ops + 1u32;
+        ctx.dirty.add(inner);
+        self.dirty = false;
+        return true;
+    }
     fn render(self: &Self, ctx: &RenderCtx) void {
-        const inner: Rect = widget_draw_surface(&self.widget, ctx);
+        const inner: Rect = widget_inner_rect(&self.widget);
+        if self.render_opaque_fast(ctx, inner) {
+            return;
+        }
+        _ = widget_draw_surface(&self.widget, ctx);
         if self.draw_buffer.pixels == null {
             return;
         }

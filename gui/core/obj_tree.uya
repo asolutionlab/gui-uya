@@ -1,3 +1,4 @@
+use core.color.Color;
 use core.obj.GuiObj;
 use core.obj.GUI_OBJ_REGISTRY_CAPACITY;
 use core.obj.gui_obj_get;
@@ -8,6 +9,7 @@ use core.point.Point;
 use core.rect.Rect;
 use layout.auto.AutoLayout;
 use render.ctx.RenderCtx;
+use style.StyleProp;
 
 export const OBJ_TREE_MAX_PATH: i32 = 64;
 export const OBJ_TREE_MAX_REPAINTS: i32 = 64;
@@ -48,11 +50,25 @@ fn obj_tree_rect_copy(rect: Rect) Rect {
     };
 }
 
+fn obj_tree_can_repaint_self(node: &GuiObj, region: Rect) bool {
+    if node == null || node.parent_ref == null || !node.self_invalid {
+        return false;
+    }
+    if !obj_tree_rect_contains_rect(node.screen_area(), region) {
+        return false;
+    }
+
+    const opacity: u32 = node.style.get_u32_or(StyleProp.Opacity, 255u32);
+    const bg: Color = node.style.get_color_or(StyleProp.BgColor, Color{ r: 0, g: 0, b: 0, a: 0 });
+    const radius: u32 = node.style.get_u32_or(StyleProp.Radius, 0u32);
+    return opacity >= 255u32 && bg.a == 255u8 && radius == 0u32;
+}
+
 fn obj_tree_pick_repaint_root(node: &GuiObj, region: Rect) &GuiObj {
     if node == null {
         return null;
     }
-    if node.parent_ref == null {
+    if node.parent_ref == null || obj_tree_can_repaint_self(node, region) {
         return node;
     }
 

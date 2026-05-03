@@ -34,6 +34,7 @@ use widget.panel.Panel;
 
 extern fn malloc(size: usize) &void;
 extern fn free(ptr: &void) void;
+extern fn memmove(dst: &byte, src: &const byte, n: usize) &void;
 
 const NOVEL_TEXT_CAPACITY: i32 = 49152;
 const NOVEL_LINE_CAPACITY: i32 = 1536;
@@ -641,6 +642,23 @@ fn novel_clamp_i32(value: i32, min: i32, max: i32) i32 {
     return value;
 }
 
+fn novel_abs_i32(value: i32) i32 {
+    if value < 0 {
+        return 0 - value;
+    }
+    return value;
+}
+
+fn novel_clamp_rect_height(height: i32, max_height: u16) u16 {
+    if height <= 0 {
+        return 0u16;
+    }
+    if height > max_height as i32 {
+        return max_height;
+    }
+    return (height as! u16).value;
+}
+
 fn novel_point_in_rect(point: &Point, x: i16, y: i16, w: u16, h: u16) bool {
     return Rect{ x: x, y: y, w: w, h: h }.contains(point[0]);
 }
@@ -814,6 +832,60 @@ fn novel_generate_text(novel: &NovelRetained) void {
     }
 
     novel.char_count = novel_count_chars(&novel.text[0], novel.text_len);
+}
+
+fn novel_seen_codepoint(seen: &u32, count: i32, codepoint: u32) bool {
+    if seen == null {
+        return false;
+    }
+    var idx: i32 = 0;
+    while idx < count {
+        if seen[idx as usize] == codepoint {
+            return true;
+        }
+        idx = idx + 1;
+    }
+    return false;
+}
+
+fn novel_prewarm_body_glyphs(novel: &NovelRetained) void {
+    if novel == null || novel.text_len == 0usize {
+        return;
+    }
+
+    var pixels: [byte: 4] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&pixels[0], 1, 1, 4, PixelFormat.ARGB8888));
+    ctx.push_clip(Rect{ x: 0, y: 0, w: 1u16, h: 1u16 });
+    const font: &Font = novel_body_font();
+    var seen: [u32: 1024] = [];
+    var seen_count: i32 = 0;
+    var cursor: usize = 0usize;
+    while cursor < novel.text_len && seen_count < 1024 {
+        if novel.text[cursor] == '\n' {
+            cursor = cursor + 1usize;
+            continue;
+        }
+        const decoded: NovelUtf8CodePoint = novel_decode_codepoint(&novel.text[0], novel.text_len, cursor);
+        var span: usize = decoded.span;
+        if span == 0usize || cursor + span > novel.text_len {
+            span = 1usize;
+        }
+        if !novel_seen_codepoint(&seen[0], seen_count, decoded.codepoint) {
+            seen[seen_count as usize] = decoded.codepoint;
+            seen_count = seen_count + 1;
+            draw_text(
+                &ctx,
+                2,
+                2,
+                @ptr_from_usize(@usize_from_ptr((&novel.text[0]) as &void) + cursor) as &const byte,
+                span,
+                font,
+                Color{ r: 77, g: 59, b: 43, a: 255 }
+            );
+        }
+        cursor = cursor + span;
+    }
+    ctx.pop_clip();
 }
 
 fn novel_layout_lines(novel: &NovelRetained) void {
@@ -1087,30 +1159,32 @@ fn novel_line_is_chapter_title(novel: &NovelRetained, start: usize) bool {
     return false;
 }
 
-fn novel_draw_view_canvas(canvas: &Canvas, novel: &NovelRetained) void {
-    if canvas == null || novel == null {
+fn novel_draw_view_content(ctx: &RenderCtx, novel: &NovelRetained, body_font: &Font, line_step: i16, clip_rect: Rect) void {
+    if ctx == null || novel == null || clip_rect.is_empty() {
         return;
     }
-    const body_font: &Font = novel_body_font();
-    const line_step: i16 = novel_body_line_step(body_font);
-    const view_w: u16 = sim_layout_w(NOVEL_VIEW_W);
-    const view_h: u16 = sim_layout_h(NOVEL_VIEW_H);
-    canvas.begin_draw().clear(Color{ r: 251, g: 247, b: 239, a: 255 });
-    canvas.begin_draw().push_clip(Rect{ x: 0, y: 0, w: view_w, h: view_h });
 
+    const clip_x: i16 = clip_rect.x;
+    const clip_y: i16 = clip_rect.y;
+    const clip_w: u16 = clip_rect.w;
+    const clip_h: u16 = clip_rect.h;
+    ctx.push_clip(Rect{ x: clip_x, y: clip_y, w: clip_w, h: clip_h });
+    ctx.fill_rect(Rect{ x: clip_x, y: clip_y, w: clip_w, h: clip_h }, Color{ r: 251, g: 247, b: 239, a: 255 });
     var first_line: i32 = 0;
     if line_step > 0 {
         first_line = novel.scroll_y / line_step as i32;
     }
     var y: i16 = 0i16 - (novel.scroll_y % line_step as i32) as i16;
     var line_idx: i32 = first_line;
+    const clip_bottom: i16 = clip_y + clip_h as i16;
+    const view_h: u16 = sim_layout_h(NOVEL_VIEW_H);
     while line_idx < novel.line_count && y < view_h as i16 {
-        if y + line_step > 0 {
+        if y + line_step > clip_y && y < clip_bottom {
             const line: NovelLine = novel.lines[line_idx as usize];
             if line.len > 0usize {
                 if novel_line_is_chapter_title(novel, line.start) {
                     draw_text(
-                        canvas.begin_draw(),
+                        ctx,
                         0,
                         y,
                         @ptr_from_usize(@usize_from_ptr((&novel.text[0]) as &void) + line.start) as &const byte,
@@ -1120,7 +1194,7 @@ fn novel_draw_view_canvas(canvas: &Canvas, novel: &NovelRetained) void {
                     );
                 } else {
                     draw_text(
-                        canvas.begin_draw(),
+                        ctx,
                         0,
                         y,
                         @ptr_from_usize(@usize_from_ptr((&novel.text[0]) as &void) + line.start) as &const byte,
@@ -1134,20 +1208,105 @@ fn novel_draw_view_canvas(canvas: &Canvas, novel: &NovelRetained) void {
         y = y + line_step;
         line_idx = line_idx + 1;
     }
-    canvas.begin_draw().pop_clip();
-    canvas.begin_draw().fill_linear_gradient(
-        Rect{ x: 0, y: 0, w: view_w, h: sim_layout_h(22u16) },
+    ctx.pop_clip();
+}
+
+fn novel_draw_view_fades(ctx: &RenderCtx, view_w: u16, view_h: u16) void {
+    if ctx == null {
+        return;
+    }
+    const fade_h: u16 = sim_layout_h(22u16);
+    ctx.fill_linear_gradient(
+        Rect{ x: 0, y: 0, w: view_w, h: fade_h },
         Color{ r: 246, g: 239, b: 226, a: 255 },
         Color{ r: 246, g: 239, b: 226, a: 0 },
         false
     );
-    canvas.begin_draw().fill_linear_gradient(
-        Rect{ x: 0, y: view_h as i16 - sim_layout_y(22), w: view_w, h: sim_layout_h(22u16) },
+    ctx.fill_linear_gradient(
+        Rect{ x: 0, y: view_h as i16 - fade_h as i16, w: view_w, h: fade_h },
         Color{ r: 246, g: 239, b: 226, a: 0 },
         Color{ r: 246, g: 239, b: 226, a: 255 },
         false
     );
+}
+
+fn novel_scroll_view_pixels(canvas: &Canvas, delta_y: i32) bool {
+    if canvas == null || canvas.draw_buffer.pixels == null || delta_y == 0 {
+        return false;
+    }
+    const view_w: u16 = canvas.draw_buffer.size.w;
+    const view_h: u16 = canvas.draw_buffer.size.h;
+    const abs_delta: i32 = novel_abs_i32(delta_y);
+    if abs_delta <= 0 || abs_delta >= view_h as i32 || canvas.draw_buffer.format != PixelFormat.ARGB8888 {
+        return false;
+    }
+
+    const row_bytes: usize = view_w as usize * 4usize;
+    if delta_y > 0 {
+        var row_index: i32 = 0;
+        while row_index < view_h as i32 - abs_delta {
+            const dst_offset: usize = row_index as usize * canvas.draw_buffer.stride as usize;
+            const src_offset: usize = (row_index + abs_delta) as usize * canvas.draw_buffer.stride as usize;
+            _ = memmove(&canvas.draw_buffer.pixels[dst_offset], &canvas.draw_buffer.pixels[src_offset] as &const byte, row_bytes);
+            row_index = row_index + 1;
+        }
+        return true;
+    }
+
+    var row_index: i32 = view_h as i32 - 1;
+    while row_index >= abs_delta {
+        const dst_offset: usize = row_index as usize * canvas.draw_buffer.stride as usize;
+        const src_offset: usize = (row_index - abs_delta) as usize * canvas.draw_buffer.stride as usize;
+        _ = memmove(&canvas.draw_buffer.pixels[dst_offset], &canvas.draw_buffer.pixels[src_offset] as &const byte, row_bytes);
+        row_index = row_index - 1;
+    }
+    return true;
+}
+
+fn novel_draw_view_canvas_full(canvas: &Canvas, novel: &NovelRetained, body_font: &Font, line_step: i16, view_w: u16, view_h: u16) void {
+    const draw_ctx: &RenderCtx = canvas.begin_draw();
+    novel_draw_view_content(draw_ctx, novel, body_font, line_step, Rect{ x: 0, y: 0, w: view_w, h: view_h });
+    novel_draw_view_fades(draw_ctx, view_w, view_h);
     canvas.end_draw();
+}
+
+fn novel_draw_view_canvas_delta(canvas: &Canvas, novel: &NovelRetained, previous_scroll_y: i32) bool {
+    if canvas == null || novel == null || previous_scroll_y < 0 {
+        return false;
+    }
+    const delta_y: i32 = novel.scroll_y - previous_scroll_y;
+    if delta_y == 0 {
+        return true;
+    }
+    if !novel_scroll_view_pixels(canvas, delta_y) {
+        return false;
+    }
+
+    const body_font: &Font = novel_body_font();
+    const line_step: i16 = novel_body_line_step(body_font);
+    const view_w: u16 = sim_layout_w(NOVEL_VIEW_W);
+    const view_h: u16 = sim_layout_h(NOVEL_VIEW_H);
+    const fade_h: u16 = sim_layout_h(22u16);
+    const abs_delta: i32 = novel_abs_i32(delta_y);
+    const repair_h: u16 = novel_clamp_rect_height(abs_delta + fade_h as i32, view_h);
+    const draw_ctx: &RenderCtx = canvas.begin_draw();
+
+    novel_draw_view_content(draw_ctx, novel, body_font, line_step, Rect{ x: 0, y: 0, w: view_w, h: repair_h });
+    novel_draw_view_content(draw_ctx, novel, body_font, line_step, Rect{ x: 0, y: view_h as i16 - repair_h as i16, w: view_w, h: repair_h });
+    novel_draw_view_fades(draw_ctx, view_w, view_h);
+    canvas.end_draw();
+    return true;
+}
+
+fn novel_draw_view_canvas(canvas: &Canvas, novel: &NovelRetained) void {
+    if canvas == null || novel == null {
+        return;
+    }
+    const body_font: &Font = novel_body_font();
+    const line_step: i16 = novel_body_line_step(body_font);
+    const view_w: u16 = sim_layout_w(NOVEL_VIEW_W);
+    const view_h: u16 = sim_layout_h(NOVEL_VIEW_H);
+    novel_draw_view_canvas_full(canvas, novel, body_font, line_step, view_w, view_h);
 }
 
 fn novel_draw_progress_canvas(canvas: &Canvas, progress_percent: i32) void {
@@ -1327,9 +1486,11 @@ export fn novel_page_retained_init(page_state: &NovelPageRetained, novel: &Novel
     }
     page_state.view_canvas.widget.at(sim_layout_x(NOVEL_VIEW_X - NOVEL_CARD_X), sim_layout_y(NOVEL_VIEW_Y - NOVEL_CARD_Y));
     page_state.view_canvas.widget.size(sim_layout_w(NOVEL_VIEW_W), sim_layout_h(NOVEL_VIEW_H));
-    page_state.view_canvas.widget.base.style.set_color(StyleProp.BgColor, Color{ r: 0, g: 0, b: 0, a: 0 });
+    page_state.view_canvas.widget.base.style.set_color(StyleProp.BgColor, Color{ r: 251, g: 247, b: 239, a: 255 });
     page_state.view_canvas.widget.base.style.set_color(StyleProp.BorderColor, Color{ r: 0, g: 0, b: 0, a: 0 });
     page_state.view_canvas.widget.base.style.set_u32(StyleProp.BorderWidth, 0u32);
+    page_state.view_canvas.widget.base.style.set_u32(StyleProp.Radius, 0u32);
+    _ = page_state.view_canvas.set_opaque(true);
     page_state.progress_canvas.widget.at(sim_layout_x(NOVEL_PROGRESS_X - NOVEL_CARD_X), sim_layout_y(NOVEL_PROGRESS_Y - NOVEL_CARD_Y));
     page_state.progress_canvas.widget.size(sim_layout_w(NOVEL_PROGRESS_W), sim_layout_h(NOVEL_PROGRESS_H));
     page_state.progress_canvas.widget.base.style.set_color(StyleProp.BgColor, Color{ r: 0, g: 0, b: 0, a: 0 });
@@ -1374,31 +1535,42 @@ export fn novel_page_retained_sync(page_state: &NovelPageRetained, novel: &Novel
 
     const current_chapter: i32 = novel_current_chapter_idx(novel);
     const progress_percent: i32 = novel_retained_progress_percent(novel);
+    const defer_progress_sync: bool = novel.drag_active;
+    const chapter_changed: bool = !defer_progress_sync && page_state.shown_chapter != current_chapter;
+    const progress_changed: bool = !defer_progress_sync && page_state.shown_progress != progress_percent;
     var chapter_idx_usize: usize = 0usize;
     if current_chapter >= 0 && current_chapter < NOVEL_CHAPTER_COUNT {
         chapter_idx_usize = (current_chapter as! usize).value;
     }
 
-    _ = page_state.chapter.set_text(NOVEL_CHAPTER_TITLES[chapter_idx_usize]);
-    _ = snprintf(&page_state.progress_buf[0], 48usize, "进度 %d%%" as &const byte, progress_percent);
-    _ = page_state.progress_label.set_text(&page_state.progress_buf[0]);
-    _ = snprintf(
-        &page_state.footer_buf[0],
-        80usize,
-        "第 %d / %d 章  ·  顶部可见 %d%%" as &const byte,
-        current_chapter + 1,
-        NOVEL_CHAPTER_COUNT,
-        progress_percent
-    );
-    _ = page_state.footer.set_text(&page_state.footer_buf[0]);
+    if chapter_changed {
+        page_state.shown_chapter = current_chapter;
+        _ = page_state.chapter.set_text(NOVEL_CHAPTER_TITLES[chapter_idx_usize]);
+    }
+    if progress_changed {
+        page_state.shown_progress = progress_percent;
+        _ = snprintf(&page_state.progress_buf[0], 48usize, "进度 %d%%" as &const byte, progress_percent);
+        _ = page_state.progress_label.set_text(&page_state.progress_buf[0]);
+        novel_draw_progress_canvas(&page_state.progress_canvas, progress_percent);
+    }
+    if chapter_changed || progress_changed {
+        _ = snprintf(
+            &page_state.footer_buf[0],
+            80usize,
+            "第 %d / %d 章  ·  顶部可见 %d%%" as &const byte,
+            current_chapter + 1,
+            NOVEL_CHAPTER_COUNT,
+            progress_percent
+        );
+        _ = page_state.footer.set_text(&page_state.footer_buf[0]);
+    }
 
     if page_state.shown_scroll_y != novel.scroll_y {
+        const previous_scroll_y: i32 = page_state.shown_scroll_y;
         page_state.shown_scroll_y = novel.scroll_y;
-        novel_draw_view_canvas(&page_state.view_canvas, novel);
-    }
-    if page_state.shown_progress != progress_percent {
-        page_state.shown_progress = progress_percent;
-        novel_draw_progress_canvas(&page_state.progress_canvas, progress_percent);
+        if !novel_draw_view_canvas_delta(&page_state.view_canvas, novel, previous_scroll_y) {
+            novel_draw_view_canvas(&page_state.view_canvas, novel);
+        }
     }
     if page_state.shown_auto_scroll != novel.auto_scroll {
         page_state.shown_auto_scroll = novel.auto_scroll;
@@ -1427,6 +1599,7 @@ export fn novel_retained_init(novel: &NovelRetained) void {
     }
     novel_generate_text(novel);
     novel_layout_lines(novel);
+    novel_prewarm_body_glyphs(novel);
     novel_retained_reset_state(novel);
     novel.ready = true;
 }

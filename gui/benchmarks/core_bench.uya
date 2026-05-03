@@ -20,6 +20,12 @@ use core.obj_tree.ObjTree;
 use core.obj_tree.obj_tree_new;
 use core.point.Point;
 use core.rect.Rect;
+use examples.demo_novel.NovelPageRetained;
+use examples.demo_novel.NovelRetained;
+use examples.demo_novel.novel_page_retained_new;
+use examples.demo_novel.novel_page_retained_sync;
+use examples.demo_novel.novel_retained_new;
+use examples.demo_novel.novel_retained_scroll_by;
 use layout.auto.AutoLayout;
 use layout.auto.LayoutMode;
 use layout.auto.auto_layout_new;
@@ -33,6 +39,7 @@ use render.batch.draw_batch_new;
 use render.cpu_backend.cpu_render_batch_execute;
 use render.ctx.RenderCtx;
 use render.ctx.render_ctx_new;
+use render.font.ttf_font_set_default_native_backend_c;
 use render.gpu.IGpuCtx;
 use render.gpu.gpu_execute_batch;
 use render.gpu_software.SoftwareGpuCtx;
@@ -40,6 +47,8 @@ use render.gpu_software.software_gpu_new;
 use render.img.ImageData;
 use render.img.draw_image_scaled;
 use render.img.image_data_new;
+use render.scheduler.IRenderScheduleFullCallback;
+use render.scheduler.IRenderScheduleOverlayCallback;
 use render.scheduler.render_schedule_tree_frame;
 use render.zerocopy.ZeroCopyCtx;
 use render.zerocopy.zerocopy_ctx_new;
@@ -47,6 +56,8 @@ use platform.disp.DisplayCtx;
 use platform.disp.display_ctx_new;
 use res.cache.ImageCache;
 use res.cache.image_cache_new;
+use sim.common.SIM_DEFAULT_RES_HEIGHT;
+use sim.common.SIM_DEFAULT_RES_WIDTH;
 use std.mem.allocator.MallocAllocator;
 use std.mem.allocator.g_allocator;
 use std.time.now_ms;
@@ -57,6 +68,12 @@ extern "libc" fn printf(fmt: *byte, ...) i32;
 const BENCH_ITERATIONS: i32 = 5000;
 const BENCH_EMPTY_FRAME_ITERATIONS: i32 = 250000;
 const BENCH_FULLSCREEN_ITERATIONS: i32 = 1000;
+const BENCH_NOVEL_DRAG_FRAMES: i32 = 64;
+
+struct NovelDragBenchResult {
+    avg_us: u64,
+    max_us: u64,
+}
 
 fn bench_obj_pool() !u64 {
     var pool: ObjPool<GuiObj> = obj_pool_new<GuiObj>();
@@ -367,6 +384,80 @@ fn bench_startup_init() !u64 {
     return get_tick_us() - start_us;
 }
 
+fn bench_novel_drag_render() !NovelDragBenchResult {
+    ttf_font_set_default_native_backend_c(true);
+    const allocator: &MallocAllocator = &g_allocator;
+    const bytes_len: usize = framebuffer_required_bytes(SIM_DEFAULT_RES_WIDTH, SIM_DEFAULT_RES_HEIGHT, PixelFormat.ARGB8888);
+    const pixels: &byte = try allocator.alloc(bytes_len);
+    defer {
+        allocator.dealloc(pixels);
+    }
+
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(pixels, SIM_DEFAULT_RES_WIDTH, SIM_DEFAULT_RES_HEIGHT, SIM_DEFAULT_RES_WIDTH * 4u16, PixelFormat.ARGB8888));
+    var novel: NovelRetained = novel_retained_new();
+    var page_state: NovelPageRetained = novel_page_retained_new();
+    novel_page_retained_sync(&page_state, &novel);
+    _ = render_schedule_tree_frame(
+        &ctx,
+        &page_state.tree,
+        Rect{ x: 0, y: 0, w: SIM_DEFAULT_RES_WIDTH, h: SIM_DEFAULT_RES_HEIGHT },
+        true,
+        Color{ r: 16, g: 44, b: 52, a: 255 },
+        null as &IRenderScheduleFullCallback,
+        null as &IRenderScheduleOverlayCallback,
+        null as &void
+    );
+
+    novel.drag_active = true;
+    var warm_idx: i32 = 0;
+    while warm_idx < 4 {
+        novel_retained_scroll_by(&novel, 36);
+        novel_page_retained_sync(&page_state, &novel);
+        _ = render_schedule_tree_frame(
+            &ctx,
+            &page_state.tree,
+            Rect{ x: 0, y: 0, w: SIM_DEFAULT_RES_WIDTH, h: SIM_DEFAULT_RES_HEIGHT },
+            false,
+            Color{ r: 16, g: 44, b: 52, a: 255 },
+            null as &IRenderScheduleFullCallback,
+            null as &IRenderScheduleOverlayCallback,
+            null as &void
+        );
+        warm_idx = warm_idx + 1;
+    }
+
+    var total_us: u64 = 0u64;
+    var max_us: u64 = 0u64;
+    var frame_idx: i32 = 0;
+    while frame_idx < BENCH_NOVEL_DRAG_FRAMES {
+        novel_retained_scroll_by(&novel, 36);
+        novel_page_retained_sync(&page_state, &novel);
+        const start_us: u64 = get_tick_us();
+        _ = render_schedule_tree_frame(
+            &ctx,
+            &page_state.tree,
+            Rect{ x: 0, y: 0, w: SIM_DEFAULT_RES_WIDTH, h: SIM_DEFAULT_RES_HEIGHT },
+            false,
+            Color{ r: 16, g: 44, b: 52, a: 255 },
+            null as &IRenderScheduleFullCallback,
+            null as &IRenderScheduleOverlayCallback,
+            null as &void
+        );
+        const elapsed_us: u64 = get_tick_us() - start_us;
+        total_us = total_us + elapsed_us;
+        if elapsed_us > max_us {
+            max_us = elapsed_us;
+        }
+        frame_idx = frame_idx + 1;
+    }
+    novel.drag_active = false;
+
+    return NovelDragBenchResult{
+        avg_us: total_us / BENCH_NOVEL_DRAG_FRAMES as u64,
+        max_us: max_us,
+    };
+}
+
 fn bench_animations() !u64 {
     gui_obj_reset_registry();
 
@@ -456,6 +547,9 @@ export fn run_core_bench() i32 {
     const animation_ms: u64 = bench_animations() catch {
         return 15;
     };
+    const novel_drag: NovelDragBenchResult = bench_novel_drag_render() catch {
+        return 16;
+    };
 
     printf("Phase5 benchmark/report (%d iterations)\n" as *byte, BENCH_ITERATIONS);
     printf("DirtyRegion : %lu bytes\n" as *byte, @size_of(DirtyRegion) as u64);
@@ -481,5 +575,7 @@ export fn run_core_bench() i32 {
     printf("cache churn : %lu ms\n" as *byte, cache_ms);
     printf("startup init: %lu us\n" as *byte, startup_us);
     printf("32 anims    : %lu ms\n" as *byte, animation_ms);
+    printf("novel drag  : %lu us\n" as *byte, novel_drag.max_us);
+    printf("novel drag avg: %lu us\n" as *byte, novel_drag.avg_us);
     return 0;
 }

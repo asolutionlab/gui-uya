@@ -119,6 +119,27 @@ fn img_copy_bytes_vec16(dst: &byte, src: &byte, len: usize) void {
     }
 }
 
+fn img_argb8888_all_opaque(img: &ImageData) bool {
+    if img == null || img.pixels == null || img.format != PixelFormat.ARGB8888 {
+        return false;
+    }
+
+    var y: usize = 0usize;
+    while y < img.size.h as usize {
+        var off: usize = y * img.stride as usize;
+        var x: usize = 0usize;
+        while x < img.size.w as usize {
+            if img.pixels[off] != 255u8 {
+                return false;
+            }
+            off = off + 4usize;
+            x = x + 1usize;
+        }
+        y = y + 1usize;
+    }
+    return true;
+}
+
 fn img_bytes_per_pixel(format: PixelFormat) u8 {
     if format == PixelFormat.RGB565 || format == PixelFormat.ARGB4444 {
         return 2;
@@ -142,7 +163,7 @@ fn img_can_fast_blit(ctx: &RenderCtx, x: i16, y: i16, img: &ImageData) bool {
     if ctx.fb.format != img.format {
         return false;
     }
-    if img.format != PixelFormat.RGB565 && img.format != PixelFormat.RGB888 && img.format != PixelFormat.L8 {
+    if img.format != PixelFormat.RGB565 && img.format != PixelFormat.RGB888 && img.format != PixelFormat.L8 && !img_argb8888_all_opaque(img) {
         return false;
     }
 
