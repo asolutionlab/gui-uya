@@ -83,6 +83,7 @@ use examples.demo_widgets.widgets_retained_sync;
 use examples.demo_widgets.render_demo_widgets_retained_state;
 use examples.phase4_smoke.run_phase4_smoke;
 use examples.phase6_smoke.run_phase6_smoke;
+use libc.memset;
 use libc.snprintf;
 use platform.disp.FrameBuffer;
 use platform.disp.PixelFormat;
@@ -156,6 +157,9 @@ use widget.page.Page;
 use widget.panel.Panel;
 use widget.slider.Slider;
 use widget.switch.Switch;
+
+extern fn malloc(size: usize) &void;
+extern fn free(ptr: &void) void;
 
 extern "libc" fn printf(fmt: *byte, ...) i32;
 
@@ -2250,84 +2254,86 @@ SimApp {
     }
 }
 
+fn sim_app_init_defaults(app: &SimApp) void {
+    if app == null {
+        return;
+    }
+    _ = memset(app as *byte, 0, @size_of(SimApp) as usize);
+    app.config = sim_config_default();
+    app.page = Page.new("SimRoot");
+    app.left_panel = Panel.new();
+    app.right_panel = Panel.new();
+    app.action_button = Button.filled("点击 +1");
+    app.toggle = Switch.new(true);
+    app.slider = Slider.new(0, 100, 42);
+    app.chart = Chart.new();
+    app.preview = Image.from_data(null);
+    app.title_label = Label.new("UyaGUI 模拟器");
+    app.phase_label = Label.new("阶段");
+    app.status_label = Label.new("状态");
+    app.fs_label = Label.new("文件");
+    app.input_label = Label.new("输入");
+    app.metrics_label = Label.new("指标");
+    app.help_label = Label.new("帮助");
+    app.animation_demo = animation_retained_new();
+    app.clock_demo = clock_retained_new();
+    app.music_demo = music_retained_new();
+    app.settings_demo = settings_retained_new();
+    app.perf_demo = perf_retained_new();
+    app.widgets_demo = widgets_retained_new();
+    app.custom_demo = custom_retained_new();
+    app.game_page = game_page_retained_new();
+    app.novel_page = novel_page_retained_new();
+    app.preview_source = empty_image();
+    app.preview_cached = empty_image();
+    app.cache = image_cache_new(4, 4096u32);
+    app.fs = fat_fs_new(null);
+    app.tree = obj_tree_new();
+    app.dispatcher = event_dispatcher_new();
+    app.profiler = sim_profiler_new(120u32);
+    app.recorder = sim_recorder_new();
+    app.last_pointer = POINT_ZERO;
+    app.phase4_result = -1;
+    app.phase6_result = -2;
+    app.music_track_idx = 1;
+    app.music_progress = 42;
+    app.settings_wifi = true;
+    app.settings_brightness = 68;
+    app.widgets_volume = 72;
+    app.widgets_auto_refresh = true;
+    app.widgets_selected_item = 2;
+    app.widgets_action_idx = 1;
+    app.custom_gauge_cpu = 32;
+    app.custom_gauge_mem = 68;
+    app.custom_gauge_net = 91;
+    app.custom_uppercase = true;
+    app.dashboard_retained = dashboard_retained_new();
+    app.game_demo = game_retained_new();
+    app.novel_demo = novel_retained_new();
+    app.standalone_drag_target = STANDALONE_DRAG_NONE;
+}
+
+/// 在堆上创建模拟器应用状态对象，避免大型状态压占调用栈。
+export fn sim_app_alloc() &SimApp {
+    const raw: &void = malloc(@size_of(SimApp) as usize);
+    if raw == null {
+        return null;
+    }
+    const app: &SimApp = raw as &SimApp;
+    sim_app_init_defaults(app);
+    return app;
+}
+
+/// 释放 `sim_app_alloc` 创建的模拟器应用状态对象。
+export fn sim_app_free(app: &SimApp) void {
+    if app != null {
+        free(app as &void);
+    }
+}
+
 /// 创建模拟器应用状态对象。
 export fn sim_app_new() SimApp {
-    return SimApp{
-        config: sim_config_default(),
-        page: Page.new("SimRoot"),
-        left_panel: Panel.new(),
-        right_panel: Panel.new(),
-        action_button: Button.filled("点击 +1"),
-        toggle: Switch.new(true),
-        slider: Slider.new(0, 100, 42),
-        chart: Chart.new(),
-        preview: Image.from_data(null),
-        title_label: Label.new("UyaGUI 模拟器"),
-        phase_label: Label.new("阶段"),
-        status_label: Label.new("状态"),
-        fs_label: Label.new("文件"),
-        input_label: Label.new("输入"),
-        metrics_label: Label.new("指标"),
-        help_label: Label.new("帮助"),
-        animation_demo: animation_retained_new(),
-        clock_demo: clock_retained_new(),
-        music_demo: music_retained_new(),
-        settings_demo: settings_retained_new(),
-        perf_demo: perf_retained_new(),
-        widgets_demo: widgets_retained_new(),
-        custom_demo: custom_retained_new(),
-        game_page: game_page_retained_new(),
-        novel_page: novel_page_retained_new(),
-        title_text: [],
-        phase_text: [],
-        status_text: [],
-        fs_text: [],
-        input_text: [],
-        metrics_text: [],
-        help_text: [],
-        preview_rgb: [],
-        preview_source: empty_image(),
-        preview_cached: empty_image(),
-        cache: image_cache_new(4, 4096u32),
-        fs: fat_fs_new(null),
-        tree: obj_tree_new(),
-        dispatcher: event_dispatcher_new(),
-        profiler: sim_profiler_new(120u32),
-        recorder: sim_recorder_new(),
-        fs_probe_bytes: 0usize,
-        tap_count: 0,
-        last_key: 0u16,
-        last_wheel: 0,
-        last_pointer: POINT_ZERO,
-        phase4_result: -1,
-        phase6_result: -2,
-        last_chart_tick_ms: 0u32,
-        standalone_anim_tick_ms: 0u32,
-        pending_exit: false,
-        pending_screenshot: false,
-        pending_fullscreen_toggle: false,
-        force_full_redraw: false,
-        music_track_idx: 1,
-        music_playing: false,
-        music_progress: 42,
-        settings_wifi: true,
-        settings_alerts: false,
-        settings_brightness: 68,
-        widgets_control_idx: 0,
-        widgets_volume: 72,
-        widgets_auto_refresh: true,
-        widgets_selected_item: 2,
-        widgets_action_idx: 1,
-        custom_gauge_cpu: 32,
-        custom_gauge_mem: 68,
-        custom_gauge_net: 91,
-        custom_uppercase: true,
-        custom_input_text: [],
-        custom_input_len: 0,
-        dashboard_metric: 0,
-        dashboard_retained: dashboard_retained_new(),
-        game_demo: game_retained_new(),
-        novel_demo: novel_retained_new(),
-        standalone_drag_target: STANDALONE_DRAG_NONE,
-    };
+    var app: SimApp = SimApp{};
+    sim_app_init_defaults(&app);
+    return app;
 }

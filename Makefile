@@ -7,6 +7,7 @@ SMOKE_APP ?= gui/phase6_smoke.uya
 BENCH_APP ?= gui/bench_suite.uya
 TEST_ENTRY ?= gui/test_suite.uya
 RENDER_TEST_ENTRY ?= gui/render_test_suite.uya
+TEST_STACK_SIZE ?= 65536
 TEXT_COMPARE_APP ?= gui/text_render_compare.uya
 LVGL_COMPARE_DIR ?= tools/lvgl_compare
 LVGL_COMPARE_BUILD_DIR ?= $(BUILD_DIR)/lvgl_compare
@@ -41,8 +42,8 @@ build:
 	$(UYA) build $(SMOKE_APP) $(UYA_OPT) -o $(BUILD_DIR)/phase6_smoke
 
 test:
-	$(UYA) test $(TEST_ENTRY) $(UYA_OPT)
-	$(UYA) test $(RENDER_TEST_ENTRY) $(UYA_OPT)
+	$(UYA) test $(TEST_ENTRY) $(UYA_OPT) --stack-size $(TEST_STACK_SIZE)
+	$(UYA) test $(RENDER_TEST_ENTRY) $(UYA_OPT) --stack-size $(TEST_STACK_SIZE)
 
 bench:
 	@mkdir -p $(BUILD_DIR)

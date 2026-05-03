@@ -27,7 +27,8 @@ use examples.demo_widgets.render_demo_widgets_retained_state;
 use examples.demo_widgets.widgets_retained_new;
 use examples.demo_game.game_retained_new;
 use sim.app.SimApp;
-use sim.app.sim_app_new;
+use sim.app.sim_app_alloc;
+use sim.app.sim_app_free;
 use sim.common.SIM_DEFAULT_RES_HEIGHT;
 use sim.common.SIM_DEFAULT_RES_WIDTH;
 use sim.common.sim_layout_x;
@@ -78,7 +79,11 @@ test "sim config defaults to auto gpu and exposes names" {
 }
 
 test "sim app batch cpu backend can render direct frame" {
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
     var cfg: SimConfig = sim_config_default();
     cfg.demo = SimDemoKind.Dashboard;
     cfg.width = SIM_DEFAULT_RES_WIDTH;
@@ -107,7 +112,11 @@ test "sim app batch cpu backend can render direct frame" {
 }
 
 test "sim app renders and reacts to playback-style input" {
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
     var cfg: SimConfig = sim_config_default();
     cfg.width = 320;
     cfg.height = 240;
@@ -168,7 +177,11 @@ test "sim app renders and reacts to playback-style input" {
 }
 
 test "sim app retained render repaints only affected phase widgets" {
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
     var cfg: SimConfig = sim_config_default();
     cfg.demo = SimDemoKind.Phase4;
     cfg.width = 320;
@@ -191,7 +204,11 @@ test "sim app retained render repaints only affected phase widgets" {
     var partial_ctx: RenderCtx = render_ctx_new(framebuffer_new(&partial_bytes[0], cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
     _ = app.render_retained(&partial_ctx, false);
 
-    var expected_app: SimApp = sim_app_new();
+    const expected_app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(expected_app != null, true);
+    defer {
+        sim_app_free(expected_app);
+    }
     try assert_eq_bool(expected_app.init(cfg), true);
     expected_app.refresh_status_label("状态 A");
     var warm_expected_ctx: RenderCtx = render_ctx_new(framebuffer_new(&frame_a_bytes[0], cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
@@ -207,7 +224,11 @@ test "sim app retained render repaints only affected phase widgets" {
 }
 
 test "sim app can render standalone dashboard demo mode" {
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
     var cfg: SimConfig = sim_config_default();
     const width: u16 = SIM_DEFAULT_RES_WIDTH;
     const height: u16 = SIM_DEFAULT_RES_HEIGHT;
@@ -232,7 +253,11 @@ test "sim app can render standalone dashboard demo mode" {
 }
 
 test "standalone music demo reacts to touch click" {
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
     var cfg: SimConfig = sim_config_default();
     cfg.demo = SimDemoKind.Music;
     cfg.width = SIM_DEFAULT_RES_WIDTH;
@@ -246,7 +271,11 @@ test "standalone music demo reacts to touch click" {
 }
 
 test "standalone animation demo renders and toggles playback" {
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
     var cfg: SimConfig = sim_config_default();
     cfg.demo = SimDemoKind.Animation;
     cfg.width = SIM_DEFAULT_RES_WIDTH;
@@ -335,7 +364,11 @@ test "standalone animation demo renders and toggles playback" {
 }
 
 test "standalone dashboard and 2048 demos react to touch and playback taps" {
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
     var cfg: SimConfig = sim_config_default();
     cfg.demo = SimDemoKind.Dashboard;
     cfg.width = SIM_DEFAULT_RES_WIDTH;
@@ -412,7 +445,11 @@ test "standalone dashboard and 2048 demos react to touch and playback taps" {
 }
 
 test "standalone novel demo exposes 10k+ chinese text and supports scrolling" {
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
     var cfg: SimConfig = sim_config_default();
     cfg.demo = SimDemoKind.Novel;
     cfg.width = SIM_DEFAULT_RES_WIDTH;
@@ -444,7 +481,11 @@ test "standalone novel demo exposes 10k+ chinese text and supports scrolling" {
 }
 
 test "standalone widgets and custom demos render showcase content" {
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
     var cfg: SimConfig = sim_config_default();
     cfg.demo = SimDemoKind.Widgets;
     cfg.width = SIM_DEFAULT_RES_WIDTH;
@@ -473,7 +514,11 @@ test "standalone widgets and custom demos render showcase content" {
 }
 
 test "widgets demo back to home keeps phase controls clickable" {
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
     var cfg: SimConfig = sim_config_default();
     cfg.demo = SimDemoKind.Widgets;
     cfg.width = SIM_DEFAULT_RES_WIDTH;
@@ -532,7 +577,11 @@ test "widgets demo back to home keeps phase controls clickable" {
 }
 
 test "widgets retained click matches full redraw for outlined selection" {
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
     var cfg: SimConfig = sim_config_default();
     cfg.demo = SimDemoKind.Widgets;
     cfg.width = SIM_DEFAULT_RES_WIDTH;
@@ -541,14 +590,32 @@ test "widgets retained click matches full redraw for outlined selection" {
     try assert_eq_bool(app.supports_dirty_render(), true);
 
     const pixels_len: usize = framebuffer_required_bytes(cfg.width, cfg.height, PixelFormat.ARGB8888);
-    var partial_bytes: [byte: 8294400] = [];
-    var expected_bytes: [byte: 8294400] = [];
-    var frame_a_bytes: [byte: 8294400] = [];
+    const partial_bytes: &byte = malloc(pixels_len) as &byte;
+    const expected_bytes: &byte = malloc(pixels_len) as &byte;
+    const frame_a_bytes: &byte = malloc(pixels_len) as &byte;
+    if partial_bytes == null || expected_bytes == null || frame_a_bytes == null {
+        if partial_bytes != null {
+            free(partial_bytes as &void);
+        }
+        if expected_bytes != null {
+            free(expected_bytes as &void);
+        }
+        if frame_a_bytes != null {
+            free(frame_a_bytes as &void);
+        }
+        try assert_eq_bool(false, true);
+        return;
+    }
+    defer {
+        free(partial_bytes as &void);
+        free(expected_bytes as &void);
+        free(frame_a_bytes as &void);
+    }
 
-    var frame_a_ctx: RenderCtx = render_ctx_new(framebuffer_new(&frame_a_bytes[0], cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+    var frame_a_ctx: RenderCtx = render_ctx_new(framebuffer_new(frame_a_bytes, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
     _ = app.render_retained(&frame_a_ctx, true);
 
-    var partial_fb: FrameBuffer = framebuffer_new(&partial_bytes[0], cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888);
+    var partial_fb: FrameBuffer = framebuffer_new(partial_bytes, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888);
     try assert_eq_bool(framebuffer_copy(&partial_fb, &frame_a_ctx.fb), true);
 
     const click_x: i16 = app.current_demo_origin_x() + sim_layout_x(20) + sim_layout_x(148) + sim_layout_w(122u16) as i16 / 2;
@@ -565,14 +632,18 @@ test "widgets retained click matches full redraw for outlined selection" {
     var partial_ctx: RenderCtx = render_ctx_new(partial_fb);
     _ = app.render_retained(&partial_ctx, false);
 
-    var expected_app: SimApp = sim_app_new();
+    const expected_app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(expected_app != null, true);
+    defer {
+        sim_app_free(expected_app);
+    }
     try assert_eq_bool(expected_app.init(cfg), true);
     expected_app.widgets_control_idx = 1;
     expected_app.refresh_status_label("Outlined 按钮已触发");
-    var expected_ctx: RenderCtx = render_ctx_new(framebuffer_new(&expected_bytes[0], cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+    var expected_ctx: RenderCtx = render_ctx_new(framebuffer_new(expected_bytes, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
     _ = expected_app.render_retained(&expected_ctx, true);
 
-    try sim_expect_frame_equal(&partial_bytes[0], &expected_bytes[0], pixels_len);
+    try sim_expect_frame_equal(partial_bytes, expected_bytes, pixels_len);
 }
 
 test "widgets demo action buttons keep full bottom borders visible" {
@@ -632,7 +703,11 @@ test "widgets demo quiet action keeps visible outlined border" {
 }
 
 test "home nav buttons and standalone back button switch demos" {
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
     var cfg: SimConfig = sim_config_default();
     cfg.width = SIM_DEFAULT_RES_WIDTH;
     cfg.height = SIM_DEFAULT_RES_HEIGHT;
@@ -662,7 +737,11 @@ test "home nav buttons and standalone back button switch demos" {
 }
 
 test "widgets and custom demos react to mouse clicks" {
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
     var cfg: SimConfig = sim_config_default();
     cfg.demo = SimDemoKind.Widgets;
     cfg.width = SIM_DEFAULT_RES_WIDTH;

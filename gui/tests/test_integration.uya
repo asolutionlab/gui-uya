@@ -15,7 +15,8 @@ use platform.disp.framebuffer_required_bytes;
 use render.ctx.RenderCtx;
 use render.ctx.render_ctx_new;
 use sim.app.SimApp;
-use sim.app.sim_app_new;
+use sim.app.sim_app_alloc;
+use sim.app.sim_app_free;
 use sim.common.SIM_DEFAULT_RES_HEIGHT;
 use sim.common.SIM_DEFAULT_RES_WIDTH;
 use sim.config.SimConfig;
@@ -173,7 +174,11 @@ fn integration_scene_worker(arg: &void) &void {
 }
 
 test "integration suite walks 10 plus complex app scenes through home navigation" {
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
     var cfg: SimConfig = sim_config_default();
     cfg.demo = SimDemoKind.Phase4;
     cfg.width = SIM_DEFAULT_RES_WIDTH;
@@ -190,25 +195,29 @@ test "integration suite walks 10 plus complex app scenes through home navigation
         free(pixels as &void);
     }
 
-    var home_ctx: RenderCtx = integration_render_demo_frame(&app, cfg.width, cfg.height, pixels, true);
+    var home_ctx: RenderCtx = integration_render_demo_frame(app, cfg.width, cfg.height, pixels, true);
     try assert_eq_bool(home_ctx.stats.text_ops > 0u32, true);
 
     var i: i32 = 0;
     while i < 9 {
-        integration_click_home_entry(&app, i, ((100 + i) as! u32).value);
+        integration_click_home_entry(app, i, ((100 + i) as! u32).value);
         try assert_eq_i32(app.config.demo as i32, app.home_nav_button_demo(i) as i32);
 
-        var demo_ctx: RenderCtx = integration_render_demo_frame(&app, cfg.width, cfg.height, pixels, true);
+        var demo_ctx: RenderCtx = integration_render_demo_frame(app, cfg.width, cfg.height, pixels, true);
         try assert_eq_bool(integration_demo_has_rich_output(app.config.demo, &demo_ctx), true);
 
-        integration_click_back(&app, ((300 + i) as! u32).value);
+        integration_click_back(app, ((300 + i) as! u32).value);
         try assert_eq_i32(app.config.demo as i32, SimDemoKind.Phase4 as i32);
         i = i + 1;
     }
 }
 
 test "integration virtual 24h retained loop stays stable" {
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
     var cfg: SimConfig = sim_config_default();
     cfg.demo = SimDemoKind.Phase4;
     cfg.width = 320u16;
@@ -232,7 +241,7 @@ test "integration virtual 24h retained loop stays stable" {
         now_ms = now_ms + 60000u32;
         app.update(60000u32, now_ms);
         if frame_idx % 12 == 0 {
-            var ctx: RenderCtx = integration_render_demo_frame(&app, cfg.width, cfg.height, pixels, frame_idx == 0);
+            var ctx: RenderCtx = integration_render_demo_frame(app, cfg.width, cfg.height, pixels, frame_idx == 0);
             try assert_eq_bool(ctx.stats.text_ops > 0u32, true);
         }
         frame_idx = frame_idx + 1;
@@ -250,7 +259,8 @@ test "integration repeated scene batches keep rss growth bounded" {
 
     var warmup: i32 = 0;
     while warmup < 9 {
-        var warm_app: SimApp = sim_app_new();
+        const warm_app: &SimApp = sim_app_alloc();
+        try assert_eq_bool(warm_app != null, true);
         var warm_cfg: SimConfig = sim_config_default();
         if warmup % 3 == 0 {
             warm_cfg.demo = SimDemoKind.Novel;
@@ -263,15 +273,17 @@ test "integration repeated scene batches keep rss growth bounded" {
         warm_cfg.height = 240u16;
         try assert_eq_bool(warm_app.init(warm_cfg), true);
         var warm_pixels: [byte: 307200] = [];
-        var warm_ctx: RenderCtx = integration_render_demo_frame(&warm_app, warm_cfg.width, warm_cfg.height, &warm_pixels[0], true);
+        var warm_ctx: RenderCtx = integration_render_demo_frame(warm_app, warm_cfg.width, warm_cfg.height, &warm_pixels[0], true);
         try assert_eq_bool(warm_ctx.stats.text_ops > 0u32, true);
+        sim_app_free(warm_app);
         warmup = warmup + 1;
     }
 
     const before_kb: i32 = try integration_read_rss_kb();
     var iter: i32 = 0;
     while iter < 12 {
-        var app: SimApp = sim_app_new();
+        const app: &SimApp = sim_app_alloc();
+        try assert_eq_bool(app != null, true);
         var cfg: SimConfig = sim_config_default();
         cfg.width = 320u16;
         cfg.height = 240u16;
@@ -284,8 +296,9 @@ test "integration repeated scene batches keep rss growth bounded" {
         }
         try assert_eq_bool(app.init(cfg), true);
         var pixels: [byte: 307200] = [];
-        var ctx: RenderCtx = integration_render_demo_frame(&app, cfg.width, cfg.height, &pixels[0], true);
+        var ctx: RenderCtx = integration_render_demo_frame(app, cfg.width, cfg.height, &pixels[0], true);
         try assert_eq_bool(integration_demo_has_rich_output(cfg.demo, &ctx), true);
+        sim_app_free(app);
         iter = iter + 1;
     }
     const after_kb: i32 = try integration_read_rss_kb();
@@ -293,7 +306,11 @@ test "integration repeated scene batches keep rss growth bounded" {
 }
 
 test "integration multithreaded event injection stays consistent under serialized dispatch" {
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
     var cfg: SimConfig = sim_config_default();
     cfg.demo = SimDemoKind.Phase4;
     cfg.width = 320u16;

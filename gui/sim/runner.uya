@@ -36,7 +36,8 @@ use render.scheduler.RenderPresentMode;
 use render.scheduler.render_frame_pacer_new;
 use render.scheduler.render_frame_result_idle;
 use sim.app.SimApp;
-use sim.app.sim_app_new;
+use sim.app.sim_app_alloc;
+use sim.app.sim_app_free;
 use sim.config.SimBackendKind;
 use sim.config.SimConfig;
 use sim.config.sim_backend_name;
@@ -98,7 +99,14 @@ fn run_simulator_sdl(cfg: SimConfig) i32 {
     var input: SdlInputSystem = sdl_input_system_new();
     input.init();
 
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    if app == null {
+        _ = printf("[sim] app alloc failed\n" as *byte);
+        return 3;
+    }
+    defer {
+        sim_app_free(app);
+    }
     if !app.init(cfg) {
         _ = printf("[sim] app init failed\n" as *byte);
         return 3;
@@ -306,7 +314,14 @@ fn run_simulator_fb(cfg_in: SimConfig) i32 {
         input.shutdown();
     }
 
-    var app: SimApp = sim_app_new();
+    const app: &SimApp = sim_app_alloc();
+    if app == null {
+        _ = printf("[sim] app alloc failed\n" as *byte);
+        return 3;
+    }
+    defer {
+        sim_app_free(app);
+    }
     if !app.init(cfg) {
         _ = printf("[sim] app init failed\n" as *byte);
         return 3;
