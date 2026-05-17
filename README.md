@@ -152,6 +152,13 @@ UYA_OPENAI_DEBUG=1 \
 make sim-run SIM_ARGS="--demo doudizhu --scale 1"
 ```
 
+如需在斗地主 demo 里直接把左右电脑位的真实手牌显示出来，便于调试出牌逻辑，可以额外打开：
+
+```bash
+UYA_DDZ_DEBUG_SHOW_HANDS=1 \
+make sim-run SIM_ARGS="--demo doudizhu --scale 1"
+```
+
 日志会输出到标准错误，包含这些关键信息：
 
 - 配置来源（环境变量 / `.uya_openai.env` / 自定义文件）

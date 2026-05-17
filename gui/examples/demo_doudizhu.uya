@@ -26,6 +26,7 @@ use examples.doudizhu.rules.DdzCombo;
 use examples.doudizhu.rules.DdzComboKind;
 use examples.doudizhu.rules.DdzGamePhase;
 use examples.doudizhu.rules.DdzGameState;
+use examples.doudizhu.rules.DdzHand;
 use examples.doudizhu.rules.ddz_action_list_new;
 use examples.doudizhu.rules.ddz_action_label_format;
 use examples.doudizhu.rules.ddz_action_validate_in_hand;
@@ -35,6 +36,7 @@ use examples.doudizhu.rules.ddz_game_restart;
 use examples.doudizhu.rules.ddz_generate_bid_actions;
 use examples.doudizhu.rules.ddz_generate_play_actions;
 use examples.doudizhu.rules.ddz_rank_name;
+use libc.getenv;
 use libc.snprintf;
 use platform.disp.PixelFormat;
 use platform.disp.framebuffer_new;
@@ -49,6 +51,7 @@ use render.font.font_ui_default_ref;
 use render.font.text_width;
 use sim.common.SIM_DEFAULT_RES_HEIGHT;
 use sim.common.SIM_DEFAULT_RES_WIDTH;
+use sim.common.sim_cstr_eq;
 use sim.common.sim_layout_font;
 use sim.common.sim_layout_h;
 use sim.common.sim_layout_w;
@@ -68,6 +71,8 @@ const DDZ_HAND_STEP_X: i16 = 24;
 const DDZ_SELECTED_LIFT: i16 = 14;
 const DDZ_BUTTON_W: u16 = 92u16;
 const DDZ_BUTTON_H: u16 = 36u16;
+const DDZ_DEBUG_TOKEN_W: u16 = 24u16;
+const DDZ_DEBUG_TOKEN_H: u16 = 16u16;
 
 export struct DdzPageRetained {
     tree: ObjTree,
@@ -156,6 +161,23 @@ fn ddz_demo_button_rect(index: i32) Rect {
         return Rect{ x: sim_layout_x(372), y: y, w: sim_layout_w(DDZ_BUTTON_W), h: sim_layout_h(DDZ_BUTTON_H) };
     }
     return Rect{ x: sim_layout_x(476), y: y, w: sim_layout_w(DDZ_BUTTON_W), h: sim_layout_h(DDZ_BUTTON_H) };
+}
+
+fn ddz_demo_env_bool(name: &const byte, fallback: bool) bool {
+    const raw: &byte = getenv(name);
+    if raw == null || raw[0] == 0 {
+        return fallback;
+    }
+    if sim_cstr_eq(raw as &const byte, "0" as &const byte)
+        || sim_cstr_eq(raw as &const byte, "false" as &const byte)
+        || sim_cstr_eq(raw as &const byte, "off" as &const byte) {
+        return false;
+    }
+    return true;
+}
+
+fn ddz_demo_debug_show_hands() bool {
+    return ddz_demo_env_bool("UYA_DDZ_DEBUG_SHOW_HANDS" as &const byte, false);
 }
 
 fn ddz_demo_bid_button_rect(index: i32) Rect {
@@ -539,6 +561,45 @@ fn ddz_demo_draw_player_badge(ctx: &RenderCtx, rect: Rect, title: &const byte, h
     ddz_demo_draw_center_text(ctx, Rect{ x: rect.x, y: rect.y + sim_layout_y(20), w: rect.w, h: sim_layout_h(16u16) }, &buf[0], 12u8, Color{ r: 247, g: 242, b: 230, a: 255 });
 }
 
+fn ddz_demo_draw_debug_hand_token(ctx: &RenderCtx, rect: Rect, rank: i32, suit: i32) void {
+    if ctx == null {
+        return;
+    }
+    ctx.fill_round_rect(Rect{ x: rect.x, y: rect.y, w: rect.w, h: rect.h }, sim_layout_font(6u8), Color{ r: 247, g: 241, b: 227, a: 236 });
+    ctx.draw_round_rect(Rect{ x: rect.x, y: rect.y, w: rect.w, h: rect.h }, sim_layout_font(6u8), Color{ r: 123, g: 86, b: 46, a: 160 }, 1u8);
+    ddz_demo_draw_center_text(ctx, Rect{ x: rect.x, y: rect.y, w: rect.w, h: rect.h }, ddz_rank_name(rank), 10u8, ddz_demo_card_center_color(rank, suit));
+}
+
+fn ddz_demo_draw_debug_hand(ctx: &RenderCtx, rect: Rect, hand: &DdzHand, title: &const byte, columns: i32) void {
+    if ctx == null || hand == null || columns <= 0 {
+        return;
+    }
+    ctx.fill_round_rect(Rect{ x: rect.x, y: rect.y, w: rect.w, h: rect.h }, sim_layout_font(10u8), Color{ r: 21, g: 34, b: 25, a: 165 });
+    ctx.draw_round_rect(Rect{ x: rect.x, y: rect.y, w: rect.w, h: rect.h }, sim_layout_font(10u8), Color{ r: 246, g: 225, b: 172, a: 100 }, 1u8);
+    ddz_demo_draw_text(ctx, rect.x + sim_layout_x(8), rect.y + sim_layout_y(7), title, 11u8, Color{ r: 245, g: 233, b: 198, a: 255 });
+
+    const token_step_x: i16 = sim_layout_x(27);
+    const token_step_y: i16 = sim_layout_y(20);
+    var i: i32 = 0;
+    while i < hand.count {
+        const col: i32 = i % columns;
+        const row: i32 = i / columns;
+        const card: &DdzCard = &hand.cards[i as usize];
+        ddz_demo_draw_debug_hand_token(
+            ctx,
+            Rect{
+                x: rect.x + sim_layout_x(7) + col as i16 * token_step_x,
+                y: rect.y + sim_layout_y(24) + row as i16 * token_step_y,
+                w: sim_layout_w(DDZ_DEBUG_TOKEN_W),
+                h: sim_layout_h(DDZ_DEBUG_TOKEN_H),
+            },
+            card.rank,
+            card.suit
+        );
+        i = i + 1;
+    }
+}
+
 fn ddz_demo_render_state(page: &DdzPageRetained, ctx: &RenderCtx, origin_x: i16, origin_y: i16) void {
     ctx.fill_linear_gradient(ddz_demo_offset_rect(Rect{ x: 0, y: 0, w: DDZ_DEMO_W, h: DDZ_DEMO_H }, origin_x, origin_y), Color{ r: 23, g: 117, b: 64, a: 255 }, Color{ r: 10, g: 70, b: 38, a: 255 }, false);
     ctx.fill_radial_gradient(ddz_demo_offset_rect(Rect{ x: sim_layout_x(190), y: sim_layout_y(56), w: sim_layout_w(260u16), h: sim_layout_h(180u16) }, origin_x, origin_y), Color{ r: 246, g: 214, b: 138, a: 58 }, Color{ r: 0, g: 0, b: 0, a: 0 });
@@ -570,6 +631,23 @@ fn ddz_demo_render_state(page: &DdzPageRetained, ctx: &RenderCtx, origin_x: i16,
         page.game.players[0].count,
         page.game.current_player == 0 && page.game.phase != DdzGamePhase.GameOver
     );
+
+    if ddz_demo_debug_show_hands() {
+        ddz_demo_draw_debug_hand(
+            ctx,
+            ddz_demo_offset_rect(Rect{ x: sim_layout_x(52), y: sim_layout_y(174), w: sim_layout_w(142u16), h: sim_layout_h(102u16) }, origin_x, origin_y),
+            &page.game.players[1],
+            "调试手牌" as &const byte,
+            5
+        );
+        ddz_demo_draw_debug_hand(
+            ctx,
+            ddz_demo_offset_rect(Rect{ x: sim_layout_x(446), y: sim_layout_y(174), w: sim_layout_w(142u16), h: sim_layout_h(102u16) }, origin_x, origin_y),
+            &page.game.players[2],
+            "调试手牌" as &const byte,
+            5
+        );
+    }
 
     ctx.fill_round_rect(ddz_demo_offset_rect(Rect{ x: sim_layout_x(238), y: sim_layout_y(108), w: sim_layout_w(164u16), h: sim_layout_h(62u16) }, origin_x, origin_y), sim_layout_font(16u8), Color{ r: 248, g: 237, b: 206, a: 235 });
     ctx.draw_round_rect(ddz_demo_offset_rect(Rect{ x: sim_layout_x(238), y: sim_layout_y(108), w: sim_layout_w(164u16), h: sim_layout_h(62u16) }, origin_x, origin_y), sim_layout_font(16u8), Color{ r: 125, g: 88, b: 31, a: 220 }, 1u8);
