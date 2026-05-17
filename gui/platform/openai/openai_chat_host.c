@@ -252,6 +252,43 @@ static int uya_openai_chat_try_load_config_file(const char *path, UyaOpenAiResol
     return 1;
 }
 
+static int uya_openai_chat_try_load_config_upwards(const char *filename, UyaOpenAiResolvedConfig *cfg) {
+    char cwd[4096];
+    char path[4608];
+    size_t dir_len;
+    if (filename == NULL || filename[0] == '\0' || cfg == NULL) {
+        return 0;
+    }
+    if (getcwd(cwd, sizeof(cwd)) == NULL) {
+        return 0;
+    }
+    for (;;) {
+        dir_len = strlen(cwd);
+        if (dir_len == 0u) {
+            return 0;
+        }
+        if (strcmp(cwd, "/") == 0) {
+            (void)snprintf(path, sizeof(path), "/%s", filename);
+        } else {
+            (void)snprintf(path, sizeof(path), "%s/%s", cwd, filename);
+        }
+        if (uya_openai_chat_try_load_config_file(path, cfg)) {
+            return 1;
+        }
+        while (dir_len > 0u && cwd[dir_len - 1u] != '/') {
+            --dir_len;
+        }
+        if (dir_len == 0u) {
+            return 0;
+        }
+        if (dir_len == 1u) {
+            cwd[1] = '\0';
+        } else {
+            cwd[dir_len - 1u] = '\0';
+        }
+    }
+}
+
 static void uya_openai_chat_load_config_file(UyaOpenAiResolvedConfig *cfg) {
     const char *explicit_path;
     if (cfg == NULL) {
@@ -262,10 +299,10 @@ static void uya_openai_chat_load_config_file(UyaOpenAiResolvedConfig *cfg) {
         (void)uya_openai_chat_try_load_config_file(explicit_path, cfg);
         return;
     }
-    if (uya_openai_chat_try_load_config_file(".uya_openai.env", cfg)) {
+    if (uya_openai_chat_try_load_config_upwards(".uya_openai.env", cfg)) {
         return;
     }
-    (void)uya_openai_chat_try_load_config_file("openai.env", cfg);
+    (void)uya_openai_chat_try_load_config_upwards("openai.env", cfg);
 }
 
 static UyaOpenAiResolvedConfig uya_openai_chat_resolve_config(void) {

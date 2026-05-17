@@ -69,10 +69,12 @@ const DDZ_CARD_W: u16 = 42u16;
 const DDZ_CARD_H: u16 = 58u16;
 const DDZ_HAND_STEP_X: i16 = 24;
 const DDZ_SELECTED_LIFT: i16 = 14;
-const DDZ_BUTTON_W: u16 = 92u16;
+const DDZ_BUTTON_W: u16 = 78u16;
 const DDZ_BUTTON_H: u16 = 36u16;
 const DDZ_DEBUG_TOKEN_W: u16 = 24u16;
 const DDZ_DEBUG_TOKEN_H: u16 = 16u16;
+const DDZ_LAST_PLAY_CARD_W: u16 = 28u16;
+const DDZ_LAST_PLAY_CARD_H: u16 = 38u16;
 
 export struct DdzPageRetained {
     tree: ObjTree,
@@ -149,19 +151,8 @@ fn ddz_demo_invalidate(page: &DdzPageRetained) void {
 
 fn ddz_demo_button_rect(index: i32) Rect {
     const y: i16 = sim_layout_y(346);
-    if index == 0 {
-        return Rect{ x: sim_layout_x(60), y: y, w: sim_layout_w(DDZ_BUTTON_W), h: sim_layout_h(DDZ_BUTTON_H) };
-    }
-    if index == 1 {
-        return Rect{ x: sim_layout_x(164), y: y, w: sim_layout_w(DDZ_BUTTON_W), h: sim_layout_h(DDZ_BUTTON_H) };
-    }
-    if index == 2 {
-        return Rect{ x: sim_layout_x(268), y: y, w: sim_layout_w(DDZ_BUTTON_W), h: sim_layout_h(DDZ_BUTTON_H) };
-    }
-    if index == 3 {
-        return Rect{ x: sim_layout_x(372), y: y, w: sim_layout_w(DDZ_BUTTON_W), h: sim_layout_h(DDZ_BUTTON_H) };
-    }
-    return Rect{ x: sim_layout_x(476), y: y, w: sim_layout_w(DDZ_BUTTON_W), h: sim_layout_h(DDZ_BUTTON_H) };
+    const x: i16 = sim_layout_x(36) + index as i16 * sim_layout_x(94);
+    return Rect{ x: x, y: y, w: sim_layout_w(DDZ_BUTTON_W), h: sim_layout_h(DDZ_BUTTON_H) };
 }
 
 fn ddz_demo_env_bool(name: &const byte, fallback: bool) bool {
@@ -348,27 +339,72 @@ fn ddz_demo_describe_last_combo(page: &DdzPageRetained, buf: &byte, cap: usize) 
 
 fn ddz_demo_last_play_panel_rect(player: i32) Rect {
     if player == 1 {
-        return Rect{ x: sim_layout_x(46), y: sim_layout_y(174), w: sim_layout_w(154u16), h: sim_layout_h(62u16) };
+        return Rect{ x: sim_layout_x(46), y: sim_layout_y(174), w: sim_layout_w(154u16), h: sim_layout_h(74u16) };
     }
     if player == 2 {
-        return Rect{ x: sim_layout_x(440), y: sim_layout_y(174), w: sim_layout_w(154u16), h: sim_layout_h(62u16) };
+        return Rect{ x: sim_layout_x(440), y: sim_layout_y(174), w: sim_layout_w(154u16), h: sim_layout_h(74u16) };
     }
-    return Rect{ x: sim_layout_x(28), y: sim_layout_y(286), w: sim_layout_w(208u16), h: sim_layout_h(54u16) };
+    return Rect{ x: sim_layout_x(28), y: sim_layout_y(286), w: sim_layout_w(208u16), h: sim_layout_h(72u16) };
 }
 
-fn ddz_demo_last_play_token_rect(player: i32, index: i32) Rect {
+fn ddz_demo_last_play_token_rect(player: i32, index: i32, played_count: i32) Rect {
     const panel: Rect = ddz_demo_last_play_panel_rect(player);
-    var columns: i32 = 5;
-    if player == 0 {
-        columns = 6;
+    const left_pad: i16 = sim_layout_x(8);
+    const right_pad: i16 = sim_layout_x(8);
+    const top_pad: i16 = sim_layout_y(24);
+    const card_w_u16: u16 = sim_layout_w(DDZ_LAST_PLAY_CARD_W);
+    const card_h_u16: u16 = sim_layout_h(DDZ_LAST_PLAY_CARD_H);
+    const card_w: i16 = card_w_u16 as i16;
+    const card_h: i16 = card_h_u16 as i16;
+    const available_w: i16 = panel.w as i16 - left_pad - right_pad;
+    const available_h: i16 = panel.h as i16 - top_pad - sim_layout_y(6);
+    const min_step_x: i16 = sim_layout_x(8);
+    const preferred_step_x: i16 = sim_layout_x(15);
+    const preferred_step_y: i16 = sim_layout_y(16);
+
+    var columns: i32 = played_count;
+    if columns < 1 {
+        columns = 1;
     }
+    while columns > 1 {
+        const needed_w: i16 = (columns - 1) as i16 * min_step_x + card_w;
+        if needed_w <= available_w {
+            break;
+        }
+        columns = columns - 1;
+    }
+
     const col: i32 = index % columns;
     const row: i32 = index / columns;
+    const rows: i32 = (played_count + columns - 1) / columns;
+
+    var step_x: i16 = preferred_step_x;
+    if columns > 1 {
+        const max_step_x: i16 = (available_w - card_w) / (columns - 1) as i16;
+        if max_step_x < step_x {
+            step_x = max_step_x;
+        }
+    }
+    if step_x < min_step_x {
+        step_x = min_step_x;
+    }
+
+    var step_y: i16 = preferred_step_y;
+    if rows > 1 {
+        const max_step_y: i16 = (available_h - card_h) / (rows - 1) as i16;
+        if max_step_y < step_y {
+            step_y = max_step_y;
+        }
+    }
+    if step_y < 0 {
+        step_y = 0;
+    }
+
     return Rect{
-        x: panel.x + sim_layout_x(8) + col as i16 * sim_layout_x(28),
-        y: panel.y + sim_layout_y(24) + row as i16 * sim_layout_y(20),
-        w: sim_layout_w(DDZ_DEBUG_TOKEN_W),
-        h: sim_layout_h(DDZ_DEBUG_TOKEN_H),
+        x: panel.x + left_pad + col as i16 * step_x,
+        y: panel.y + top_pad + row as i16 * step_y,
+        w: sim_layout_w(DDZ_LAST_PLAY_CARD_W),
+        h: sim_layout_h(DDZ_LAST_PLAY_CARD_H),
     };
 }
 
@@ -398,16 +434,12 @@ fn ddz_demo_draw_last_play_token(ctx: &RenderCtx, rect: Rect, rank: i32, suit: i
     if ctx == null {
         return;
     }
-    ctx.fill_round_rect(Rect{ x: rect.x, y: rect.y, w: rect.w, h: rect.h }, sim_layout_font(6u8), Color{ r: 251, g: 245, b: 231, a: 242 });
-    ctx.draw_round_rect(Rect{ x: rect.x, y: rect.y, w: rect.w, h: rect.h }, sim_layout_font(6u8), Color{ r: 143, g: 99, b: 48, a: 180 }, 1u8);
-    ddz_demo_draw_text(ctx, rect.x + sim_layout_x(4), rect.y + sim_layout_y(2), ddz_rank_name(rank), 9u8, ddz_demo_card_center_color(rank, suit));
-    ddz_demo_draw_center_text(
-        ctx,
-        Rect{ x: rect.x, y: rect.y + sim_layout_y(6), w: rect.w, h: sim_layout_h(8u16) },
-        ddz_demo_small_card_suit_text(rank, suit),
-        8u8,
-        ddz_demo_card_center_color(rank, suit)
-    );
+    const rank_fg: Color = ddz_demo_card_center_color(rank, suit);
+    const suit_fg: Color = ddz_demo_card_center_color(rank, suit);
+    ctx.fill_round_rect(Rect{ x: rect.x, y: rect.y, w: rect.w, h: rect.h }, sim_layout_font(8u8), Color{ r: 251, g: 247, b: 242, a: 248 });
+    ctx.draw_round_rect(Rect{ x: rect.x, y: rect.y, w: rect.w, h: rect.h }, sim_layout_font(8u8), Color{ r: 143, g: 99, b: 48, a: 188 }, 1u8);
+    ddz_demo_draw_text(ctx, rect.x + sim_layout_x(4), rect.y + sim_layout_y(3), ddz_rank_name(rank), 11u8, rank_fg);
+    ddz_demo_draw_text(ctx, rect.x + sim_layout_x(5), rect.y + sim_layout_y(18), ddz_demo_small_card_suit_text(rank, suit), 11u8, suit_fg);
 }
 
 fn ddz_demo_draw_player_last_play(ctx: &RenderCtx, page: &DdzPageRetained, player: i32, origin_x: i16, origin_y: i16) void {
@@ -435,7 +467,7 @@ fn ddz_demo_draw_player_last_play(ctx: &RenderCtx, page: &DdzPageRetained, playe
         const card: DdzCard = page.played_cards[(player * DDZ_MAX_CARDS_PER_HAND + i) as usize];
         ddz_demo_draw_last_play_token(
             ctx,
-            ddz_demo_offset_rect(ddz_demo_last_play_token_rect(player, i), origin_x, origin_y),
+            ddz_demo_offset_rect(ddz_demo_last_play_token_rect(player, i, played_count), origin_x, origin_y),
             card.rank,
             card.suit
         );
@@ -562,20 +594,6 @@ fn ddz_demo_card_center_text(rank: i32, suit: i32) &const byte {
 }
 
 fn ddz_demo_card_accent_text(rank: i32, suit: i32) &const byte {
-    if suit >= 0 && rank >= 8 && rank <= 10 {
-        if suit == 0 {
-            return "♣" as &const byte;
-        }
-        if suit == 1 {
-            return "♦" as &const byte;
-        }
-        if suit == 2 {
-            return "♥" as &const byte;
-        }
-        if suit == 3 {
-            return "♠" as &const byte;
-        }
-    }
     if rank == 13 {
         return "BLACK" as &const byte;
     }
@@ -813,8 +831,13 @@ fn ddz_demo_render_state(page: &DdzPageRetained, ctx: &RenderCtx, origin_x: i16,
     ddz_demo_draw_button(ctx, ddz_demo_offset_rect(ddz_demo_button_rect(0), origin_x, origin_y), "提示", can_hint);
     ddz_demo_draw_button(ctx, ddz_demo_offset_rect(ddz_demo_button_rect(1), origin_x, origin_y), "出牌", can_play);
     ddz_demo_draw_button(ctx, ddz_demo_offset_rect(ddz_demo_button_rect(2), origin_x, origin_y), "不要", can_pass);
-    ddz_demo_draw_button(ctx, ddz_demo_offset_rect(ddz_demo_button_rect(3), origin_x, origin_y), "重开", true);
-    ddz_demo_draw_button(ctx, ddz_demo_offset_rect(ddz_demo_button_rect(4), origin_x, origin_y), "清空", true);
+    var auto_label: &const byte = "AI托管";
+    if page.auto_play_human {
+        auto_label = "取消托管" as &const byte;
+    }
+    ddz_demo_draw_button(ctx, ddz_demo_offset_rect(ddz_demo_button_rect(3), origin_x, origin_y), auto_label, true);
+    ddz_demo_draw_button(ctx, ddz_demo_offset_rect(ddz_demo_button_rect(4), origin_x, origin_y), "重开", true);
+    ddz_demo_draw_button(ctx, ddz_demo_offset_rect(ddz_demo_button_rect(5), origin_x, origin_y), "清空", true);
 
     if page.game.phase == DdzGamePhase.Bidding && page.game.current_player == 0 {
         var bid: i32 = 0;
@@ -1184,9 +1207,13 @@ export fn doudizhu_page_retained_handle_touch(page: &DdzPageRetained, evt: &Even
     if evt.event_type != EventType.Click {
         return;
     }
-    const click_point: Point = Point{ x: local.x, y: local.y };
     var rect: Rect = ddz_demo_button_rect(3);
-    if rect.contains(click_point) {
+    if rect.contains(Point{ x: local.x, y: local.y }) {
+        _ = doudizhu_page_retained_toggle_autoplay(page);
+        return;
+    }
+    rect = ddz_demo_button_rect(4);
+    if rect.contains(Point{ x: local.x, y: local.y }) {
         ddz_demo_restart(page, page.game.seed + 1u32);
         if uya_openai_chat_is_available() {
             ddz_demo_set_status(page, "已重开", "新的对局已开始，OpenAI 可用");
@@ -1195,8 +1222,8 @@ export fn doudizhu_page_retained_handle_touch(page: &DdzPageRetained, evt: &Even
         }
         return;
     }
-    rect = ddz_demo_button_rect(4);
-    if rect.contains(Point{ x: click_point.x, y: click_point.y }) {
+    rect = ddz_demo_button_rect(5);
+    if rect.contains(Point{ x: local.x, y: local.y }) {
         ddz_demo_clear_selection(page);
         ddz_demo_clear_hint(page);
         ddz_demo_set_status(page, "已清空选择", "可以重新点牌");
@@ -1206,7 +1233,7 @@ export fn doudizhu_page_retained_handle_touch(page: &DdzPageRetained, evt: &Even
         var bid: i32 = 0;
         while bid <= 3 {
             rect = ddz_demo_bid_button_rect(bid);
-            if rect.contains(Point{ x: click_point.x, y: click_point.y }) {
+            if rect.contains(Point{ x: local.x, y: local.y }) {
                 ddz_demo_apply_human_bid(page, bid);
                 return;
             }
@@ -1215,17 +1242,17 @@ export fn doudizhu_page_retained_handle_touch(page: &DdzPageRetained, evt: &Even
     }
     if page.game.phase == DdzGamePhase.Playing && page.game.current_player == 0 {
         rect = ddz_demo_button_rect(0);
-        if rect.contains(Point{ x: click_point.x, y: click_point.y }) {
+        if rect.contains(Point{ x: local.x, y: local.y }) {
             ddz_demo_apply_hint(page);
             return;
         }
         rect = ddz_demo_button_rect(1);
-        if rect.contains(Point{ x: click_point.x, y: click_point.y }) {
+        if rect.contains(Point{ x: local.x, y: local.y }) {
             ddz_demo_apply_human_play(page);
             return;
         }
         rect = ddz_demo_button_rect(2);
-        if rect.contains(Point{ x: click_point.x, y: click_point.y }) {
+        if rect.contains(Point{ x: local.x, y: local.y }) {
             ddz_demo_apply_human_pass(page);
             return;
         }
@@ -1235,7 +1262,7 @@ export fn doudizhu_page_retained_handle_touch(page: &DdzPageRetained, evt: &Even
                 const card: DdzCard = page.game.players[0].cards[i as usize];
                 const selected: bool = ddz_demo_card_selected(page, card.id);
                 rect = ddz_demo_human_card_rect(i, selected);
-                if rect.contains(Point{ x: click_point.x, y: click_point.y }) {
+                if rect.contains(Point{ x: local.x, y: local.y }) {
                     ddz_demo_toggle_selected(page, card.id);
                     ddz_demo_clear_hint(page);
                     return;
