@@ -88,8 +88,9 @@ export struct DdzPageRetained {
     hint_ids: [i32: 20],
     hint_count: i32,
     last_hinted_action: DdzAction,
-    last_play_cards: [DdzCard: 20],
-    last_play_count: i32,
+    played_cards: [DdzCard: 60],
+    played_counts: [i32: 3],
+    last_play_player: i32,
 }
 
 fn ddz_demo_font(size: u8) &Font {
@@ -240,11 +241,14 @@ fn ddz_demo_clear_last_play(page: &DdzPageRetained) void {
         return;
     }
     var i: i32 = 0;
-    while i < DDZ_MAX_CARDS_PER_HAND {
-        page.last_play_cards[i as usize] = DdzCard{ id: 0, rank: 0, suit: 0 };
+    while i < 60 {
+        page.played_cards[i as usize] = DdzCard{ id: 0, rank: 0, suit: 0 };
         i = i + 1;
     }
-    page.last_play_count = 0;
+    page.played_counts[0] = 0;
+    page.played_counts[1] = 0;
+    page.played_counts[2] = 0;
+    page.last_play_player = DDZ_NO_PLAYER;
 }
 
 fn ddz_demo_toggle_selected(page: &DdzPageRetained, card_id: i32) void {
@@ -289,14 +293,14 @@ fn ddz_demo_player_role(game: &DdzGameState, player: i32) &const byte {
     }
     if player == 1 {
         if game.landlord == 1 {
-            return "电脑A(地主)" as &const byte;
+            return "AI A(地主)" as &const byte;
         }
-        return "电脑A" as &const byte;
+        return "AI A" as &const byte;
     }
     if game.landlord == 2 {
-        return "电脑B(地主)" as &const byte;
+        return "AI B(地主)" as &const byte;
     }
-    return "电脑B" as &const byte;
+    return "AI B" as &const byte;
 }
 
 fn ddz_demo_restart(page: &DdzPageRetained, seed: u32) void {
@@ -326,7 +330,7 @@ fn ddz_demo_describe_last_combo(page: &DdzPageRetained, buf: &byte, cap: usize) 
     if page == null || buf == null || cap == 0usize {
         return;
     }
-    if page.game.last_combo.kind == DdzComboKind.Invalid || page.game.last_combo_player == DDZ_NO_PLAYER {
+    if page.game.last_combo.kind == DdzComboKind.Invalid || page.last_play_player == DDZ_NO_PLAYER {
         _ = snprintf(buf, cap, "上一手: 无" as &const byte);
         return;
     }
@@ -339,24 +343,75 @@ fn ddz_demo_describe_last_combo(page: &DdzPageRetained, buf: &byte, cap: usize) 
         label: [],
     };
     ddz_action_label_format(&action);
-    _ = snprintf(buf, cap, "上一手: %s %s" as &const byte, ddz_demo_player_role(&page.game, page.game.last_combo_player), &action.label[0]);
+    _ = snprintf(buf, cap, "上一手: %s %s" as &const byte, ddz_demo_player_role(&page.game, page.last_play_player), &action.label[0]);
 }
 
-fn ddz_demo_last_combo_card_rect(index: i32, total: i32) Rect {
-    const step: i16 = sim_layout_x(30);
-    const width: i16 = (sim_layout_w(DDZ_CARD_W) as! i16).value;
-    var span_count: i32 = total - 1;
-    if span_count < 0 {
-        span_count = 0;
+fn ddz_demo_last_play_panel_rect(player: i32) Rect {
+    if player == 1 {
+        return Rect{ x: sim_layout_x(46), y: sim_layout_y(174), w: sim_layout_w(154u16), h: sim_layout_h(62u16) };
     }
-    const total_width: i16 = width + (span_count as i16 * step);
-    const start_x: i16 = sim_layout_x(320) - total_width / 2;
+    if player == 2 {
+        return Rect{ x: sim_layout_x(440), y: sim_layout_y(174), w: sim_layout_w(154u16), h: sim_layout_h(62u16) };
+    }
+    return Rect{ x: sim_layout_x(28), y: sim_layout_y(286), w: sim_layout_w(208u16), h: sim_layout_h(54u16) };
+}
+
+fn ddz_demo_last_play_token_rect(player: i32, index: i32) Rect {
+    const panel: Rect = ddz_demo_last_play_panel_rect(player);
+    var columns: i32 = 5;
+    if player == 0 {
+        columns = 6;
+    }
+    const col: i32 = index % columns;
+    const row: i32 = index / columns;
     return Rect{
-        x: start_x + index as i16 * step,
-        y: sim_layout_y(216),
-        w: sim_layout_w(DDZ_CARD_W),
-        h: sim_layout_h(DDZ_CARD_H),
+        x: panel.x + sim_layout_x(8) + col as i16 * sim_layout_x(28),
+        y: panel.y + sim_layout_y(24) + row as i16 * sim_layout_y(20),
+        w: sim_layout_w(DDZ_DEBUG_TOKEN_W),
+        h: sim_layout_h(DDZ_DEBUG_TOKEN_H),
     };
+}
+
+fn ddz_demo_draw_last_play_token(ctx: &RenderCtx, rect: Rect, rank: i32, suit: i32) void {
+    if ctx == null {
+        return;
+    }
+    ctx.fill_round_rect(Rect{ x: rect.x, y: rect.y, w: rect.w, h: rect.h }, sim_layout_font(6u8), Color{ r: 251, g: 245, b: 231, a: 242 });
+    ctx.draw_round_rect(Rect{ x: rect.x, y: rect.y, w: rect.w, h: rect.h }, sim_layout_font(6u8), Color{ r: 143, g: 99, b: 48, a: 180 }, 1u8);
+    ddz_demo_draw_center_text(ctx, Rect{ x: rect.x, y: rect.y, w: rect.w, h: rect.h }, ddz_rank_name(rank), 10u8, ddz_demo_card_center_color(rank, suit));
+}
+
+fn ddz_demo_draw_player_last_play(ctx: &RenderCtx, page: &DdzPageRetained, player: i32, origin_x: i16, origin_y: i16) void {
+    if ctx == null || page == null || player < 0 || player >= DDZ_PLAYER_COUNT {
+        return;
+    }
+    var played_count: i32 = 0;
+    if player == 0 {
+        played_count = page.played_counts[0];
+    } else if player == 1 {
+        played_count = page.played_counts[1];
+    } else {
+        played_count = page.played_counts[2];
+    }
+    if played_count <= 0 {
+        return;
+    }
+    const panel: Rect = ddz_demo_offset_rect(ddz_demo_last_play_panel_rect(player), origin_x, origin_y);
+    ctx.fill_round_rect(Rect{ x: panel.x, y: panel.y, w: panel.w, h: panel.h }, sim_layout_font(10u8), Color{ r: 27, g: 43, b: 33, a: 168 });
+    ctx.draw_round_rect(Rect{ x: panel.x, y: panel.y, w: panel.w, h: panel.h }, sim_layout_font(10u8), Color{ r: 244, g: 224, b: 173, a: 112 }, 1u8);
+    ddz_demo_draw_text(ctx, panel.x + sim_layout_x(8), panel.y + sim_layout_y(7), "已出牌" as &const byte, 11u8, Color{ r: 245, g: 233, b: 198, a: 255 });
+
+    var i: i32 = 0;
+    while i < played_count {
+        const card: DdzCard = page.played_cards[(player * DDZ_MAX_CARDS_PER_HAND + i) as usize];
+        ddz_demo_draw_last_play_token(
+            ctx,
+            ddz_demo_offset_rect(ddz_demo_last_play_token_rect(player, i), origin_x, origin_y),
+            card.rank,
+            card.suit
+        );
+        i = i + 1;
+    }
 }
 
 fn ddz_demo_draw_last_combo(ctx: &RenderCtx, page: &DdzPageRetained, origin_x: i16, origin_y: i16) void {
@@ -385,7 +440,7 @@ fn ddz_demo_draw_last_combo(ctx: &RenderCtx, page: &DdzPageRetained, origin_x: i
         Color{ r: 245, g: 234, b: 205, a: 255 }
     );
 
-    if page.game.last_combo.kind == DdzComboKind.Invalid || page.game.last_combo_player == DDZ_NO_PLAYER {
+    if page.game.last_combo.kind == DdzComboKind.Invalid || page.last_play_player == DDZ_NO_PLAYER {
         ddz_demo_draw_center_text(
             ctx,
             ddz_demo_offset_rect(Rect{ x: sim_layout_x(164), y: sim_layout_y(232), w: sim_layout_w(312u16), h: sim_layout_h(18u16) }, origin_x, origin_y),
@@ -394,20 +449,6 @@ fn ddz_demo_draw_last_combo(ctx: &RenderCtx, page: &DdzPageRetained, origin_x: i
             Color{ r: 228, g: 219, b: 192, a: 220 }
         );
         return;
-    }
-
-    var i: i32 = 0;
-    while i < page.last_play_count {
-        const card: DdzCard = page.last_play_cards[i as usize];
-        ddz_demo_draw_card(
-            ctx,
-            ddz_demo_offset_rect(ddz_demo_last_combo_card_rect(i, page.last_play_count), origin_x, origin_y),
-            card.rank,
-            card.suit,
-            false,
-            true
-        );
-        i = i + 1;
     }
 }
 
@@ -478,26 +519,44 @@ fn ddz_demo_card_accent_color(rank: i32, suit: i32) Color {
     return Color{ r: 54, g: 54, b: 58, a: 255 };
 }
 
-fn ddz_demo_last_play_store(page: &DdzPageRetained, hand_before: &DdzHand, action: &DdzAction) void {
+fn ddz_demo_last_play_store(page: &DdzPageRetained, player: i32, hand_before: &DdzHand, action: &DdzAction) void {
     if page == null || hand_before == null || action == null {
         return;
     }
     if action.kind != DdzActionKind.Play || action.combo.kind == DdzComboKind.Pass {
         return;
     }
-    ddz_demo_clear_last_play(page);
+    if player < 0 || player >= DDZ_PLAYER_COUNT {
+        return;
+    }
+    page.last_play_player = player;
+    var wrote: i32 = 0;
+    if player == 0 {
+        wrote = page.played_counts[0];
+    } else if player == 1 {
+        wrote = page.played_counts[1];
+    } else {
+        wrote = page.played_counts[2];
+    }
     var ai: i32 = 0;
-    while ai < action.card_count && ai < DDZ_MAX_CARDS_PER_HAND {
+    while ai < action.card_count && wrote < DDZ_MAX_CARDS_PER_HAND {
         var hi: i32 = 0;
         while hi < hand_before.count {
             if hand_before.cards[hi as usize].id == action.card_ids[ai as usize] {
-                page.last_play_cards[page.last_play_count as usize] = hand_before.cards[hi as usize];
-                page.last_play_count = page.last_play_count + 1;
+                page.played_cards[(player * DDZ_MAX_CARDS_PER_HAND + wrote) as usize] = hand_before.cards[hi as usize];
+                wrote = wrote + 1;
                 break;
             }
             hi = hi + 1;
         }
         ai = ai + 1;
+    }
+    if player == 0 {
+        page.played_counts[0] = wrote;
+    } else if player == 1 {
+        page.played_counts[1] = wrote;
+    } else {
+        page.played_counts[2] = wrote;
     }
 }
 
@@ -631,6 +690,10 @@ fn ddz_demo_render_state(page: &DdzPageRetained, ctx: &RenderCtx, origin_x: i16,
         page.game.players[0].count,
         page.game.current_player == 0 && page.game.phase != DdzGamePhase.GameOver
     );
+
+    ddz_demo_draw_player_last_play(ctx, page, 1, origin_x, origin_y);
+    ddz_demo_draw_player_last_play(ctx, page, 2, origin_x, origin_y);
+    ddz_demo_draw_player_last_play(ctx, page, 0, origin_x, origin_y);
 
     if ddz_demo_debug_show_hands() {
         ddz_demo_draw_debug_hand(
@@ -822,7 +885,7 @@ fn ddz_demo_apply_human_play(page: &DdzPageRetained) void {
         ddz_demo_set_status(page, "出牌失败", "动作未通过规则校验");
         return;
     }
-    ddz_demo_last_play_store(page, &hand_before, &action);
+    ddz_demo_last_play_store(page, 0, &hand_before, &action);
     ddz_demo_set_status(page, "你已出牌", &action.label[0]);
     ddz_demo_clear_selection(page);
     ddz_demo_clear_hint(page);
@@ -861,7 +924,7 @@ fn ddz_demo_apply_human_auto_action(page: &DdzPageRetained, action: &DdzAction, 
         ddz_demo_set_status(page, "托管失败", "动作未通过规则校验");
         return false;
     }
-    ddz_demo_last_play_store(page, &hand_before, action);
+    ddz_demo_last_play_store(page, 0, &hand_before, action);
     ddz_demo_clear_selection(page);
     ddz_demo_clear_hint(page);
     var prefix: &const byte = "托管 Local";
@@ -910,8 +973,9 @@ export fn doudizhu_page_retained_new() DdzPageRetained {
             card_count: 0,
             label: [],
         },
-        last_play_cards: [],
-        last_play_count: 0,
+        played_cards: [],
+        played_counts: [],
+        last_play_player: DDZ_NO_PLAYER,
     };
 }
 
@@ -982,7 +1046,7 @@ export fn doudizhu_page_retained_update(page: &DdzPageRetained, now_ms: u32) voi
         hand_before = page.game.players[2];
     }
     if ddz_game_apply_action(&page.game, player, &decision.action) {
-        ddz_demo_last_play_store(page, &hand_before, &decision.action);
+        ddz_demo_last_play_store(page, player, &hand_before, &decision.action);
         var buf: [byte: 96] = [];
         _ = snprintf(&buf[0], 96usize, "%s: %s" as &const byte, ddz_demo_player_role(&page.game, player), &decision.action.label[0]);
         if decision.source == DdzAiSource.Local {

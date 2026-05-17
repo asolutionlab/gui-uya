@@ -158,6 +158,29 @@ test "obj tree hit testing prefers deepest child" {
     try assert_eq_i32(tree.find_at_point(0, Point{ x: 250, y: 250 }), -1);
 }
 
+test "obj tree hit testing prefers topmost overlapping sibling" {
+    gui_obj_reset_registry();
+
+    var root: GuiObj = gui_obj_default();
+    var bottom: GuiObj = gui_obj_default();
+    var top: GuiObj = gui_obj_default();
+
+    root.set_area(Rect{ x: 0, y: 0, w: 200, h: 200 });
+    bottom.set_area(Rect{ x: 20, y: 20, w: 80, h: 80 });
+    top.set_area(Rect{ x: 20, y: 20, w: 80, h: 80 });
+
+    _ = gui_obj_register(0, &root);
+    _ = gui_obj_register(1, &bottom);
+    _ = gui_obj_register(2, &top);
+
+    var tree: ObjTree = obj_tree_new();
+    tree.set_root(0, &root);
+    tree.attach(0, 1);
+    tree.attach(0, 2);
+
+    try assert_eq_i32(tree.find_at_point(0, Point{ x: 40, y: 40 }), 2);
+}
+
 test "gui obj drop unregisters from registry" {
     gui_obj_reset_registry();
     {

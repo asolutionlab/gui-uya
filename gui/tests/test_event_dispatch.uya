@@ -75,6 +75,62 @@ test "dispatcher routes click to deepest target callback" {
     try assert_eq_i32(user_hits, 1);
 }
 
+test "dispatcher routes click to topmost overlapping sibling" {
+    gui_obj_reset_registry();
+
+    var root: GuiObj = gui_obj_default();
+    var bottom: GuiObj = gui_obj_default();
+    var top: GuiObj = gui_obj_default();
+    root.set_area(Rect{ x: 0, y: 0, w: 100, h: 100 });
+    bottom.set_area(Rect{ x: 10, y: 10, w: 40, h: 40 });
+    top.set_area(Rect{ x: 10, y: 10, w: 40, h: 40 });
+    bottom.flags.clickable = true;
+    top.flags.clickable = true;
+
+    _ = gui_obj_register(0, &root);
+    _ = gui_obj_register(1, &bottom);
+    _ = gui_obj_register(2, &top);
+
+    var tree: ObjTree = obj_tree_new();
+    tree.set_root(0, &root);
+    tree.attach(0, 1);
+    tree.attach(0, 2);
+
+    var bottom_count: i32 = 0;
+    var bottom_target: i32 = -1;
+    var bottom_type: i32 = -1;
+    var bottom_hits: i32 = 0;
+    var bottom_impl: CountingCallback = CountingCallback{
+        count_ref: &bottom_count,
+        last_target_ref: &bottom_target,
+        last_type_ref: &bottom_type,
+    };
+    var bottom_cb: IGuiEventCallback = bottom_impl;
+    bottom.on_click(&bottom_cb, &bottom_hits as &void);
+
+    var top_count: i32 = 0;
+    var top_target: i32 = -1;
+    var top_type: i32 = -1;
+    var top_hits: i32 = 0;
+    var top_impl: CountingCallback = CountingCallback{
+        count_ref: &top_count,
+        last_target_ref: &top_target,
+        last_type_ref: &top_type,
+    };
+    var top_cb: IGuiEventCallback = top_impl;
+    top.on_click(&top_cb, &top_hits as &void);
+
+    var dispatcher: EventDispatcher = event_dispatcher_new();
+    _ = dispatcher.dispatch(event_point(EventType.Click, InputDev.Touch, -1, 10, Point{ x: 20, y: 20 }), &tree);
+
+    try assert_eq_i32(bottom_count, 0);
+    try assert_eq_i32(bottom_hits, 0);
+    try assert_eq_i32(top_count, 1);
+    try assert_eq_i32(top_target, 2);
+    try assert_eq_i32(top_type, EventType.Click as i32);
+    try assert_eq_i32(top_hits, 1);
+}
+
 test "dispatcher updates focus on press and emits callback" {
     gui_obj_reset_registry();
 

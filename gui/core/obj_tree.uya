@@ -363,18 +363,13 @@ export struct ObjTree {
             return -1;
         }
 
-        var hit: i32 = -1;
-        var child: &GuiObj = node.child_head;
+        var child: &GuiObj = node.child_tail;
         while child != null {
             const child_hit: i32 = self.find_recursive(child, point);
             if child_hit >= 0 {
-                hit = child_hit;
+                return child_hit;
             }
-            child = child.sibling_next;
-        }
-
-        if hit >= 0 {
-            return hit;
+            child = child.sibling_prev;
         }
         const area: Rect = node.screen_area();
         if area.contains(point) {
