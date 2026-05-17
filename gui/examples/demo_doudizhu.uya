@@ -380,16 +380,16 @@ fn ddz_demo_small_card_suit_text(rank: i32, suit: i32) &const byte {
         return "RJ" as &const byte;
     }
     if suit == 0 {
-        return "C" as &const byte;
+        return "♣" as &const byte;
     }
     if suit == 1 {
-        return "D" as &const byte;
+        return "♦" as &const byte;
     }
     if suit == 2 {
-        return "H" as &const byte;
+        return "♥" as &const byte;
     }
     if suit == 3 {
-        return "S" as &const byte;
+        return "♠" as &const byte;
     }
     return "" as &const byte;
 }
