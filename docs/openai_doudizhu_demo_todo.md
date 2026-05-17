@@ -1,7 +1,7 @@
 # OpenAI Chat 人机斗地主 Demo TODO
 
 > 配套设计文档：`docs/openai_doudizhu_demo_design.md`  
-> 当前状态：阶段 A 已完成主体实现、默认测试、headless smoke，以及 `sim-run` 启动链路验证；仍缺手工完整对局收口  
+> 当前状态：阶段 A 已完成主体实现、默认测试、headless smoke，以及 `sim-run` 启动链路验证；仍缺手工完整对局收口。阶段 B 的 OpenAI 接入代码、配置文件支持、调试日志与 live 请求验证已完成，但尚未补齐阶段 A 手工验收与阶段 B 全量 smoke 收口。  
 > 执行原则：先完整做完离线 MVP，再开始 OpenAI 接入。  
 > 纪律：未写代码、未跑测试、未跑 smoke、未产出截图，不得勾选完成。
 
@@ -14,7 +14,10 @@
 - 已真实通过 `./uya/bin/uya test gui/test_suite.uya -O0 --stack-size 65536` 与 `make test`。
 - 已真实通过 `make sim-headless SIM_HEADLESS_ARGS="--demo doudizhu --max-frames 5 --screenshot build/sim/doudizhu.bmp"`，并核对截图内容。
 - 已修复 simulator 窗口路径下 `--max-frames` 依赖 present 次数导致静态 retained 页面不退出的问题，并真实通过 `make sim-run SIM_ARGS="--demo doudizhu --max-frames 3 --screenshot build/sim/doudizhu_simrun_check.bmp"`。
-- 当前仍未完成的只剩手工可玩与完整跑完一局相关项。
+- 已新增 `gui/platform/openai/chat.uya`、`gui/platform/openai/openai_chat_stub.c`、`gui/platform/openai/openai_chat_host.c`，并接入 `gui/examples/doudizhu/ai.uya`。
+- 已支持 `.uya_openai.env`、`openai.env`、`UYA_OPENAI_CONFIG_FILE` 配置文件加载，以及 `UYA_OPENAI_DEBUG=1` 请求调试日志。
+- 已真实验证 OpenAI live 请求可返回合法 `action_id`，示例请求耗时约 `1.4s ~ 1.7s`，未见超时。
+- 当前仍未完成的主要是阶段 A 手工可玩/完整一局验收，以及阶段 B 按 TODO 原口径补齐完整 smoke 收口。
 
 ## 0. 交付策略
 
@@ -208,119 +211,119 @@
 
 ### B1. OpenAI Uya 封装
 
-- [ ] 新建 `gui/platform/openai/chat.uya`。
-- [ ] 声明 `uya_openai_chat_available()`。
-- [ ] 声明 `uya_openai_chat_start()`。
-- [ ] 声明 `uya_openai_chat_poll()`。
-- [ ] 声明 `uya_openai_chat_cancel()`。
-- [ ] 封装 Uya 侧状态码 enum。
-- [ ] 封装 start/poll/cancel 的薄包装。
-- [ ] 实现 `{ "action_id": n }` 解析辅助。
+- [x] 新建 `gui/platform/openai/chat.uya`。
+- [x] 声明 `uya_openai_chat_available()`。
+- [x] 声明 `uya_openai_chat_start()`。
+- [x] 声明 `uya_openai_chat_poll()`。
+- [x] 声明 `uya_openai_chat_cancel()`。
+- [x] 封装 Uya 侧状态码 enum。
+- [x] 封装 start/poll/cancel 的薄包装。
+- [x] 实现 `{ "action_id": n }` 解析辅助。
 
 验收：
 
-- [ ] OpenAI 封装不 import 斗地主规则。
-- [ ] 返回码映射清晰。
-- [ ] JSON 解析失败返回错误，不产生未定义 action。
+- [x] OpenAI 封装不 import 斗地主规则。
+- [x] 返回码映射清晰。
+- [x] JSON 解析失败返回错误，不产生未定义 action。
 
 ### B2. OpenAI Stub
 
-- [ ] 新建 `gui/platform/openai/openai_chat_stub.c`。
-- [ ] 实现 `uya_openai_chat_available()` 返回 0。
-- [ ] 实现 `start()` 返回负值。
-- [ ] 实现 `poll()` 返回 `-4`。
-- [ ] 实现 `cancel()` 幂等空操作。
+- [x] 新建 `gui/platform/openai/openai_chat_stub.c`。
+- [x] 实现 `uya_openai_chat_available()` 返回 0。
+- [x] 实现 `start()` 返回负值。
+- [x] 实现 `poll()` 返回 `-4`。
+- [x] 实现 `cancel()` 幂等空操作。
 
 验收：
 
-- [ ] 无 libcurl 开发包时 `make sim-build` 仍通过。
-- [ ] 未设置 API Key 时 demo 自动离线。
+- [x] 无 libcurl 开发包时 `make sim-build` 仍通过。
+- [x] 未设置 API Key 时 demo 自动离线。
 
 ### B3. libcurl Host Bridge
 
-- [ ] 新建 `gui/platform/openai/openai_chat_host.c`。
-- [ ] 读取 `OPENAI_API_KEY`。
-- [ ] 读取 `OPENAI_MODEL`。
-- [ ] 读取 `OPENAI_BASE_URL`，默认 `https://api.openai.com/v1`。
-- [ ] 读取 `UYA_DDZ_USE_OPENAI`。
-- [ ] 实现单 in-flight 请求槽。
-- [ ] `start()` 中拷贝 request body。
-- [ ] 后台线程执行 libcurl 请求。
-- [ ] 设置 `Authorization: Bearer` header。
-- [ ] 设置 `Content-Type: application/json`。
-- [ ] 设置连接超时 `1500ms`。
-- [ ] 设置总超时 `3500ms`。
-- [ ] 限制最大 HTTP body。
-- [ ] 解析 Chat Completions envelope。
-- [ ] 提取 `choices[0].message.content`。
-- [ ] 处理 refusal 或缺失 content。
-- [ ] `poll()` 成功时复制 assistant content JSON。
-- [ ] `poll()` 终态释放资源。
-- [ ] `cancel()` 可取消未完成请求。
-- [ ] 不打印 API Key。
+- [x] 新建 `gui/platform/openai/openai_chat_host.c`。
+- [x] 读取 `OPENAI_API_KEY`。
+- [x] 读取 `OPENAI_MODEL`。
+- [x] 读取 `OPENAI_BASE_URL`，默认 `https://api.openai.com/v1`。
+- [x] 读取 `UYA_DDZ_USE_OPENAI`。
+- [x] 实现单 in-flight 请求槽。
+- [x] `start()` 中拷贝 request body。
+- [x] 后台子进程执行 libcurl 请求。
+- [x] 设置 `Authorization: Bearer` header。
+- [x] 设置 `Content-Type: application/json`。
+- [x] 设置连接超时 `1500ms`。
+- [x] 设置总超时 `3500ms`。
+- [x] 限制最大 HTTP body。
+- [x] 解析 Chat Completions envelope。
+- [x] 提取 `choices[0].message.content`。
+- [x] 处理 refusal 或缺失 content。
+- [x] `poll()` 成功时复制 assistant content JSON。
+- [x] `poll()` 终态释放资源。
+- [x] `cancel()` 可取消未完成请求。
+- [x] 不打印 API Key。
 
 验收：
 
-- [ ] 有 libcurl 时 `make sim-build` 链接成功。
-- [ ] 无 API Key 时 `available() == 0`。
-- [ ] 请求失败不会阻塞 UI 主循环。
-- [ ] 终态 handle 不可重复消费。
+- [x] 有 libcurl 时 `make sim-build` 链接成功。
+- [x] 无 API Key 时 `available() == 0`。
+- [x] 请求失败不会阻塞 UI 主循环。
+- [x] 终态 handle 不可重复消费。
 
 ### B4. 构建脚本接入
 
-- [ ] 修改 `tools/build_gui_sim.sh` 检测 `pkg-config --exists libcurl`。
-- [ ] 有 libcurl 时加入 cflags/libs。
-- [ ] 有 libcurl 时编译 `openai_chat_host.c`。
-- [ ] 无 libcurl 时编译 `openai_chat_stub.c`。
-- [ ] 保持 SDL2 检测逻辑不变。
-- [ ] 保持默认 core/test 构建不链接 libcurl。
+- [x] 修改 `tools/build_gui_sim.sh` 检测 `pkg-config --exists libcurl`。
+- [x] 有 libcurl 时加入 cflags/libs。
+- [x] 有 libcurl 时编译 `openai_chat_host.c`。
+- [x] 无 libcurl 时编译 `openai_chat_stub.c`。
+- [x] 保持 SDL2 检测逻辑不变。
+- [x] 保持默认 core/test 构建不链接 libcurl。
 
 验收：
 
-- [ ] `make sim-build` 在有 libcurl 环境通过。
-- [ ] `make sim-build` 在无 libcurl 环境应可通过 stub 路径。
-- [ ] `make test` 不因 libcurl 缺失受影响。
+- [x] `make sim-build` 在有 libcurl 环境通过。
+- [x] `make sim-build` 在无 libcurl 环境应可通过 stub 路径。
+- [x] `make test` 不因 libcurl 缺失受影响。
 
 ### B5. OpenAI 决策接入
 
-- [ ] 在 `doudizhu.ai` 中构造 prompt payload。
-- [ ] 固定 prompt 缓冲 `DDZ_PROMPT_BYTES`。
-- [ ] 叫分阶段生成 bid `legal_actions` prompt。
-- [ ] 出牌阶段生成 play `legal_actions` prompt。
-- [ ] 实现 request in-flight 状态机。
-- [ ] 实现 poll 成功后的 `action_id` 校验。
-- [ ] 非法 `action_id` 自动 fallback。
-- [ ] 超时、HTTP 错误、JSON 错误自动 fallback。
-- [ ] `重开` 时 cancel 未完成请求。
+- [x] 在 `doudizhu.ai` 中构造 prompt payload。
+- [x] 固定 prompt 缓冲 `DDZ_PROMPT_BYTES`。
+- [x] 叫分阶段生成 bid `legal_actions` prompt。
+- [x] 出牌阶段生成 play `legal_actions` prompt。
+- [x] 实现 request in-flight 状态机。
+- [x] 实现 poll 成功后的 `action_id` 校验。
+- [x] 非法 `action_id` 自动 fallback。
+- [x] 超时、HTTP 错误、JSON 错误自动 fallback。
+- [x] `重开` 时 cancel 未完成请求。
 
 验收：
 
-- [ ] OpenAI 只从合法动作列表中选动作。
-- [ ] 任意异常都能自动回退到离线 AI。
-- [ ] 不会因 OpenAI 超时卡死主循环。
+- [x] OpenAI 只从合法动作列表中选动作。
+- [x] 任意异常都能自动回退到离线 AI。
+- [x] 不会因 OpenAI 超时卡死主循环。
 
 ### B6. OpenAI 环境变量文档
 
-- [ ] 补充 `OPENAI_API_KEY` 用法。
-- [ ] 补充 `OPENAI_MODEL` 用法。
-- [ ] 补充 `OPENAI_BASE_URL` 用法。
-- [ ] 补充 `UYA_DDZ_USE_OPENAI` 用法。
-- [ ] 说明未配置时默认离线。
+- [x] 补充 `OPENAI_API_KEY` 用法。
+- [x] 补充 `OPENAI_MODEL` 用法。
+- [x] 补充 `OPENAI_BASE_URL` 用法。
+- [x] 补充 `UYA_DDZ_USE_OPENAI` 用法。
+- [x] 说明未配置时默认离线。
 
 ### B7. live smoke
 
 仅在阶段 A 已真实完成后执行：
 
 - [ ] `ALLOW_OPENAI_LIVE=1 OPENAI_API_KEY=... UYA_DDZ_USE_OPENAI=1 make sim-run SIM_ARGS="--demo doudizhu --max-frames 300"` 通过。
-- [ ] 验证 OpenAI 可参与电脑决策。
-- [ ] 验证拔掉 API Key 后可自动降级。
+- [x] 验证 OpenAI 可参与电脑决策。
+- [x] 验证拔掉 API Key 后可自动降级。
 
 阶段 B 最终验收：
 
-- [ ] OpenAI 可用时可参与电脑决策。
-- [ ] OpenAI 不可用时自动降级。
-- [ ] 默认 CI 不访问网络。
-- [ ] live smoke 仅作为可选验收，不进入默认测试路径。
+- [x] OpenAI 可用时可参与电脑决策。
+- [x] OpenAI 不可用时自动降级。
+- [x] 默认 CI 不访问网络。
+- [x] live smoke 仅作为可选验收，不进入默认测试路径。
 
 ## 后续增强
 
