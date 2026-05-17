@@ -117,6 +117,48 @@ make dashboard-compare
 make dashboard-compare-report
 ```
 
+斗地主 OpenAI demo 也支持配置文件。运行时会按这个顺序取值：
+
+- 显式环境变量
+- `UYA_OPENAI_CONFIG_FILE` 指向的文件
+- 当前工作目录下的 `.uya_openai.env`
+- 当前工作目录下的 `openai.env`
+
+配置文件格式是简单的 `KEY=VALUE`，支持这些键：
+
+- `UYA_DDZ_USE_OPENAI`
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL`
+- `OPENAI_BASE_URL`
+
+示例：
+
+```bash
+cp .uya_openai.env.example .uya_openai.env
+make sim-run SIM_ARGS="--demo doudizhu --scale 1"
+```
+
+或者：
+
+```bash
+UYA_OPENAI_CONFIG_FILE=/path/to/openai.env \
+make sim-run SIM_ARGS="--demo doudizhu --scale 1"
+```
+
+如需排查 OpenAI 请求慢、超时或响应格式问题，可以打开宿主调试日志：
+
+```bash
+UYA_OPENAI_DEBUG=1 \
+make sim-run SIM_ARGS="--demo doudizhu --scale 1"
+```
+
+日志会输出到标准错误，包含这些关键信息：
+
+- 配置来源（环境变量 / `.uya_openai.env` / 自定义文件）
+- 请求开始时的 `base_url`、请求体长度和请求摘要
+- 请求结束时的耗时、`curl` 结果、HTTP 状态码、响应体摘要
+- 解析出的 assistant 内容摘要
+
 `make dashboard-compare` 会生成 `build/dashboard_compare/uya_dashboard.bmp`、
 `build/dashboard_compare/lvgl_dashboard.bmp`，并分别输出 UyaGUI / LVGL 在同一 `640x480`
 dashboard 场景下的启动与帧耗时。`make dashboard-compare-report` 会进一步补齐

@@ -11,3 +11,5 @@ gui/build/
 !.vscode/
 !.vscode/launch.json
 !.vscode/tasks.json
+.uya_openai.env
+openai.env

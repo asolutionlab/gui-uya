@@ -42,6 +42,20 @@ fi
 read -r -a SDL_CFLAGS <<<"$SDL_CFLAGS_STR"
 read -r -a SDL_LIBS <<<"$SDL_LIBS_STR"
 
+OPENAI_HOST_C="$ROOT_DIR/gui/platform/openai/openai_chat_host.c"
+OPENAI_OBJ=""
+OPENAI_CFLAGS_STR=""
+OPENAI_LIBS_STR=""
+if pkg-config --exists libcurl 2>/dev/null; then
+    OUT_OPENAI_O="$BUILD_DIR/${OUT_NAME}.openai_chat.o"
+    OPENAI_OBJ="$OUT_OPENAI_O"
+    OPENAI_CFLAGS_STR="$(pkg-config --cflags libcurl)"
+    OPENAI_LIBS_STR="$(pkg-config --libs libcurl)"
+fi
+
+read -r -a OPENAI_CFLAGS <<<"$OPENAI_CFLAGS_STR"
+read -r -a OPENAI_LIBS <<<"$OPENAI_LIBS_STR"
+
 "$UYA_BIN" build "$APP" --c99 --no-split-c "$UYA_OPT" -o "$OUT_C"
 
 HOST_C="$ROOT_DIR/gui/platform/sdl2/sdl_host.c"
@@ -63,6 +77,13 @@ FB_HOST_C="$ROOT_DIR/gui/platform/fb/fb_host.c"
     "${SDL_CFLAGS[@]}" \
     -c "$FB_HOST_C" \
     -o "$OUT_FB_O"
+
+if [ -n "$OPENAI_OBJ" ]; then
+    "$CC_BIN" -std=c99 -Wall -Wextra -pedantic -g "$CC_OPT" -fvisibility=hidden \
+        "${OPENAI_CFLAGS[@]}" \
+        -c "$OPENAI_HOST_C" \
+        -o "$OUT_OPENAI_O"
+fi
 
 declare -a CIMPORT_OBJECTS=()
 declare -a CIMPORT_LDFLAGS=()
@@ -105,9 +126,12 @@ fi
     "$OUT_GEN_O" \
     "$OUT_SDL_O" \
     "$OUT_FB_O" \
+    $OPENAI_OBJ \
     "${CIMPORT_OBJECTS[@]}" \
     -o "$OUT_BIN" \
     "${SDL_LIBS[@]}" \
+    "${OPENAI_LIBS[@]}" \
+    -pthread \
     -ldl \
     -lm \
     "${CIMPORT_LDFLAGS[@]}"

@@ -9,7 +9,9 @@ use examples.doudizhu.ai.DdzAiDecision;
 use examples.doudizhu.ai.DdzAiSource;
 use examples.doudizhu.ai.DdzAiState;
 use examples.doudizhu.ai.DdzAiStatus;
+use examples.doudizhu.ai.ddz_ai_cancel_pending;
 use examples.doudizhu.ai.ddz_ai_choose_action;
+use examples.doudizhu.ai.ddz_ai_step_action;
 use examples.doudizhu.ai.ddz_ai_state_new;
 use examples.doudizhu.rules.DDZ_ACTION_LABEL_BYTES;
 use examples.doudizhu.rules.DDZ_BOTTOM_COUNT;
@@ -37,6 +39,7 @@ use libc.snprintf;
 use platform.disp.PixelFormat;
 use platform.disp.framebuffer_new;
 use platform.disp.framebuffer_required_bytes;
+use platform.openai.chat.uya_openai_chat_is_available;
 use render.ctx.RenderCtx;
 use render.ctx.render_ctx_new;
 use render.font.Font;
@@ -278,6 +281,9 @@ fn ddz_demo_restart(page: &DdzPageRetained, seed: u32) void {
     if page == null {
         return;
     }
+    ddz_ai_cancel_pending(&page.ai[0]);
+    ddz_ai_cancel_pending(&page.ai[1]);
+    ddz_ai_cancel_pending(&page.ai[2]);
     page.game = ddz_game_new();
     _ = ddz_game_restart(&page.game, seed);
     page.ai[0] = ddz_ai_state_new();
@@ -286,7 +292,11 @@ fn ddz_demo_restart(page: &DdzPageRetained, seed: u32) void {
     ddz_demo_clear_last_play(page);
     ddz_demo_clear_selection(page);
     ddz_demo_clear_hint(page);
-    ddz_demo_set_status(page, "离线模式", "等待你叫分");
+    if uya_openai_chat_is_available() {
+        ddz_demo_set_status(page, "OpenAI 已就绪", "等待你叫分");
+    } else {
+        ddz_demo_set_status(page, "离线模式", "等待你叫分");
+    }
     ddz_demo_invalidate(page);
 }
 
@@ -535,7 +545,7 @@ fn ddz_demo_render_state(page: &DdzPageRetained, ctx: &RenderCtx, origin_x: i16,
     ctx.fill_round_rect(ddz_demo_offset_rect(Rect{ x: sim_layout_x(26), y: sim_layout_y(20), w: sim_layout_w(588u16), h: sim_layout_h(72u16) }, origin_x, origin_y), sim_layout_font(18u8), Color{ r: 247, g: 241, b: 223, a: 220 });
     ctx.draw_round_rect(ddz_demo_offset_rect(Rect{ x: sim_layout_x(26), y: sim_layout_y(20), w: sim_layout_w(588u16), h: sim_layout_h(72u16) }, origin_x, origin_y), sim_layout_font(18u8), Color{ r: 129, g: 89, b: 39, a: 200 }, 1u8);
 
-    ddz_demo_draw_text(ctx, origin_x + sim_layout_x(42), origin_y + sim_layout_y(34), "斗地主 离线 MVP", 24u8, Color{ r: 81, g: 43, b: 19, a: 255 });
+    ddz_demo_draw_text(ctx, origin_x + sim_layout_x(42), origin_y + sim_layout_y(34), "斗地主 AI Demo", 24u8, Color{ r: 81, g: 43, b: 19, a: 255 });
     ddz_demo_draw_text(ctx, origin_x + sim_layout_x(42), origin_y + sim_layout_y(62), &page.status_text[0], 14u8, Color{ r: 88, g: 60, b: 28, a: 255 });
     ddz_demo_draw_text(ctx, origin_x + sim_layout_x(276), origin_y + sim_layout_y(62), &page.detail_text[0], 14u8, Color{ r: 88, g: 60, b: 28, a: 255 });
 
@@ -777,7 +787,9 @@ fn ddz_demo_apply_human_auto_action(page: &DdzPageRetained, action: &DdzAction, 
     ddz_demo_clear_selection(page);
     ddz_demo_clear_hint(page);
     var prefix: &const byte = "托管 Local";
-    if source == DdzAiSource.Fallback {
+    if source == DdzAiSource.OpenAI {
+        prefix = "托管 OpenAI" as &const byte;
+    } else if source == DdzAiSource.Fallback {
         prefix = "托管 Fallback" as &const byte;
     }
     if action.kind == DdzActionKind.Bid {
@@ -869,12 +881,16 @@ export fn doudizhu_page_retained_update(page: &DdzPageRetained, now_ms: u32) voi
         },
     };
     if player == 1 {
-        decision = ddz_ai_choose_action(&page.ai[1], &page.game, player);
+        decision = ddz_ai_step_action(&page.ai[1], &page.game, player);
     } else {
-        decision = ddz_ai_choose_action(&page.ai[2], &page.game, player);
+        decision = ddz_ai_step_action(&page.ai[2], &page.game, player);
+    }
+    if decision.status == DdzAiStatus.Pending {
+        ddz_demo_set_status(page, "AI OpenAI", "正在等待模型响应");
+        return;
     }
     if decision.status != DdzAiStatus.Ok {
-        ddz_demo_set_status(page, "AI 决策失败", "已停在当前局面");
+        ddz_demo_set_status(page, "AI 决策失败", "OpenAI 与本地回退都未成功");
         return;
     }
     var hand_before: DdzHand = DdzHand{
@@ -893,6 +909,8 @@ export fn doudizhu_page_retained_update(page: &DdzPageRetained, now_ms: u32) voi
         _ = snprintf(&buf[0], 96usize, "%s: %s" as &const byte, ddz_demo_player_role(&page.game, player), &decision.action.label[0]);
         if decision.source == DdzAiSource.Local {
             ddz_demo_set_status(page, "AI Local", &buf[0]);
+        } else if decision.source == DdzAiSource.OpenAI {
+            ddz_demo_set_status(page, "AI OpenAI", &buf[0]);
         } else {
             ddz_demo_set_status(page, "AI Fallback", &buf[0]);
         }
@@ -917,9 +935,13 @@ export fn doudizhu_page_retained_autoplay_step(page: &DdzPageRetained) bool {
     if page.game.phase == DdzGamePhase.GameOver || page.game.current_player != 0 {
         return false;
     }
-    const decision: DdzAiDecision = ddz_ai_choose_action(&page.ai[0], &page.game, 0);
+    const decision: DdzAiDecision = ddz_ai_step_action(&page.ai[0], &page.game, 0);
+    if decision.status == DdzAiStatus.Pending {
+        ddz_demo_set_status(page, "托管 OpenAI", "正在等待模型响应");
+        return false;
+    }
     if decision.status != DdzAiStatus.Ok {
-        ddz_demo_set_status(page, "托管失败", "没有可用动作");
+        ddz_demo_set_status(page, "托管失败", "OpenAI 与本地回退都未成功");
         return false;
     }
     return ddz_demo_apply_human_auto_action(page, &decision.action, decision.source);
@@ -951,7 +973,11 @@ export fn doudizhu_page_retained_handle_touch(page: &DdzPageRetained, evt: &Even
     var rect: Rect = ddz_demo_button_rect(3);
     if rect.contains(click_point) {
         ddz_demo_restart(page, page.game.seed + 1u32);
-        ddz_demo_set_status(page, "已重开", "新的离线对局已开始");
+        if uya_openai_chat_is_available() {
+            ddz_demo_set_status(page, "已重开", "新的对局已开始，OpenAI 可用");
+        } else {
+            ddz_demo_set_status(page, "已重开", "新的离线对局已开始");
+        }
         return;
     }
     rect = ddz_demo_button_rect(4);
