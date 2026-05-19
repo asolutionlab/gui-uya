@@ -7,6 +7,7 @@
     <style>
       :root {
         color-scheme: dark;
+        --uya-gui-log-height: 120px;
       }
 
       html,
@@ -21,7 +22,11 @@
 
       body {
         display: grid;
-        grid-template-rows: auto 1fr auto;
+        grid-template-rows: 1fr;
+      }
+
+      body.debug-panel {
+        grid-template-rows: auto 1fr var(--uya-gui-log-height);
       }
 
       #uya-gui-status {
@@ -29,6 +34,11 @@
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
         background: rgba(255, 255, 255, 0.03);
         white-space: pre-wrap;
+        display: none;
+      }
+
+      body.debug-panel #uya-gui-status {
+        display: block;
       }
 
       #uya-gui-root {
@@ -61,12 +71,20 @@
       #uya-gui-log {
         margin: 0;
         padding: 8px 12px;
-        min-height: 96px;
-        max-height: 24vh;
+        min-height: 0;
+        max-height: 0;
         overflow: auto;
         border-top: 1px solid rgba(255, 255, 255, 0.08);
         background: #0a0c10;
         white-space: pre-wrap;
+        display: none;
+      }
+
+      body.debug-panel #uya-gui-log {
+        display: block;
+        height: var(--uya-gui-log-height);
+        min-height: var(--uya-gui-log-height);
+        max-height: var(--uya-gui-log-height);
       }
     </style>
     <script>
@@ -168,6 +186,29 @@
         }
 
         var bootArgs = parseArgsFromLocation();
+        var debugPanel = false;
+        if (typeof window !== 'undefined') {
+          var debugParams = new URLSearchParams(window.location.search);
+          debugPanel = debugParams.get('debug') === '1';
+        }
+
+        function applyDebugPanelMode() {
+          if (typeof document === 'undefined' || !document.body) {
+            return;
+          }
+          if (debugPanel) {
+            document.body.classList.add('debug-panel');
+          } else {
+            document.body.classList.remove('debug-panel');
+          }
+        }
+        if (typeof document !== 'undefined') {
+          if (document.body) {
+            applyDebugPanelMode();
+          } else {
+            document.addEventListener('DOMContentLoaded', applyDebugPanelMode, { once: true });
+          }
+        }
         var defaultCanvasId = findArgValue(bootArgs, '--canvas-id', 'uya-gui-canvas');
         var fitWindow = resolveBoolFlag(bootArgs, '--fit-window', '--fixed-window', true);
         var persistData = resolveBoolFlag(bootArgs, '--persist-data', '--no-persist-data', false);
@@ -193,7 +234,7 @@
             }
             var text = Array.prototype.join.call(arguments, ' ');
             console.log(text);
-            if (outputElement) {
+            if (debugPanel && outputElement) {
               outputElement.textContent += text + '\n';
               outputElement.scrollTop = outputElement.scrollHeight;
             }
@@ -207,7 +248,7 @@
             if (!statusElement) {
               statusElement = document.getElementById('uya-gui-status');
             }
-            if (statusElement) {
+            if (debugPanel && statusElement) {
               statusElement.textContent = text || '';
             }
           },

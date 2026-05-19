@@ -28,9 +28,16 @@ pick_web_cjk_font() {
     fi
 
     local candidate
+    # On web we prefer single-file TTFs first because they probe more
+    # reliably than TTC/OTF collection fonts in the current runtime.
+    # Noto stays as the next fallback when a simpler TTF is unavailable.
     for candidate in \
-        /usr/share/fonts/opentype/source-han-cjk/SourceHanSansSC-Regular.otf \
+        /usr/share/fonts/fonts-gb/GB_HT_GB18030.ttf \
+        /usr/share/fonts/fonts-gb/GB_ST_GB18030.ttf \
+        /usr/share/fonts/fonts-gb/GB_FS_GB18030.ttf \
+        /usr/share/fonts/fonts-gb/GB_KT_GB18030.ttf \
         /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc \
+        /usr/share/fonts/opentype/source-han-cjk/SourceHanSansSC-Regular.otf \
         /usr/share/fonts/truetype/wqy/wqy-microhei.ttc \
         /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
     do

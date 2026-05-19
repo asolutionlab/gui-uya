@@ -3,16 +3,13 @@
 use core.color.Color;
 use core.rect.RECT_ZERO;
 use core.rect.Rect;
-use libc.MAP_PRIVATE;
 use libc.O_RDONLY;
-use libc.PROT_READ;
 use libc.Stat;
 use libc.getenv;
 use libc.sys_close;
 use libc.sys_fstat;
-use libc.sys_mmap;
-use libc.sys_munmap;
 use libc.sys_open;
+use libc.sys_read;
 use platform.disp.PixelFormat;
 use render.ctx.RenderCtx;
 use render.ctx.RenderMode;
@@ -250,6 +247,8 @@ var _builtin_font_lookup: GlyphLookupTable = GlyphLookupTable{
 var _builtin_font_kerning: [KerningPair: 8] = [];
 var _builtin_font_kerning_len: u16 = 0u16;
 var _builtin_font_ready: bool = false;
+var _font_builtin_cjk_fallback_enabled: bool = true;
+var _font_latin_companion_enabled: bool = true;
 var _ttf_outline_points: [TtfOutlinePoint: 2048] = [];
 var _ttf_contour_end_points: [u16: 256] = [];
 var _ttf_point_flags: [byte: 2048] = [];
@@ -692,16 +691,20 @@ fn font_init_builtin_tables() void {
 }
 
 fn font_dynamic_glyph(font: &Font, codepoint: u32) Glyph {
+    var resolved_codepoint: u32 = codepoint;
     if glyph_is_cjk(codepoint) {
-        return Glyph{
-            codepoint: codepoint,
-            width: 8u8,
-            height: 8u8,
-            advance: 8u8,
-            offset_x: 0,
-            offset_y: 0,
-            bitmap_offset: 0u32,
-        };
+        if _font_builtin_cjk_fallback_enabled {
+            return Glyph{
+                codepoint: codepoint,
+                width: 8u8,
+                height: 8u8,
+                advance: 8u8,
+                offset_x: 0,
+                offset_y: 0,
+                bitmap_offset: 0u32,
+            };
+        }
+        resolved_codepoint = '?' as u32;
     }
 
     if font.render_kind == FontRenderKind.VectorStroke {
@@ -714,7 +717,7 @@ fn font_dynamic_glyph(font: &Font, codepoint: u32) Glyph {
             vec_height = vec_height - 2u8;
         }
         return Glyph{
-            codepoint: glyph_normalize_codepoint(codepoint),
+            codepoint: glyph_normalize_codepoint(resolved_codepoint),
             width: vec_width,
             height: vec_height,
             advance: ((font.glyph_width as i32 + font.tracking as i32) as! u8).value,
@@ -725,7 +728,7 @@ fn font_dynamic_glyph(font: &Font, codepoint: u32) Glyph {
     }
 
     return Glyph{
-        codepoint: glyph_normalize_codepoint(codepoint),
+        codepoint: glyph_normalize_codepoint(resolved_codepoint),
         width: 5u8,
         height: 7u8,
         advance: ((font.glyph_width as i32 + font.tracking as i32) as! u8).value,
@@ -1859,7 +1862,7 @@ Font {
             }
         }
 
-        if self.builtin_cjk && glyph_is_cjk(codepoint) {
+        if self.builtin_cjk && _font_builtin_cjk_fallback_enabled && glyph_is_cjk(codepoint) {
             return font_dynamic_glyph(self, codepoint);
         }
 
@@ -1967,6 +1970,9 @@ fn font_is_system_ui(font: &Font) bool {
 }
 
 fn font_latin_companion_candidate(font: &Font, codepoint: u32) bool {
+    if !_font_latin_companion_enabled {
+        return false;
+    }
     if font == null || !font_is_system_ui(font) {
         return false;
     }
@@ -2697,16 +2703,31 @@ fn system_ui_font_map_file(path: &const byte, out_data: &&const byte, out_len: &
     }
 
     const file_len: usize = (stat_buf.st_size as! usize).value;
-    const mapped: *void = sys_mmap(null as *void, file_len, PROT_READ, MAP_PRIVATE, fd, 0) catch {
+    const copied: &byte = malloc(file_len) as &byte;
+    if copied == null {
         _ = sys_close(fd) catch {};
-        return false;
-    };
-    _ = sys_close(fd) catch {};
-    if mapped == null {
         return false;
     }
 
-    out_data[0] = mapped as &const byte;
+    var total: usize = 0usize;
+    while total < file_len {
+        const dst: &byte = @ptr_from_usize(@usize_from_ptr(copied as &void) + total) as &byte;
+        const read_result: !isize = sys_read(fd, dst as *byte, file_len - total);
+        const n: isize = read_result catch {
+            free(copied as &void);
+            _ = sys_close(fd) catch {};
+            return false;
+        };
+        if n <= 0 {
+            free(copied as &void);
+            _ = sys_close(fd) catch {};
+            return false;
+        }
+        total = total + (n as! usize).value;
+    }
+
+    _ = sys_close(fd) catch {};
+    out_data[0] = copied as &const byte;
     out_len[0] = file_len;
     return true;
 }
@@ -2736,7 +2757,7 @@ fn system_ui_font_source_init() bool {
             return true;
         }
         ttf_font_asset_reset(&probe);
-        _ = sys_munmap(mapped as *void, mapped_len) catch {};
+        free(mapped as &void);
         mapped = null;
         mapped_len = 0usize;
     }
@@ -2750,7 +2771,7 @@ fn system_ui_font_source_init() bool {
             return true;
         }
         ttf_font_asset_reset(&probe);
-        _ = sys_munmap(mapped as *void, mapped_len) catch {};
+        free(mapped as &void);
         mapped = null;
         mapped_len = 0usize;
     }
@@ -2764,7 +2785,7 @@ fn system_ui_font_source_init() bool {
             return true;
         }
         ttf_font_asset_reset(&probe);
-        _ = sys_munmap(mapped as *void, mapped_len) catch {};
+        free(mapped as &void);
         mapped = null;
         mapped_len = 0usize;
     }
@@ -2778,7 +2799,7 @@ fn system_ui_font_source_init() bool {
             return true;
         }
         ttf_font_asset_reset(&probe);
-        _ = sys_munmap(mapped as *void, mapped_len) catch {};
+        free(mapped as &void);
     }
 
     ttf_font_asset_reset(&probe);
@@ -3033,7 +3054,7 @@ fn font_has_codepoint(font: &Font, codepoint: u32) bool {
             return true;
         }
     }
-    return font.builtin_cjk && glyph_is_cjk(codepoint);
+    return font.builtin_cjk && _font_builtin_cjk_fallback_enabled && glyph_is_cjk(codepoint);
 }
 
 fn resolve_glyph_for_font(font: &Font, codepoint: u32) ResolvedGlyph {
@@ -3742,6 +3763,26 @@ export fn font_ui_pixel_height(logical_height: u8) u8 {
 /// 重置 UI 字体运行时缓存和 DPI 状态。
 export fn font_ui_reset_runtime() void {
     _font_ui_dpi = UI_FONT_BASE_DPI;
+}
+
+/// 设置是否启用内置 CJK 8x8 点阵 fallback。
+export fn font_set_builtin_cjk_fallback_enabled(enabled: bool) void {
+    _font_builtin_cjk_fallback_enabled = enabled;
+}
+
+/// 返回内置 CJK 8x8 点阵 fallback 的启用状态。
+export fn font_builtin_cjk_fallback_enabled() bool {
+    return _font_builtin_cjk_fallback_enabled;
+}
+
+/// 设置是否启用 system-ui 字体的 latin companion 替换。
+export fn font_set_latin_companion_enabled(enabled: bool) void {
+    _font_latin_companion_enabled = enabled;
+}
+
+/// 返回 system-ui 字体 latin companion 替换的启用状态。
+export fn font_latin_companion_enabled() bool {
+    return _font_latin_companion_enabled;
 }
 
 /// 返回默认字体值。

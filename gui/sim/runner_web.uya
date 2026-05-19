@@ -11,6 +11,8 @@ use render.ctx.RenderMode;
 use render.ctx.render_ctx_attach_batch;
 use render.ctx.render_ctx_attach_gpu;
 use render.ctx.render_ctx_set_mode;
+use render.font.font_set_builtin_cjk_fallback_enabled;
+use render.font.font_set_latin_companion_enabled;
 use render.font.ttf_font_set_default_native_backend_c;
 use render.gpu.IGpuCtx;
 use sim.app.SimApp;
@@ -33,6 +35,10 @@ extern fn free(ptr: &void) void;
 
 fn sim_ensure_default_font_backend() void {
     ttf_font_set_default_native_backend_c(true);
+    // Web 端关闭内置 8x8 CJK fallback，避免中文退回到小点阵字形。
+    font_set_builtin_cjk_fallback_enabled(false);
+    // Web 端统一用同一字体家族绘制中英数字，避免视觉字号分裂。
+    font_set_latin_companion_enabled(false);
 }
 
 fn sim_configure_render_ctx(ctx: &RenderCtx, cfg: &SimConfig, batch: &DrawBatch) void {
