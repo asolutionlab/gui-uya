@@ -35,7 +35,7 @@ jobs:
           sudo apt-get install -y emscripten
 
       - name: Build Pages artifact
-        run: make sim-web-pages MODE=release
+        run: make sim-web-pages MODE=release WEB_LEGACY_VM_SUPPORT=1
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

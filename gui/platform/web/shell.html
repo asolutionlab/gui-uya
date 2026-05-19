@@ -25,6 +25,10 @@
         grid-template-rows: 1fr;
       }
 
+      body.status-visible {
+        grid-template-rows: auto 1fr;
+      }
+
       body.debug-panel {
         grid-template-rows: auto 1fr var(--uya-gui-log-height);
       }
@@ -38,6 +42,10 @@
       }
 
       body.debug-panel #uya-gui-status {
+        display: block;
+      }
+
+      body.status-visible #uya-gui-status {
         display: block;
       }
 
@@ -268,6 +276,23 @@
         var outputElement = null;
         var statusElement = null;
 
+        function applyStatusVisibility(visible) {
+          if (typeof document === 'undefined') {
+            return;
+          }
+          if (!document.body) {
+            document.addEventListener('DOMContentLoaded', function() {
+              applyStatusVisibility(visible);
+            }, { once: true });
+            return;
+          }
+          if (visible) {
+            document.body.classList.add('status-visible');
+          } else {
+            document.body.classList.remove('status-visible');
+          }
+        }
+
         var Module = {
           arguments: bootArgs,
           preRun: [],
@@ -281,6 +306,8 @@
           uyaGuiPersistData: persistData,
           uyaGuiCompleted: false,
           uyaGuiCompletion: null,
+          uyaGuiHasPresented: false,
+          uyaGuiStatusText: '',
           uyaGuiLastPresentAt: 0,
           uyaGuiLastScreenshotPath: null,
           uyaGuiFiles: {},
@@ -301,17 +328,31 @@
             Module.print(text);
           },
           setStatus: function(text) {
+            Module.uyaGuiStatusText = text || '';
             if (!statusElement) {
               statusElement = document.getElementById('uya-gui-status');
             }
-            if (debugPanel && statusElement) {
-              statusElement.textContent = text || '';
+            if (statusElement) {
+              statusElement.textContent = Module.uyaGuiStatusText;
             }
+            applyStatusVisibility(debugPanel || !Module.uyaGuiHasPresented || !!Module.uyaGuiStatusText);
           },
           canvas: document.getElementById(defaultCanvasId),
         };
 
         window.Module = Module;
+        applyStatusVisibility(true);
+        if (typeof document !== 'undefined' && !document.body) {
+          document.addEventListener('DOMContentLoaded', function() {
+            if (!statusElement) {
+              statusElement = document.getElementById('uya-gui-status');
+            }
+            if (statusElement) {
+              statusElement.textContent = Module.uyaGuiStatusText;
+            }
+            applyStatusVisibility(debugPanel || !Module.uyaGuiHasPresented || !!Module.uyaGuiStatusText);
+          }, { once: true });
+        }
 
         Module.preRun.push(function() {
           if (!Module.uyaGuiPersistData) {
@@ -357,6 +398,61 @@
           overlay.style.height = cssHeight + 'px';
         };
 
+        function tryCreate2dContext(canvas) {
+          if (!canvas || !canvas.getContext) {
+            return null;
+          }
+          var attempts = [
+            { alpha: false, desynchronized: true },
+            { alpha: false },
+            null
+          ];
+          for (var i = 0; i < attempts.length; ++i) {
+            try {
+              var ctx = attempts[i] ? canvas.getContext('2d', attempts[i]) : canvas.getContext('2d');
+              if (ctx) {
+                return ctx;
+              }
+            } catch (err) {
+            }
+          }
+          return null;
+        }
+
+        Module.uyaGuiEnsureOverlayContext = function() {
+          var overlay = Module.uyaGuiOverlayCanvas;
+          if (!overlay || !overlay.getContext) {
+            return null;
+          }
+          if (!Module.uyaGuiOverlayCtx2d) {
+            try {
+              Module.uyaGuiOverlayCtx2d = overlay.getContext('2d');
+            } catch (err) {
+              Module.uyaGuiOverlayCtx2d = null;
+            }
+          }
+          return Module.uyaGuiOverlayCtx2d;
+        };
+
+        Module.uyaGuiConfigureOverlayCanvas = function(enabled) {
+          var overlay = Module.uyaGuiOverlayCanvas;
+          var canvas = Module.uyaGuiCanvas;
+          if (!overlay || !canvas) {
+            return false;
+          }
+          if (!enabled) {
+            overlay.width = 0;
+            overlay.height = 0;
+            overlay.style.display = 'none';
+            Module.uyaGuiOverlayCtx2d = null;
+            return true;
+          }
+          overlay.width = canvas.width;
+          overlay.height = canvas.height;
+          overlay.style.display = 'block';
+          return !!Module.uyaGuiEnsureOverlayContext();
+        };
+
         Module.uyaGuiSetupCanvas = function(width, height, scale, title) {
           if (typeof document === 'undefined') {
             return 0;
@@ -369,19 +465,26 @@
           canvas.style.touchAction = 'none';
           canvas.style.overscrollBehavior = 'contain';
           canvas.style.background = '#000';
-          overlay.width = width;
-          overlay.height = height;
+          overlay.width = 0;
+          overlay.height = 0;
+          overlay.style.display = 'none';
           overlay.style.touchAction = 'none';
           Module.canvas = canvas;
           Module.uyaGuiCanvas = canvas;
           Module.uyaGuiOverlayCanvas = overlay;
           Module.uyaGuiScale = Math.max(scale || 1, 1);
-          Module.uyaGuiCtx2d = canvas.getContext('2d', { alpha: false, desynchronized: true });
-          Module.uyaGuiOverlayCtx2d = overlay.getContext('2d');
-          if (!Module.uyaGuiCtx2d || !Module.uyaGuiOverlayCtx2d) {
+          Module.uyaGuiCtx2d = tryCreate2dContext(canvas);
+          Module.uyaGuiOverlayCtx2d = null;
+          Module.uyaGuiDirtyOverlayEnabled = false;
+          if (!Module.uyaGuiCtx2d) {
             return 0;
           }
-          Module.uyaGuiImageData = Module.uyaGuiCtx2d.createImageData(width, height);
+          try {
+            Module.uyaGuiImageData = Module.uyaGuiCtx2d.createImageData(width, height);
+          } catch (err) {
+            Module.printErr('[web] createImageData failed:', err);
+            return 0;
+          }
           if (title) {
             document.title = title;
           }
@@ -524,6 +627,10 @@
           var src = Module.HEAPU8.subarray(rgbaPtr, rgbaPtr + width * height * 4);
           imageData.data.set(src);
           ctx.putImageData(imageData, 0, 0);
+          if (!Module.uyaGuiHasPresented) {
+            Module.uyaGuiHasPresented = true;
+            Module.setStatus('');
+          }
           Module.uyaGuiLastPresentAt = Date.now();
         };
 
@@ -540,6 +647,10 @@
             imageData.data.set(Module.HEAPU8.subarray(srcOffset, srcOffset + rowBytes), dstOffset);
           }
           ctx.putImageData(imageData, 0, 0, rectX, rectY, rectW, rectH);
+          if (!Module.uyaGuiHasPresented) {
+            Module.uyaGuiHasPresented = true;
+            Module.setStatus('');
+          }
           Module.uyaGuiLastPresentAt = Date.now();
         };
 
@@ -555,7 +666,7 @@
           if (!Module.uyaGuiDirtyOverlayEnabled) {
             return;
           }
-          var overlay = Module.uyaGuiOverlayCtx2d;
+          var overlay = Module.uyaGuiEnsureOverlayContext();
           if (!overlay) {
             return;
           }
@@ -567,10 +678,18 @@
         };
 
         Module.uyaGuiSetDirtyOverlayEnabled = function(enabled) {
-          Module.uyaGuiDirtyOverlayEnabled = !!enabled;
           if (!enabled) {
+            Module.uyaGuiDirtyOverlayEnabled = false;
             Module.uyaGuiClearDirtyOverlay();
+            Module.uyaGuiConfigureOverlayCanvas(false);
+            return;
           }
+          if (!Module.uyaGuiConfigureOverlayCanvas(true)) {
+            Module.printErr('[web] dirty overlay disabled: overlay canvas unavailable');
+            Module.uyaGuiDirtyOverlayEnabled = false;
+            return;
+          }
+          Module.uyaGuiDirtyOverlayEnabled = true;
         };
 
         Module.uyaGuiSetTitle = function(title) {

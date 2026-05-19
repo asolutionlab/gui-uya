@@ -240,6 +240,7 @@ make sim-web-pages
 - 仓库内置 `.github/workflows/sim-web-pages.yml`，推送到 `main` 后会自动构建并部署 Pages
 - 页面支持用查询参数直接切换 demo，例如 `index.html?demo=dashboard`、`index.html?demo=music&debug=1`
 - Web 构建默认使用仓库内固定的 [wqy-microhei.ttc](/media/winger/_dde_home/winger/uya/gui-uya/third_party/fonts/wqy/wqy-microhei.ttc)，避免 CI 依赖宿主机是否自带 CJK 字体
+- 如需兼容旧版 Android WebView / 内置浏览器，可在构建前附加 `WEB_LEGACY_VM_SUPPORT=1`
 - 如需改成别的字体，可在构建前覆盖 `WEB_CJK_FONT_SRC=/path/to/font.ttf`
 
 ## 交叉编译入口

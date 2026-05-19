@@ -12,11 +12,13 @@ OUT_C="$BUILD_DIR/${OUT_NAME}.c"
 OUT_GEN_O="$BUILD_DIR/${OUT_NAME}.generated.o"
 OUT_WEB_O="$BUILD_DIR/${OUT_NAME}.web_host.o"
 OUT_HTML="$BUILD_DIR/index.html"
+OUT_JS="$BUILD_DIR/index.js"
 OUT_CIMPORT_SIDECAR="${OUT_C}imports.sh"
 SHELL_FILE="${SHELL_FILE:-$ROOT_DIR/gui/platform/web/shell.html}"
 MODE="${MODE:-debug}"
 WEB_STACK_SIZE="${WEB_STACK_SIZE:-8388608}"
 WEB_INITIAL_MEMORY="${WEB_INITIAL_MEMORY:-33554432}"
+WEB_LEGACY_VM_SUPPORT="${WEB_LEGACY_VM_SUPPORT:-0}"
 TARGET_OS="${TARGET_OS:-unknown}"
 TARGET_ARCH="${TARGET_ARCH:-unknown}"
 WEB_CJK_FONT_OUT="${WEB_CJK_FONT_OUT:-/app/fonts/system_ui_cjk_font}"
@@ -77,6 +79,44 @@ pick_web_cjk_font() {
     return 1
 }
 
+transpile_web_js_legacy() {
+    local babel_bin tmp_dir config_file
+
+    if ! { command -v babeljs >/dev/null 2>&1 || command -v babel >/dev/null 2>&1; }; then
+        echo "warning: WEB_LEGACY_VM_SUPPORT=1 was requested, but neither 'babeljs' nor 'babel' is available; keeping modern JS output." >&2
+        return 1
+    fi
+
+    if [ ! -f "$OUT_JS" ]; then
+        echo "warning: legacy JS transpile skipped because output is missing: $OUT_JS" >&2
+        return 1
+    fi
+
+    babel_bin="$(command -v babeljs 2>/dev/null || command -v babel 2>/dev/null)"
+    tmp_dir="$(mktemp -d)"
+    config_file="$tmp_dir/babel.config.json"
+
+    cat >"$config_file" <<'EOF'
+{
+  "sourceType": "script",
+  "presets": [
+    [
+      "@babel/preset-env",
+      {
+        "targets": {
+          "chrome": "74",
+          "android": "74"
+        }
+      }
+    ]
+  ]
+}
+EOF
+
+    "$babel_bin" "$OUT_JS" -o "$OUT_JS" --config-file "$config_file"
+    rm -rf "$tmp_dir"
+}
+
 mkdir -p "$BUILD_DIR"
 
 if ! command -v "$EMCC_BIN" >/dev/null 2>&1; then
@@ -122,10 +162,18 @@ sed -i 's/^int32_t main(int32_t argc, char \*\*argv) {$/__attribute__((used, vis
 declare -a CIMPORT_OBJECTS=()
 declare -a CIMPORT_LDFLAGS=()
 declare -a HTML_MINIFY_FLAGS=()
+declare -a WEB_COMPAT_FLAGS=()
 declare -a PRELOAD_FILES=(
     --preload-file "$ROOT_DIR/gui@/app/gui"
     --preload-file "$ROOT_DIR/.uya_sim_root_probe@/app/.uya_sim_root_probe"
 )
+
+if [ "$WEB_LEGACY_VM_SUPPORT" = "1" ] || [ "$WEB_LEGACY_VM_SUPPORT" = "true" ]; then
+    # Debian's emscripten package cannot run its own transpile step reliably,
+    # so we lower the Chrome feature target without enabling POLYFILL-driven
+    # auto-transpile, then post-process index.js with babeljs below.
+    WEB_COMPAT_FLAGS+=(-sPOLYFILL=0 -sMIN_CHROME_VERSION=74)
+fi
 
 if [ "$WEB_MINIFY_HTML" = "0" ] || [ "$WEB_MINIFY_HTML" = "false" ]; then
     HTML_MINIFY_FLAGS+=(-sMINIFY_HTML=0)
@@ -195,11 +243,16 @@ declare -a LINK_CMD=(
     -sEXPORTED_FUNCTIONS=_main,_uya_gui_web_host_feed_event
     -lidbfs.js
     --shell-file "$SHELL_FILE"
+    "${WEB_COMPAT_FLAGS[@]}"
     "${HTML_MINIFY_FLAGS[@]}"
     "${PRELOAD_FILES[@]}"
     "${CIMPORT_LDFLAGS[@]}"
 )
 
 "${LINK_CMD[@]}"
+
+if [ "$WEB_LEGACY_VM_SUPPORT" = "1" ] || [ "$WEB_LEGACY_VM_SUPPORT" = "true" ]; then
+    transpile_web_js_legacy || true
+fi
 
 echo "$OUT_HTML"
