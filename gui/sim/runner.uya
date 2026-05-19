@@ -82,11 +82,16 @@ struct CpuRenderBinder : IRuntimeRenderBinder {
     }
 }
 
+struct SdlGpuIfaceSlot {
+    iface: IGpuCtx,
+}
+
 struct SdlRenderBinder : IRuntimeRenderBinder {
     display: &SdlDisplay,
     direct_gles2: bool,
     mirror_ctx: RenderCtx,
     gpu_ctx: SdlGles2GpuCtx,
+    gpu_slot: SdlGpuIfaceSlot,
 
     fn prepare(self: &Self, ctx: &RenderCtx, cfg: &SimConfig, batch: &DrawBatch) void {
         if !self.direct_gles2 || self.display == null {
@@ -96,8 +101,10 @@ struct SdlRenderBinder : IRuntimeRenderBinder {
         const back_ref: &FrameBuffer = self.display.get_back_buffer();
         self.mirror_ctx = render_ctx_new(framebuffer_new(back_ref.pixels, back_ref.size.w, back_ref.size.h, back_ref.stride, back_ref.format));
         self.gpu_ctx = sdl_gles2_gpu_new(self.display, &self.mirror_ctx);
-        var gpu_iface: IGpuCtx = self.gpu_ctx;
-        sim_configure_render_ctx(ctx, cfg, batch, &gpu_iface);
+        self.gpu_slot = SdlGpuIfaceSlot{
+            iface: self.gpu_ctx,
+        };
+        sim_configure_render_ctx(ctx, cfg, batch, &self.gpu_slot.iface);
     }
 }
 
@@ -137,6 +144,9 @@ fn run_simulator_sdl(cfg: SimConfig) i32 {
         direct_gles2: display.gles2_direct_active(),
         mirror_ctx: render_ctx_new(framebuffer_new(null, 0, 0, 0, 0)),
         gpu_ctx: sdl_gles2_gpu_new(null as &SdlDisplay, null as &RenderCtx),
+        gpu_slot: SdlGpuIfaceSlot{
+            iface: sdl_gles2_gpu_new(null as &SdlDisplay, null as &RenderCtx),
+        },
     };
     var core: SimRuntimeCore = sim_runtime_core_new();
     var input_iface: IRuntimeInput = input;
