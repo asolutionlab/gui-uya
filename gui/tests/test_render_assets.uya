@@ -20,11 +20,13 @@ use render.font.TextAlign;
 use render.font.draw_text;
 use render.font.draw_text_aligned;
 use render.font.font_default;
+use render.font.font_runtime_generation;
 use render.font.font_ui_pixel_height;
 use render.font.font_ui_reset_runtime;
 use render.font.font_ui_set_dpi;
 use render.font.font_system_compact;
 use render.font.font_system_ui_ref;
+use render.font.font_system_ui_retry_refresh;
 use render.font.font_system_vector;
 use render.font.glyph_for_char;
 use render.font.text_width;
@@ -46,9 +48,18 @@ use render.img.draw_image_clipped;
 use render.img.draw_image_rotated;
 use render.img.draw_image_scaled;
 use render.img.image_data_new;
+use libc.O_CREAT;
+use libc.O_TRUNC;
+use libc.O_WRONLY;
+use libc.setenv;
 use res.cache.ImageCache;
 use res.cache.image_cache_new;
 use libc.strlen;
+use libc.sys_close;
+use libc.sys_open;
+use libc.sys_unlink;
+use libc.sys_write;
+use libc.unsetenv;
 use style.Style;
 use style.StyleProp;
 use style.style_default;
@@ -58,6 +69,37 @@ use widget.base.widget_font;
 
 export const TEST_RENDER_ASSETS_MODULE: i32 = 1;
 const TEST_DEJAVU_TTF_BYTES: &[const byte] = @embed("../render/DejaVuSans.ttf");
+const TEST_RUNTIME_SYSTEM_FONT_ENV: &const byte = "UYA_SYSTEM_UI_FONT_PATH\0";
+const TEST_RUNTIME_SYSTEM_FONT_PATH: &const byte = "/tmp/uya_test_system_ui_font.ttf\0";
+
+fn write_test_font_file(path: &const byte, data: &const byte, len: usize) bool {
+    if path == null || data == null || len == 0usize {
+        return false;
+    }
+    const flags: i32 = O_WRONLY as i32 | O_CREAT as i32 | O_TRUNC as i32;
+    const fd: i32 = sys_open(path as *const byte, flags, 0o644) catch {
+        return false;
+    };
+
+    var offset: usize = 0usize;
+    while offset < len {
+        const src: *const byte = @ptr_from_usize(@usize_from_ptr(data as &void) + offset) as *const byte;
+        const written: isize = sys_write(fd, src, len - offset) catch {
+            _ = sys_close(fd) catch {};
+            _ = sys_unlink(path as *const byte) catch {};
+            return false;
+        };
+        if written <= 0 {
+            _ = sys_close(fd) catch {};
+            _ = sys_unlink(path as *const byte) catch {};
+            return false;
+        }
+        offset = offset + ((written as! usize).value);
+    }
+
+    _ = sys_close(fd) catch {};
+    return true;
+}
 
 struct CountingTextGpu : IGpuCtx {
     glyph_count: i32,
@@ -351,6 +393,26 @@ test "ttf missing chinese glyphs prefer scalable cjk fallback before builtin bit
     try assert_eq_bool(ctx_pixel(&ctx, 3, 0) == white_expect, true);
     try assert_eq_bool(ctx_pixel(&ctx, 7, 0) == black_expect, true);
     try assert_eq_bool(ctx_pixel(&ctx, 11, 0) == white_expect, true);
+}
+
+test "system ui font can retry loading at runtime after source appears" {
+    _ = sys_unlink(TEST_RUNTIME_SYSTEM_FONT_PATH as *const byte) catch {};
+    _ = setenv(TEST_RUNTIME_SYSTEM_FONT_ENV, TEST_RUNTIME_SYSTEM_FONT_PATH, 1);
+    font_ui_reset_runtime();
+
+    const initial_generation: u32 = font_runtime_generation();
+    try assert_eq_bool(font_system_ui_ref(12u8) == null, true);
+    try assert_eq_bool(write_test_font_file(TEST_RUNTIME_SYSTEM_FONT_PATH, TEST_DEJAVU_TTF_BYTES.ptr, TEST_DEJAVU_TTF_BYTES.len), true);
+    try assert_eq_bool(font_system_ui_retry_refresh(), true);
+
+    const runtime_font: &Font = font_system_ui_ref(12u8);
+    try assert_eq_bool(runtime_font != null, true);
+    try assert_eq_bool(runtime_font.render_kind == FontRenderKind.TrueTypeOutline, true);
+    try assert_eq_bool(font_runtime_generation() != initial_generation, true);
+
+    _ = sys_unlink(TEST_RUNTIME_SYSTEM_FONT_PATH as *const byte) catch {};
+    _ = unsetenv(TEST_RUNTIME_SYSTEM_FONT_ENV);
+    font_ui_reset_runtime();
 }
 
 test "widget font resolves scalable ui font and honors dpi scaling in gui core" {

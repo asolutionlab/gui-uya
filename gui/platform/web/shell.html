@@ -306,6 +306,8 @@
           uyaGuiFitWindow: fitWindow,
           uyaGuiPersistData: persistData,
           uyaGuiFontAsset: resolveAssetUrl(defaultFontAsset),
+          uyaGuiFontLoadStarted: false,
+          uyaGuiFontLoadFinished: false,
           uyaGuiCompleted: false,
           uyaGuiCompletion: null,
           uyaGuiHasPresented: false,
@@ -374,17 +376,15 @@
           });
         });
 
-        Module.preRun.push(function() {
+        Module.uyaGuiMaybeStartFontLoad = function() {
           var fontAssetUrl = Module.uyaGuiFontAsset;
-          if (!fontAssetUrl) {
+          if (!fontAssetUrl || Module.uyaGuiFontLoadStarted || Module.uyaGuiFontLoadFinished) {
             return;
           }
-          addRunDependency('uya-gui-font-load');
-          Module.setStatus('Loading CJK font...');
+          Module.uyaGuiFontLoadStarted = true;
 
           function finish() {
-            Module.setStatus('');
-            removeRunDependency('uya-gui-font-load');
+            Module.uyaGuiFontLoadFinished = true;
           }
 
           function writeFontFile(bytes) {
@@ -422,10 +422,13 @@
             var bytes = new Uint8Array(buffer);
             writeFontFile(bytes);
             reportLoaded(bytes.byteLength);
+            if (typeof Module._uya_gui_web_host_feed_event === 'function') {
+              Module._uya_gui_web_host_feed_event(8, 0, 0, 0, 0, 0);
+            }
           }).catch(function(err) {
             reportFailed(err);
           }).finally(finish);
-        });
+        };
 
         Module.uyaGuiUpdateCanvasCss = function() {
           var canvas = Module.uyaGuiCanvas;
@@ -685,6 +688,7 @@
           if (!Module.uyaGuiHasPresented) {
             Module.uyaGuiHasPresented = true;
             Module.setStatus('');
+            Module.uyaGuiMaybeStartFontLoad();
           }
           Module.uyaGuiLastPresentAt = Date.now();
         };
@@ -705,6 +709,7 @@
           if (!Module.uyaGuiHasPresented) {
             Module.uyaGuiHasPresented = true;
             Module.setStatus('');
+            Module.uyaGuiMaybeStartFontLoad();
           }
           Module.uyaGuiLastPresentAt = Date.now();
         };

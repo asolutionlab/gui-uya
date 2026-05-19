@@ -36,6 +36,7 @@ const CJK_UNIFIED_END: u32 = 0x9FFFu32;
 const SYSTEM_UI_FONT_PRIMARY_PATH: &const byte = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc\0";
 const SYSTEM_UI_FONT_SECONDARY_PATH: &const byte = "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc\0";
 const SYSTEM_UI_FONT_FALLBACK_PATH: &const byte = "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc\0";
+const SYSTEM_UI_FONT_ENV_PATH: &const byte = "UYA_SYSTEM_UI_FONT_PATH\0";
 const SYSTEM_UI_FONT_PREFERRED_FACE: &const byte = "Noto Sans CJK SC\0";
 const SYSTEM_UI_FONT_NAME: &const byte = "SystemUiCjk\0";
 const UI_DEFAULT_FONT_NAME: &const byte = "UiSans\0";
@@ -261,12 +262,14 @@ var _ttf_cache_misses: u32 = 0u32;
 var _font_backend_default_c_stb: bool = false;
 var _system_ui_font_data: &const byte = null;
 var _system_ui_font_len: usize = 0usize;
+var _system_ui_font_face_name: &const byte = SYSTEM_UI_FONT_PREFERRED_FACE;
 var _system_ui_font_ready: bool = false;
 var _system_ui_font_attempted: bool = false;
 var _ui_default_font_slots: [SystemUiFontSlot: 16] = [];
 var _ui_default_font_slots_ready: bool = false;
 var _system_ui_font_slots: [SystemUiFontSlot: 16] = [];
 var _font_ui_dpi: u16 = UI_FONT_BASE_DPI;
+var _font_runtime_generation: u32 = 1u32;
 var _gpu_text_glyph_cmds: [GpuGlyphCmd: 16] = [];
 var _gpu_text_glyph_storage: [byte: 65536] = [];
 
@@ -2670,6 +2673,7 @@ fn system_ui_font_slot_reset(slot: &SystemUiFontSlot) void {
     if slot == null {
         return;
     }
+    ttf_font_asset_reset(&slot.asset);
     slot.pixel_height = 0u16;
     slot.asset = ttf_font_asset_new();
     slot.ready = false;
@@ -2681,6 +2685,24 @@ fn system_ui_font_slots_reset() void {
         system_ui_font_slot_reset(&_system_ui_font_slots[i as usize]);
         i = i + 1;
     }
+}
+
+fn font_runtime_bump_generation() void {
+    _font_runtime_generation = _font_runtime_generation + 1u32;
+    if _font_runtime_generation == 0u32 {
+        _font_runtime_generation = 1u32;
+    }
+}
+
+fn system_ui_font_source_clear() void {
+    system_ui_font_slots_reset();
+    if _system_ui_font_data != null {
+        free(_system_ui_font_data as &void);
+    }
+    _system_ui_font_data = null;
+    _system_ui_font_len = 0usize;
+    _system_ui_font_face_name = SYSTEM_UI_FONT_PREFERRED_FACE;
+    _system_ui_font_ready = false;
 }
 
 fn system_ui_font_map_file(path: &const byte, out_data: &&const byte, out_len: &usize) bool {
@@ -2732,6 +2754,58 @@ fn system_ui_font_map_file(path: &const byte, out_data: &&const byte, out_len: &
     return true;
 }
 
+fn system_ui_font_try_source(path: &const byte, allow_null_face: bool) bool {
+    if path == null {
+        return false;
+    }
+    var mapped: &const byte = null;
+    var mapped_len: usize = 0usize;
+    var probe: TtfFontAsset = ttf_font_asset_new();
+    if !system_ui_font_map_file(path, &mapped, &mapped_len) {
+        return false;
+    }
+
+    if ttf_font_load_memory_with_face(&probe, SYSTEM_UI_FONT_NAME, mapped, mapped_len, SYSTEM_UI_FONT_PROBE_HEIGHT, SYSTEM_UI_FONT_PREFERRED_FACE) {
+        ttf_font_asset_reset(&probe);
+        system_ui_font_source_clear();
+        _system_ui_font_data = mapped;
+        _system_ui_font_len = mapped_len;
+        _system_ui_font_face_name = SYSTEM_UI_FONT_PREFERRED_FACE;
+        _system_ui_font_ready = true;
+        return true;
+    }
+    if allow_null_face && ttf_font_load_memory_with_face(&probe, SYSTEM_UI_FONT_NAME, mapped, mapped_len, SYSTEM_UI_FONT_PROBE_HEIGHT, null) {
+        ttf_font_asset_reset(&probe);
+        system_ui_font_source_clear();
+        _system_ui_font_data = mapped;
+        _system_ui_font_len = mapped_len;
+        _system_ui_font_face_name = null;
+        _system_ui_font_ready = true;
+        return true;
+    }
+
+    ttf_font_asset_reset(&probe);
+    free(mapped as &void);
+    return false;
+}
+
+fn system_ui_font_source_attempt() bool {
+    const override_path: &byte = getenv(SYSTEM_UI_FONT_ENV_PATH as *const byte);
+    if override_path != null && override_path[0] != 0 {
+        return system_ui_font_try_source(override_path as &const byte, true);
+    }
+    if system_ui_font_try_source(WEB_SYSTEM_UI_FONT_PATH, true) {
+        return true;
+    }
+    if system_ui_font_try_source(SYSTEM_UI_FONT_PRIMARY_PATH, false) {
+        return true;
+    }
+    if system_ui_font_try_source(SYSTEM_UI_FONT_SECONDARY_PATH, true) {
+        return true;
+    }
+    return system_ui_font_try_source(SYSTEM_UI_FONT_FALLBACK_PATH, true);
+}
+
 fn system_ui_font_source_init() bool {
     if _system_ui_font_ready {
         return true;
@@ -2739,71 +2813,20 @@ fn system_ui_font_source_init() bool {
     if _system_ui_font_attempted {
         return false;
     }
-
     _system_ui_font_attempted = true;
-    system_ui_font_slots_reset();
+    return system_ui_font_source_attempt();
+}
 
-    var mapped: &const byte = null;
-    var mapped_len: usize = 0usize;
-    var probe: TtfFontAsset = ttf_font_asset_new();
-
-    if system_ui_font_map_file(WEB_SYSTEM_UI_FONT_PATH, &mapped, &mapped_len) {
-        if ttf_font_load_memory_with_face(&probe, SYSTEM_UI_FONT_NAME, mapped, mapped_len, SYSTEM_UI_FONT_PROBE_HEIGHT, SYSTEM_UI_FONT_PREFERRED_FACE)
-            || ttf_font_load_memory_with_face(&probe, SYSTEM_UI_FONT_NAME, mapped, mapped_len, SYSTEM_UI_FONT_PROBE_HEIGHT, null) {
-            ttf_font_asset_reset(&probe);
-            _system_ui_font_data = mapped;
-            _system_ui_font_len = mapped_len;
-            _system_ui_font_ready = true;
-            return true;
-        }
-        ttf_font_asset_reset(&probe);
-        free(mapped as &void);
-        mapped = null;
-        mapped_len = 0usize;
+export fn font_system_ui_retry_refresh() bool {
+    if _system_ui_font_ready {
+        return false;
     }
-
-    if system_ui_font_map_file(SYSTEM_UI_FONT_PRIMARY_PATH, &mapped, &mapped_len) {
-        if ttf_font_load_memory_with_face(&probe, SYSTEM_UI_FONT_NAME, mapped, mapped_len, SYSTEM_UI_FONT_PROBE_HEIGHT, SYSTEM_UI_FONT_PREFERRED_FACE) {
-            ttf_font_asset_reset(&probe);
-            _system_ui_font_data = mapped;
-            _system_ui_font_len = mapped_len;
-            _system_ui_font_ready = true;
-            return true;
-        }
-        ttf_font_asset_reset(&probe);
-        free(mapped as &void);
-        mapped = null;
-        mapped_len = 0usize;
+    _system_ui_font_attempted = true;
+    if !system_ui_font_source_attempt() {
+        return false;
     }
-
-    if system_ui_font_map_file(SYSTEM_UI_FONT_SECONDARY_PATH, &mapped, &mapped_len) {
-        if ttf_font_load_memory_with_face(&probe, SYSTEM_UI_FONT_NAME, mapped, mapped_len, SYSTEM_UI_FONT_PROBE_HEIGHT, null) {
-            ttf_font_asset_reset(&probe);
-            _system_ui_font_data = mapped;
-            _system_ui_font_len = mapped_len;
-            _system_ui_font_ready = true;
-            return true;
-        }
-        ttf_font_asset_reset(&probe);
-        free(mapped as &void);
-        mapped = null;
-        mapped_len = 0usize;
-    }
-
-    if system_ui_font_map_file(SYSTEM_UI_FONT_FALLBACK_PATH, &mapped, &mapped_len) {
-        if ttf_font_load_memory_with_face(&probe, SYSTEM_UI_FONT_NAME, mapped, mapped_len, SYSTEM_UI_FONT_PROBE_HEIGHT, null) {
-            ttf_font_asset_reset(&probe);
-            _system_ui_font_data = mapped;
-            _system_ui_font_len = mapped_len;
-            _system_ui_font_ready = true;
-            return true;
-        }
-        ttf_font_asset_reset(&probe);
-        free(mapped as &void);
-    }
-
-    ttf_font_asset_reset(&probe);
-    return false;
+    font_runtime_bump_generation();
+    return true;
 }
 
 fn ui_default_font_slots_reset() void {
@@ -3729,7 +3752,7 @@ export fn font_system_ui_ref(pixel_height: u8) &Font {
     }
     const slot: &SystemUiFontSlot = &_system_ui_font_slots[slot_idx];
     slot.asset = ttf_font_asset_new();
-    if !ttf_font_load_memory_with_face(&slot.asset, SYSTEM_UI_FONT_NAME, _system_ui_font_data, _system_ui_font_len, requested_height, SYSTEM_UI_FONT_PREFERRED_FACE) {
+    if !ttf_font_load_memory_with_face(&slot.asset, SYSTEM_UI_FONT_NAME, _system_ui_font_data, _system_ui_font_len, requested_height, _system_ui_font_face_name) {
         system_ui_font_slot_reset(slot);
         return null;
     }
@@ -3738,13 +3761,21 @@ export fn font_system_ui_ref(pixel_height: u8) &Font {
     return &slot.asset.font;
 }
 
+export fn font_runtime_generation() u32 {
+    return _font_runtime_generation;
+}
+
 /// 设置 UI 字体逻辑到像素的 DPI 标尺。
 export fn font_ui_set_dpi(dpi: u16) void {
-    if dpi == 0u16 {
-        _font_ui_dpi = UI_FONT_BASE_DPI;
+    var next_dpi: u16 = dpi;
+    if next_dpi == 0u16 {
+        next_dpi = UI_FONT_BASE_DPI;
+    }
+    if _font_ui_dpi == next_dpi {
         return;
     }
-    _font_ui_dpi = dpi;
+    _font_ui_dpi = next_dpi;
+    font_runtime_bump_generation();
 }
 
 /// 返回当前 UI 字体 DPI 标尺。
@@ -3762,12 +3793,21 @@ export fn font_ui_pixel_height(logical_height: u8) u8 {
 
 /// 重置 UI 字体运行时缓存和 DPI 状态。
 export fn font_ui_reset_runtime() void {
+    ui_default_font_slots_reset();
+    _ui_default_font_slots_ready = false;
+    system_ui_font_source_clear();
+    _system_ui_font_attempted = false;
     _font_ui_dpi = UI_FONT_BASE_DPI;
+    font_runtime_bump_generation();
 }
 
 /// 设置是否启用内置 CJK 8x8 点阵 fallback。
 export fn font_set_builtin_cjk_fallback_enabled(enabled: bool) void {
+    if _font_builtin_cjk_fallback_enabled == enabled {
+        return;
+    }
     _font_builtin_cjk_fallback_enabled = enabled;
+    font_runtime_bump_generation();
 }
 
 /// 返回内置 CJK 8x8 点阵 fallback 的启用状态。
@@ -3777,7 +3817,11 @@ export fn font_builtin_cjk_fallback_enabled() bool {
 
 /// 设置是否启用 system-ui 字体的 latin companion 替换。
 export fn font_set_latin_companion_enabled(enabled: bool) void {
+    if _font_latin_companion_enabled == enabled {
+        return;
+    }
     _font_latin_companion_enabled = enabled;
+    font_runtime_bump_generation();
 }
 
 /// 返回 system-ui 字体 latin companion 替换的启用状态。

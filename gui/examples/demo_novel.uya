@@ -1049,6 +1049,25 @@ export fn novel_retained_reset_state(novel: &NovelRetained) void {
     novel.last_auto_tick_ms = 0u32;
 }
 
+export fn novel_page_retained_refresh_font_runtime(page_state: &NovelPageRetained, novel: &NovelRetained) void {
+    if novel == null {
+        return;
+    }
+    novel_retained_init(novel);
+    novel_layout_lines(novel);
+    novel_prewarm_body_glyphs(novel);
+    novel_scroll_to(novel, novel.scroll_y);
+
+    if page_state == null {
+        return;
+    }
+    page_state.shown_scroll_y = -1;
+    page_state.shown_progress = -1;
+    page_state.shown_chapter = -1;
+    novel_metric_text(&page_state.metric3_buf[0], 32usize, "行数" as &const byte, novel.line_count);
+    _ = page_state.metric3.set_text(&page_state.metric3_buf[0]);
+}
+
 /// 处理 `novel_retained` 的触摸输入。
 export fn novel_retained_handle_touch(novel: &NovelRetained, evt: &Event, local: Point) void {
     if novel == null || evt == null {

@@ -12,6 +12,8 @@ use platform.disp.framebuffer_new;
 use render.ctx.RenderCtx;
 use render.ctx.ctx_pixel;
 use render.ctx.render_ctx_new;
+use render.font.font_ui_reset_runtime;
+use render.font.font_ui_set_dpi;
 use render.img.ImageData;
 use render.img.image_data_new;
 use style.StyleProp;
@@ -594,6 +596,24 @@ test "label wrap layout and alignment recalc across multiple lines" {
 
     _ = label.set_text("BYE");
     try assert_eq_bool(label.layout_dirty, true);
+}
+
+test "label relayouts when runtime font generation changes" {
+    font_ui_reset_runtime();
+    var bytes: [byte: 8192] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 48, 48, 192, PixelFormat.ARGB8888));
+    var label: Label = Label.new("Hint");
+    label.widget.at(0, 0);
+    label.widget.size(40, 24);
+    label.render(&ctx);
+
+    const initial_text_h: u16 = label.text_h;
+    font_ui_set_dpi(144u16);
+    label.render(&ctx);
+
+    try assert_eq_bool(label.text_h > initial_text_h, true);
+    try assert_eq_bool(label.layout_dirty, false);
+    font_ui_reset_runtime();
 }
 
 test "page scroll clamps to content bounds and remove updates content size" {

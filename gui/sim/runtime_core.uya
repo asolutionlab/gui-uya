@@ -11,12 +11,14 @@ use render.batch.DrawBatch;
 use render.batch.draw_batch_new;
 use render.ctx.RenderCtx;
 use render.ctx.render_ctx_new;
+use render.font.font_system_ui_retry_refresh;
 use render.scheduler.RenderFramePacer;
 use render.scheduler.RenderFrameResult;
 use render.scheduler.RenderPresentMode;
 use render.scheduler.render_frame_pacer_new;
 use render.scheduler.render_frame_result_idle;
 use sim.app.SimApp;
+use sim.config.SimBackendKind;
 use sim.config.SimConfig;
 
 export interface IRuntimeDisplay {
@@ -132,12 +134,20 @@ export struct SimRuntimeCore {
             has_evt = input.poll(&evt);
         }
 
+        var font_runtime_changed: bool = false;
+        if self.cfg.backend == SimBackendKind.Web {
+            font_runtime_changed = font_system_ui_retry_refresh();
+            if font_runtime_changed {
+                self.app.handle_font_runtime_changed();
+            }
+        }
+
         self.app.update(delta_ms, frame_start_ms);
         output.after_update_ms = get_tick_ms();
 
         const dirty_render: bool = self.app.supports_dirty_render();
         output.dirty_render = dirty_render;
-        const force_full: bool = self.first_frame || dirty_render != self.last_dirty_render;
+        const force_full: bool = self.first_frame || dirty_render != self.last_dirty_render || font_runtime_changed;
         const back_ref: &FrameBuffer = display.get_back_buffer();
         if dirty_render && !force_full {
             _ = framebuffer_copy(back_ref, display.get_front_buffer());

@@ -7,6 +7,7 @@ use libc.strncmp;
 use render.ctx.RenderCtx;
 use render.font.Font;
 use render.font.draw_text;
+use render.font.font_runtime_generation;
 use style.StyleProp;
 use widget.base.Widget;
 use widget.base.WIDGET_TYPE_LABEL;
@@ -61,6 +62,7 @@ export struct Label {
     text_w: u16,
     text_h: u16,
     layout_dirty: bool,
+    font_generation: u32,
     scroll_offset: i16,
 }
 
@@ -118,6 +120,7 @@ Label {
             text_w: 0,
             text_h: 0,
             layout_dirty: true,
+            font_generation: 0u32,
             scroll_offset: 0,
         };
     }
@@ -224,6 +227,11 @@ Label {
     }
 
     fn render(self: &Self, ctx: &RenderCtx) void {
+        const current_font_generation: u32 = font_runtime_generation();
+        if self.font_generation != current_font_generation {
+            self.font_generation = current_font_generation;
+            self.layout_dirty = true;
+        }
         const inner: Rect = widget_draw_surface(&self.widget, ctx);
         const font: &Font = widget_font(&self.widget.base.style);
         const color: Color = widget_text_color(&self.widget.base.style, self.widget.state);

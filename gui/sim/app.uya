@@ -67,6 +67,7 @@ use examples.demo_novel.NovelRetained;
 use examples.demo_novel.NovelPageRetained;
 use examples.demo_novel.novel_retained_handle_touch;
 use examples.demo_novel.novel_retained_new;
+use examples.demo_novel.novel_page_retained_refresh_font_runtime;
 use examples.demo_novel.novel_retained_reset_state;
 use examples.demo_novel.novel_retained_scroll_by;
 use examples.demo_novel.novel_retained_toggle_auto_scroll;
@@ -939,6 +940,13 @@ SimApp {
         self.refresh_title_label();
         self.refresh_phase_label();
         self.refresh_status_label(status);
+    }
+
+    fn handle_font_runtime_changed(self: &Self) void {
+        self.force_full_redraw = true;
+        if self.config.demo == SimDemoKind.Novel {
+            novel_page_retained_refresh_font_runtime(&self.novel_page, &self.novel_demo);
+        }
     }
 
     fn render_home_nav(self: &Self, ctx: &RenderCtx) void {
