@@ -107,56 +107,56 @@ EM_JS(int, uya_gui_web_js_setup_canvas, (int width, int height, int scale, const
         return 0;
     }
     return Module.uyaGuiSetupCanvas(width, height, scale, UTF8ToString(title_ptr || 0)) | 0;
-});
+})
 
 EM_JS(void, uya_gui_web_js_present, (const uint8_t *rgba_ptr, int width, int height), {
     if (Module.uyaGuiPresent) {
         Module.uyaGuiPresent(rgba_ptr, width, height);
     }
-});
+})
 
 EM_JS(void, uya_gui_web_js_present_region, (const uint8_t *rgba_ptr, int width, int height, int x, int y, int rect_w, int rect_h), {
     if (Module.uyaGuiPresentRegion) {
         Module.uyaGuiPresentRegion(rgba_ptr, width, height, x, y, rect_w, rect_h);
     }
-});
+})
 
 EM_JS(void, uya_gui_web_js_set_title, (const char *title_ptr), {
     if (Module.uyaGuiSetTitle) {
         Module.uyaGuiSetTitle(UTF8ToString(title_ptr || 0));
     }
-});
+})
 
 EM_JS(int, uya_gui_web_js_request_fullscreen, (void), {
     if (!Module.uyaGuiRequestFullscreen) {
         return 0;
     }
     return Module.uyaGuiRequestFullscreen() | 0;
-});
+})
 
 EM_JS(void, uya_gui_web_js_clear_dirty_overlay, (void), {
     if (Module.uyaGuiClearDirtyOverlay) {
         Module.uyaGuiClearDirtyOverlay();
     }
-});
+})
 
 EM_JS(void, uya_gui_web_js_draw_dirty_rect, (int x, int y, int w, int h), {
     if (Module.uyaGuiDrawDirtyRect) {
         Module.uyaGuiDrawDirtyRect(x, y, w, h);
     }
-});
+})
 
 EM_JS(void, uya_gui_web_js_set_dirty_overlay_enabled, (int enabled), {
     if (Module.uyaGuiSetDirtyOverlayEnabled) {
         Module.uyaGuiSetDirtyOverlayEnabled(enabled);
     }
-});
+})
 
 EM_JS(void, uya_gui_web_js_shutdown, (void), {
     if (Module.uyaGuiShutdown) {
         Module.uyaGuiShutdown();
     }
-});
+})
 
 EMSCRIPTEN_KEEPALIVE void uya_gui_web_host_feed_event(uint8_t kind, int16_t x, int16_t y, int32_t value, uint16_t key_code, uint16_t modifiers) {
     (void)web_feed_host_event(kind, x, y, value, key_code, modifiers);
@@ -190,7 +190,7 @@ void *uya_gui_web_display_open(int32_t width, int32_t height, int32_t scale, con
     EM_ASM({
         try { FS.mkdir('/tmp'); } catch (e) {}
         try { FS.mkdir('/app'); } catch (e) {}
-    });
+    }, 0);
     g_web_display = display;
     uya_gui_web_set_error(NULL);
     return display;

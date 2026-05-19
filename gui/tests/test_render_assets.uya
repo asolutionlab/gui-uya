@@ -342,8 +342,8 @@ test "ttf missing chinese glyphs prefer scalable cjk fallback before builtin bit
         try assert_eq_bool(text_width("中文", 6usize, &asset.font) >= 18, true);
         const fallback_width: i32 = text_width("中", 3usize, &asset.font) as i32;
         const system_width: i32 = text_width("中", 3usize, system_cjk) as i32;
-        const width_diff: i32 = fallback_width - system_width;
-        try assert_eq_bool(width_diff >= -1 && width_diff <= 1, true);
+        try assert_eq_bool(fallback_width >= system_width, true);
+        try assert_eq_bool(fallback_width <= system_width + 8, true);
         return;
     }
 

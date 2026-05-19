@@ -34,11 +34,12 @@ export struct pthread_key_t {
     destructor: &void,
 }
 
-export extern "libc" fn pthread_once(once_control: &pthread_once_t, init_routine: &void) void {
+export extern "libc" fn pthread_once(once_control: &pthread_once_t, init_routine: &void) i32 {
     _ = init_routine;
     if once_control != null {
         once_control.state = 2;
     }
+    return 0;
 }
 
 export extern "libc" fn pthread_key_create(key: &pthread_key_t, destructor: &void) i32 {
@@ -687,14 +688,14 @@ export extern "libc" fn pthread_detach(thread: &pthread_t) i32 {
 }
 
 // pthread_once - 一次性初始化 (NPTL-lite futex-based)
-export extern "libc" fn pthread_once(once_control: &pthread_once_t, init_routine: &void) void {
+export extern "libc" fn pthread_once(once_control: &pthread_once_t, init_routine: &void) i32 {
     if once_control == null || init_routine == null {
-        return;
+        return 22;
     }
 
     // Fast path: already done
     if once_control.state == 2 {
-        return;
+        return 0;
     }
 
     // Try to acquire init lock
@@ -703,13 +704,14 @@ export extern "libc" fn pthread_once(once_control: &pthread_once_t, init_routine
         _pthread_call_start(init_routine, null);
         once_control.state = 2;
         sys_futex((&once_control.state) as &i32, FUTEX_WAKE, 2147483647, null);
-        return;
+        return 0;
     }
 
     // Another thread is initializing; wait on futex
     while once_control.state != 2 {
         sys_futex((&once_control.state) as &i32, FUTEX_WAIT, 1, null);
     }
+    return 0;
 }
 
 // pthread_exit - 保存 retval 到线程描述符，运行 destructor，然后 sys_exit

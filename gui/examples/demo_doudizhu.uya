@@ -132,7 +132,11 @@ fn ddz_demo_draw_center_text(ctx: &RenderCtx, rect: Rect, text: &const byte, siz
     }
     const tw: u16 = text_width(text, ddz_demo_text_len(text), font);
     const tx: i16 = rect.x + ((rect.w as i32 - tw as i32) / 2) as i16;
-    const ty: i16 = rect.y + ((rect.h as i32 - font.glyph_height as i32) / 2) as i16;
+    var font_box_h: i32 = font.line_height as i32;
+    if font_box_h <= 0 {
+        font_box_h = font.glyph_height as i32;
+    }
+    const ty: i16 = rect.y + ((rect.h as i32 - font_box_h) / 2) as i16;
     draw_text(ctx, tx, ty, text, ddz_demo_text_len(text), font, color);
 }
 

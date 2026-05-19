@@ -50,7 +50,7 @@ void * uya_c_stb_font_create(const unsigned char * data, size_t data_len, uint32
     backend->data_len = data_len;
     backend->sfnt_offset = sfnt_offset;
     backend->pixel_height = (int)pixel_height;
-    backend->scale = stbtt_ScaleForMappingEmToPixels(&backend->info, (float)pixel_height);
+    backend->scale = stbtt_ScaleForPixelHeight(&backend->info, (float)pixel_height);
     stbtt_GetFontVMetrics(&backend->info, &backend->ascent, &backend->descent, &backend->line_gap);
     return backend;
 }

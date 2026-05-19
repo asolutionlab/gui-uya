@@ -18,6 +18,30 @@ MODE="${MODE:-debug}"
 WEB_STACK_SIZE="${WEB_STACK_SIZE:-8388608}"
 TARGET_OS="${TARGET_OS:-unknown}"
 TARGET_ARCH="${TARGET_ARCH:-unknown}"
+WEB_CJK_FONT_OUT="${WEB_CJK_FONT_OUT:-/app/fonts/system_ui_cjk_font}"
+WEB_CJK_FONT_SRC="${WEB_CJK_FONT_SRC:-}"
+
+pick_web_cjk_font() {
+    if [ -n "$WEB_CJK_FONT_SRC" ] && [ -f "$WEB_CJK_FONT_SRC" ]; then
+        printf '%s\n' "$WEB_CJK_FONT_SRC"
+        return 0
+    fi
+
+    local candidate
+    for candidate in \
+        /usr/share/fonts/opentype/source-han-cjk/SourceHanSansSC-Regular.otf \
+        /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc \
+        /usr/share/fonts/truetype/wqy/wqy-microhei.ttc \
+        /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
+    do
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
 
 mkdir -p "$BUILD_DIR"
 
@@ -54,6 +78,17 @@ sed -i '/#include <math.h>/a extern ssize_t write(int fd, const char *buf, size_
 
 declare -a CIMPORT_OBJECTS=()
 declare -a CIMPORT_LDFLAGS=()
+declare -a PRELOAD_FILES=(
+    --preload-file "$ROOT_DIR/gui@/app/gui"
+    --preload-file "$ROOT_DIR/.uya_sim_root_probe@/app/.uya_sim_root_probe"
+)
+
+if WEB_CJK_FONT_PICKED="$(pick_web_cjk_font)"; then
+    PRELOAD_FILES+=(--preload-file "$WEB_CJK_FONT_PICKED@$WEB_CJK_FONT_OUT")
+    echo "info: preload web CJK font: $WEB_CJK_FONT_PICKED -> $WEB_CJK_FONT_OUT" >&2
+else
+    echo "warning: no scalable CJK font found for web build; browser fallback will stay on builtin 8x8 glyphs." >&2
+fi
 
 if [ -f "$OUT_CIMPORT_SIDECAR" ]; then
     # shellcheck disable=SC1090
@@ -100,8 +135,7 @@ fi
     -sEXPORTED_FUNCTIONS=_main,_uya_gui_web_host_feed_event \
     -lidbfs.js \
     --shell-file "$SHELL_FILE" \
-    --preload-file "$ROOT_DIR/gui@/app/gui" \
-    --preload-file "$ROOT_DIR/.uya_sim_root_probe@/app/.uya_sim_root_probe" \
+    "${PRELOAD_FILES[@]}" \
     "${CIMPORT_LDFLAGS[@]}"
 
 echo "$OUT_HTML"
