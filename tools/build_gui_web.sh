@@ -22,6 +22,7 @@ WEB_LEGACY_VM_SUPPORT="${WEB_LEGACY_VM_SUPPORT:-0}"
 TARGET_OS="${TARGET_OS:-unknown}"
 TARGET_ARCH="${TARGET_ARCH:-unknown}"
 WEB_CJK_FONT_OUT="${WEB_CJK_FONT_OUT:-/app/fonts/system_ui_cjk_font}"
+WEB_CJK_FONT_ASSET_NAME="${WEB_CJK_FONT_ASSET_NAME:-system_ui_cjk_font.data}"
 VENDORED_WEB_CJK_FONT_SRC="$ROOT_DIR/third_party/fonts/wqy/wqy-microhei.ttc"
 WEB_CJK_FONT_SRC="${WEB_CJK_FONT_SRC:-$VENDORED_WEB_CJK_FONT_SRC}"
 WEB_MINIFY_HTML="${WEB_MINIFY_HTML:-auto}"
@@ -187,9 +188,10 @@ elif [ "$WEB_MINIFY_HTML" = "auto" ]; then
 fi
 
 if WEB_CJK_FONT_PICKED="$(pick_web_cjk_font)"; then
-    PRELOAD_FILES+=(--preload-file "$WEB_CJK_FONT_PICKED@$WEB_CJK_FONT_OUT")
-    echo "info: preload web CJK font: $WEB_CJK_FONT_PICKED -> $WEB_CJK_FONT_OUT" >&2
+    cp "$WEB_CJK_FONT_PICKED" "$BUILD_DIR/$WEB_CJK_FONT_ASSET_NAME"
+    echo "info: staged web CJK font asset: $WEB_CJK_FONT_PICKED -> $BUILD_DIR/$WEB_CJK_FONT_ASSET_NAME (runtime mount: $WEB_CJK_FONT_OUT)" >&2
 else
+    rm -f "$BUILD_DIR/$WEB_CJK_FONT_ASSET_NAME"
     echo "warning: no scalable CJK font found for web build; browser fallback will stay on builtin 8x8 glyphs." >&2
 fi
 

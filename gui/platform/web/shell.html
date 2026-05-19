@@ -271,6 +271,7 @@
           }
         }
         var defaultCanvasId = findArgValue(bootArgs, '--canvas-id', 'uya-gui-canvas');
+        var defaultFontAsset = findArgValue(bootArgs, '--font-asset', 'system_ui_cjk_font.data');
         var fitWindow = resolveBoolFlag(bootArgs, '--fit-window', '--fixed-window', true);
         var persistData = resolveBoolFlag(bootArgs, '--persist-data', '--no-persist-data', false);
         var outputElement = null;
@@ -304,6 +305,7 @@
           uyaGuiCanvasId: defaultCanvasId,
           uyaGuiFitWindow: fitWindow,
           uyaGuiPersistData: persistData,
+          uyaGuiFontAsset: resolveAssetUrl(defaultFontAsset),
           uyaGuiCompleted: false,
           uyaGuiCompletion: null,
           uyaGuiHasPresented: false,
@@ -370,6 +372,59 @@
             }
             removeRunDependency('uya-gui-idbfs-load');
           });
+        });
+
+        Module.preRun.push(function() {
+          var fontAssetUrl = Module.uyaGuiFontAsset;
+          if (!fontAssetUrl) {
+            return;
+          }
+          addRunDependency('uya-gui-font-load');
+          Module.setStatus('Loading CJK font...');
+
+          function finish() {
+            Module.setStatus('');
+            removeRunDependency('uya-gui-font-load');
+          }
+
+          function writeFontFile(bytes) {
+            try {
+              FS.mkdirTree('/app/fonts');
+            } catch (err) {
+            }
+            try {
+              FS.unlink('/app/fonts/system_ui_cjk_font');
+            } catch (err) {
+            }
+            FS.writeFile('/app/fonts/system_ui_cjk_font', bytes, { canOwn: true });
+          }
+
+          function reportLoaded(byteLength) {
+            Module.print('[web] CJK font loaded:', fontAssetUrl, '(' + byteLength + ' bytes)');
+          }
+
+          function reportFailed(err) {
+            Module.printErr('[web] CJK font load failed:', fontAssetUrl, err && err.message ? err.message : err);
+          }
+
+          if (typeof fetch !== 'function') {
+            reportFailed(new Error('fetch is unavailable in this browser'));
+            finish();
+            return;
+          }
+
+          fetch(fontAssetUrl).then(function(response) {
+            if (!response.ok) {
+              throw new Error('HTTP ' + response.status);
+            }
+            return response.arrayBuffer();
+          }).then(function(buffer) {
+            var bytes = new Uint8Array(buffer);
+            writeFontFile(bytes);
+            reportLoaded(bytes.byteLength);
+          }).catch(function(err) {
+            reportFailed(err);
+          }).finally(finish);
         });
 
         Module.uyaGuiUpdateCanvasCss = function() {
