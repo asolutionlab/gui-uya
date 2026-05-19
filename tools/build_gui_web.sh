@@ -24,6 +24,30 @@ VENDORED_WEB_CJK_FONT_SRC="$ROOT_DIR/third_party/fonts/wqy/wqy-microhei.ttc"
 WEB_CJK_FONT_SRC="${WEB_CJK_FONT_SRC:-$VENDORED_WEB_CJK_FONT_SRC}"
 WEB_MINIFY_HTML="${WEB_MINIFY_HTML:-auto}"
 
+pick_emcc_stack_flag() {
+    local probe_dir probe_c probe_js
+    probe_dir="$(mktemp -d)"
+    probe_c="$probe_dir/probe.c"
+    probe_js="$probe_dir/probe.js"
+
+    printf '%s\n' 'int main(void) { return 0; }' >"$probe_c"
+
+    if "$EMCC_BIN" "$probe_c" -O0 -sSTACK_SIZE="$WEB_STACK_SIZE" -o "$probe_js" >/dev/null 2>&1; then
+        rm -rf "$probe_dir"
+        printf '%s\n' "STACK_SIZE"
+        return 0
+    fi
+
+    if "$EMCC_BIN" "$probe_c" -O0 -sTOTAL_STACK="$WEB_STACK_SIZE" -o "$probe_js" >/dev/null 2>&1; then
+        rm -rf "$probe_dir"
+        printf '%s\n' "TOTAL_STACK"
+        return 0
+    fi
+
+    rm -rf "$probe_dir"
+    return 1
+}
+
 pick_web_cjk_font() {
     if [ -n "$WEB_CJK_FONT_SRC" ] && [ -f "$WEB_CJK_FONT_SRC" ]; then
         printf '%s\n' "$WEB_CJK_FONT_SRC"
@@ -57,6 +81,11 @@ mkdir -p "$BUILD_DIR"
 
 if ! command -v "$EMCC_BIN" >/dev/null 2>&1; then
     echo "error: emcc was not found. Please install Emscripten and ensure 'emcc' is on PATH." >&2
+    exit 2
+fi
+
+if ! EMCC_STACK_FLAG="$(pick_emcc_stack_flag)"; then
+    echo "error: could not determine a supported Emscripten stack-size flag (tried STACK_SIZE and TOTAL_STACK)." >&2
     exit 2
 fi
 
@@ -158,7 +187,7 @@ declare -a LINK_CMD=(
     -sALLOW_MEMORY_GROWTH=1
     -sINITIAL_MEMORY="$WEB_INITIAL_MEMORY"
     -sNO_EXIT_RUNTIME=1
-    -sSTACK_SIZE="$WEB_STACK_SIZE"
+    -s"$EMCC_STACK_FLAG"="$WEB_STACK_SIZE"
     -sEXPORTED_FUNCTIONS=_main,_uya_gui_web_host_feed_event
     -lidbfs.js
     --shell-file "$SHELL_FILE"
