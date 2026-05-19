@@ -152,7 +152,7 @@ fi
     -o "$OUT_HTML" \
     -sALLOW_MEMORY_GROWTH=1 \
     -sNO_EXIT_RUNTIME=1 \
-    -sSTACK_SIZE="$WEB_STACK_SIZE" \
+    -Wl,-z,stack-size="$WEB_STACK_SIZE" \
     -sEXPORTED_FUNCTIONS=_main,_uya_gui_web_host_feed_event \
     -lidbfs.js \
     --shell-file "$SHELL_FILE" \

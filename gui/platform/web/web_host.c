@@ -158,6 +158,11 @@ EM_JS(void, uya_gui_web_js_shutdown, (void), {
     }
 })
 
+EM_JS(void, uya_gui_web_js_ensure_runtime_dirs, (void), {
+    try { FS.mkdir('/tmp'); } catch (e) {}
+    try { FS.mkdir('/app'); } catch (e) {}
+})
+
 EMSCRIPTEN_KEEPALIVE void uya_gui_web_host_feed_event(uint8_t kind, int16_t x, int16_t y, int32_t value, uint16_t key_code, uint16_t modifiers) {
     (void)web_feed_host_event(kind, x, y, value, key_code, modifiers);
     if (kind == UYA_GUI_WEB_EVT_REFRESH && g_web_display != NULL) {
@@ -187,10 +192,7 @@ void *uya_gui_web_display_open(int32_t width, int32_t height, int32_t scale, con
         uya_gui_web_set_error("canvas init failed");
         return NULL;
     }
-    EM_ASM({
-        try { FS.mkdir('/tmp'); } catch (e) {}
-        try { FS.mkdir('/app'); } catch (e) {}
-    }, 0);
+    uya_gui_web_js_ensure_runtime_dirs();
     g_web_display = display;
     uya_gui_web_set_error(NULL);
     return display;
