@@ -1,9 +1,11 @@
 #include <emscripten.h>
+#include <emscripten/html5.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 enum {
     UYA_GUI_WEB_EVT_NONE = 0,
@@ -35,6 +37,62 @@ extern void sim_web_shutdown(void);
 static UyaGuiWebDisplay *g_web_display = NULL;
 static int g_web_loop_active = 0;
 static char g_web_last_error[256] = {0};
+
+int32_t uya_gui_web_host_now_ms(void) {
+    return (int32_t)emscripten_get_now();
+}
+
+int32_t uya_gui_web_host_clock_gettime(int32_t clock_id, int64_t *tv_sec, int64_t *tv_nsec) {
+    double now_ms = emscripten_get_now();
+    int64_t whole_ms = (int64_t)now_ms;
+    (void)clock_id;
+    if (tv_sec != NULL) {
+        *tv_sec = whole_ms / 1000;
+    }
+    if (tv_nsec != NULL) {
+        *tv_nsec = (whole_ms % 1000) * 1000000;
+    }
+    return 0;
+}
+
+int32_t uya_gui_web_host_gettimeofday(int64_t *tv_sec, int64_t *tv_usec) {
+    double now_ms = emscripten_get_now();
+    int64_t whole_ms = (int64_t)now_ms;
+    if (tv_sec != NULL) {
+        *tv_sec = whole_ms / 1000;
+    }
+    if (tv_usec != NULL) {
+        *tv_usec = (whole_ms % 1000) * 1000;
+    }
+    return 0;
+}
+
+int32_t uya_gui_web_host_nanosleep(int64_t req_sec, int64_t req_nsec, int64_t *rem_sec, int64_t *rem_nsec) {
+    (void)req_sec;
+    (void)req_nsec;
+    if (rem_sec != NULL) {
+        *rem_sec = 0;
+    }
+    if (rem_nsec != NULL) {
+        *rem_nsec = 0;
+    }
+    return 0;
+}
+
+int32_t uya_gui_web_host_fstat_size(int32_t fd, int64_t *out_size) {
+    off_t cur = lseek(fd, 0, SEEK_CUR);
+    off_t end = lseek(fd, 0, SEEK_END);
+    if (end < 0) {
+        return -1;
+    }
+    if (cur >= 0) {
+        (void)lseek(fd, cur, SEEK_SET);
+    }
+    if (out_size != NULL) {
+        *out_size = (int64_t)end;
+    }
+    return 0;
+}
 
 static void uya_gui_web_set_error(const char *msg) {
     if (msg == NULL) {

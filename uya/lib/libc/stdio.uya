@@ -36,12 +36,12 @@ export extern "libc" fn flush_buffer(stream: &FILE) i32 {
     }
     
     // 写入缓冲区中的所有数据
-    const result: !i64 = @syscall(SYS_write, stream.fd, stream.buffer as i64, stream.buf_len as i64);
-    const written: i64 = result catch {
+    const result: !isize = sys_write(stream.fd as i32, stream.buffer as *const byte, stream.buf_len);
+    const written: isize = result catch {
         return -1;  // 写入失败
     };
     
-    if written < 0 {
+    if written < 0isize {
         return -1;
     }
     
@@ -61,11 +61,11 @@ export extern "libc" fn write_to_buffer(stream: &FILE, buf: &const byte, n: usiz
     const buf_size: usize = @len(stream.buffer);
     // 如果禁用了缓冲或缓冲区太小，直接写入
     if stream.buf_mode == 0 || n >= buf_size {
-        const result: !i64 = @syscall(SYS_write, stream.fd, buf as i64, n as i64);
-        const written: i64 = result catch {
+        const result: !isize = sys_write(stream.fd as i32, buf as *const byte, n);
+        const written: isize = result catch {
             return -1;
         };
-        return written;
+        return written as i64;
     }
     
     // 尝试将数据放入缓冲区
@@ -182,11 +182,11 @@ export extern "libc" fn put_char_fd(c: i32, fd: i64) i32 {
     } else {
         // 非标准流，直接写入
         var ch: byte = c as byte;
-        const result: !i64 = @syscall(SYS_write, fd, &ch as i64, 1);
-        const written: i64 = result catch {
+        const result: !isize = sys_write(fd as i32, &ch as *const byte, 1usize);
+        const written: isize = result catch {
             return 0 - 1;
         };
-        if written == 1 {
+        if written == 1isize {
             return c;
         }
         return 0 - 1;
@@ -213,11 +213,11 @@ export extern "libc" fn write_bytes_fd(buf: &const byte, n: usize, fd: i64) i64 
         return write_to_buffer(target_stream, buf, n);
     } else {
         // 非标准流，直接写入
-        const result: !i64 = @syscall(SYS_write, fd, buf as i64, n as i64);
-        const written: i64 = result catch {
+        const result: !isize = sys_write(fd as i32, buf as *const byte, n);
+        const written: isize = result catch {
             return 0 - 1;
         };
-        return written;
+        return written as i64;
     }
 }
 
@@ -248,11 +248,11 @@ export extern "libc" fn put_str_len(s: &const byte, len: usize) i32 {
 // 返回：读取的字符，EOF 或错误返回 -1
 export extern "libc" fn get_char() i32 {
     var ch: byte = 0 as byte;
-    const result: !i64 = @syscall(SYS_read, STDIN, &ch as i64, 1);
-    const bytes_read: i64 = result catch {
+    const result: !isize = sys_read(STDIN as i32, &ch, 1usize);
+    const bytes_read: isize = result catch {
         return 0 - 1;
     };
-    if bytes_read == 1 {
+    if bytes_read == 1isize {
         return ch as i32;
     }
     return 0 - 1;
@@ -261,21 +261,21 @@ export extern "libc" fn get_char() i32 {
 // read_bytes - 从标准输入读取最多 n 个字节
 // 返回：读取的字节数，EOF 或错误返回 -1
 export extern "libc" fn read_bytes(buf: &byte, n: usize) i64 {
-    const result: !i64 = @syscall(SYS_read, STDIN, buf as i64, n as i64);
-    const bytes_read: i64 = result catch {
+    const result: !isize = sys_read(STDIN as i32, buf as *byte, n);
+    const bytes_read: isize = result catch {
         return 0 - 1;
     };
-    return bytes_read;
+    return bytes_read as i64;
 }
 
 // read_bytes_fd - 从指定文件描述符读取最多 n 个字节
 // 返回：读取的字节数，EOF 或错误返回 -1
 export extern "libc" fn read_bytes_fd(buf: &byte, n: usize, fd: i64) i64 {
-    const result: !i64 = @syscall(SYS_read, fd, buf as i64, n as i64);
-    const bytes_read: i64 = result catch {
+    const result: !isize = sys_read(fd as i32, buf as *byte, n);
+    const bytes_read: isize = result catch {
         return 0 - 1;
     };
-    return bytes_read;
+    return bytes_read as i64;
 }
 
 // ============================================================
@@ -1828,7 +1828,7 @@ export extern "libc" fn fflush(stream: &FILE) i32 {
 export extern "libc" fn fseek(stream: &FILE, offset: i64, whence: i32) i32 {
     if stream == null { return -1; }
     // 简化实现：使用 lseek
-    const result: !i64 = @syscall(SYS_lseek, stream.fd, offset, whence as i64);
+    const result: !i64 = sys_lseek(stream.fd as i32, offset, whence);
     const ret: i64 = result catch { return -1; };
     if ret < 0 { return -1; }
     return 1;
@@ -1838,7 +1838,7 @@ export extern "libc" fn fseek(stream: &FILE, offset: i64, whence: i32) i32 {
 // 返回：当前位置，失败返回 -1
 export extern "libc" fn ftell(stream: &FILE) i64 {
     if stream == null { return -1; }
-    const result: !i64 = @syscall(SYS_lseek, stream.fd, 0, 1);  // SEEK_CUR = 1
+    const result: !i64 = sys_lseek(stream.fd as i32, 0, 1);  // SEEK_CUR = 1
     const ret: i64 = result catch { return -1; };
     return ret;
 }
@@ -1846,7 +1846,7 @@ export extern "libc" fn ftell(stream: &FILE) i64 {
 // rewind - 重置文件位置指针到开头
 export extern "libc" fn rewind(stream: &FILE) void {
     if stream == null { return; }
-    _ = @syscall(SYS_lseek, stream.fd, 0, 0);  // SEEK_SET = 0
+    _ = sys_lseek(stream.fd as i32, 0, 0) catch {};  // SEEK_SET = 0
 }
 
 // feof - 检查是否到达文件末尾
@@ -1997,7 +1997,7 @@ export extern "libc" fn remove(path: &const byte) i32 {
 // 返回：0 成功，-1 失败
 export extern "libc" fn rename(oldpath: &const byte, newpath: &const byte) i32 {
     if oldpath == null || newpath == null { return -1; }
-    const result: !i32 = @syscall(SYS_rename, oldpath as i64, newpath as i64) as! i32;
+    const result: !i32 = sys_rename(oldpath, newpath);
     const ret: i32 = result catch { return -1; };
     return ret;
 }
@@ -2200,7 +2200,7 @@ export extern "libc" fn puts(s: &const byte) i32 {
     
     // 输出字符串
     if len > 0 {
-        const result1: !i64 = @syscall(SYS_write, STDOUT, s as i64, len as i64);
+        const result1: !isize = sys_write(STDOUT as i32, s as *const byte, len);
         result1 catch {
             return 0 - 1;
         };
@@ -2208,7 +2208,7 @@ export extern "libc" fn puts(s: &const byte) i32 {
     
     // 输出换行符
     var nl: byte = 10;
-    const result2: !i64 = @syscall(SYS_write, STDOUT, &nl as i64, 1);
+    const result2: !isize = sys_write(STDOUT as i32, &nl as *const byte, 1usize);
     result2 catch {
         return 0 - 1;
     };

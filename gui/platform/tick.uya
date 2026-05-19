@@ -1,19 +1,34 @@
+use std;
 use libc.CLOCK_MONOTONIC;
 use libc.TimeSpec;
 use libc.sys_clock_gettime;
 use libc.sys_nanosleep;
 
+extern fn uya_gui_web_host_now_ms() i32;
+extern fn uya_gui_web_host_clock_gettime(clock_id: i32, tv_sec: &i64, tv_nsec: &i64) i32;
+extern fn uya_gui_web_host_nanosleep(req_sec: i64, req_nsec: i64, rem_sec: &i64, rem_nsec: &i64) i32;
+
 fn tick_monotonic_now() TimeSpec {
     var ts: TimeSpec = TimeSpec{ tv_sec: 0, tv_nsec: 0 };
-    _ = sys_clock_gettime(CLOCK_MONOTONIC, &ts) catch {};
+    std.cfg(std.target_os == .tos_unknown, {
+        _ = uya_gui_web_host_clock_gettime(0, &ts.tv_sec, &ts.tv_nsec);
+    }, {
+        _ = sys_clock_gettime(CLOCK_MONOTONIC, &ts) catch {};
+    })
     return ts;
 }
 
 /// 获取当前单调时钟的毫秒值。
 export fn get_tick_ms() u32 {
-    const ts: TimeSpec = tick_monotonic_now();
-    const total_ms: u64 = (ts.tv_sec as u64) * 1000u64 + (ts.tv_nsec as u64) / 1000000u64;
-    return total_ms as u32;
+    var out_ms: u32 = 0u32;
+    std.cfg(std.target_os == .tos_unknown, {
+        out_ms = (uya_gui_web_host_now_ms() as! u32).value;
+    }, {
+        const ts: TimeSpec = tick_monotonic_now();
+        const total_ms: u64 = (ts.tv_sec as u64) * 1000u64 + (ts.tv_nsec as u64) / 1000000u64;
+        out_ms = (total_ms as! u32).value;
+    })
+    return out_ms;
 }
 
 /// 获取当前单调时钟的微秒值。
@@ -24,6 +39,12 @@ export fn get_tick_us() u64 {
 
 /// 以毫秒为单位休眠当前线程。
 export fn sleep_ms(ms: u32) void {
+    std.cfg(std.target_os == .tos_unknown, {
+        var rem_sec: i64 = 0;
+        var rem_nsec: i64 = 0;
+        _ = uya_gui_web_host_nanosleep((ms / 1000u32) as i64, ((ms % 1000u32) as i64) * 1000000i64, &rem_sec, &rem_nsec);
+        return;
+    }, {})
     var req: TimeSpec = TimeSpec{
         tv_sec: (ms / 1000u32) as i64,
         tv_nsec: ((ms % 1000u32) as i64) * 1000000i64,

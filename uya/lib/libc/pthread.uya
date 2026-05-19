@@ -24,6 +24,35 @@ use libc.sys_gettid;
 use libc.SYS_sched_yield;
 use libc.sys_set_tid_address;
 
+std.cfg(std.target_os == .tos_unknown, {
+export struct pthread_once_t {
+    state: i32,
+}
+
+export struct pthread_key_t {
+    seq: i32,
+    destructor: &void,
+}
+
+export extern "libc" fn pthread_once(once_control: &pthread_once_t, init_routine: &void) void {
+    _ = init_routine;
+    if once_control != null {
+        once_control.state = 2;
+    }
+}
+
+export extern "libc" fn pthread_key_create(key: &pthread_key_t, destructor: &void) i32 {
+    if key != null {
+        key.seq = 1;
+        key.destructor = destructor;
+    }
+    return 0;
+}
+
+export extern "libc" fn pthread_getspecific(key: pthread_key_t) &void;
+export extern "libc" fn pthread_setspecific(key: pthread_key_t, value: &void) i32;
+}, {
+
 // 前向声明：使用 libc.stdlib 的 malloc/free（sys_* 由 use libc 导入）
 extern fn malloc(size: usize) &void;
 extern fn free(ptr: &void) void;
@@ -1968,3 +1997,4 @@ export extern "libc" fn pthread_getaffinity_np(thread: &pthread_t, cpusetsize: u
     }
     return sched_getaffinity(tid, cpusetsize, cpuset as &void);
 }
+})

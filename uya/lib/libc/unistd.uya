@@ -35,6 +35,9 @@ std.cfg(std.target_os == .tos_macos, {
 extern "libc" fn uya_macos_system(cmd: &const byte) !i32;
 }, {})
 
+std.cfg(std.target_os == .tos_unknown, {
+}, {
+
 // ============================================================
 // 标准文件描述符常量
 // ============================================================
@@ -307,3 +310,4 @@ export extern "libc" fn sleep(seconds: i32) i32 {
     // TODO: 实现真正的 sleep
     return 0;
 }
+})

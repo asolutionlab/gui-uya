@@ -3,6 +3,7 @@
 // 模块路径：use std.async
 // 提供：Waker、interface Future<T>、struct Future<T> 占位、Task<T>、Poll<T>。
 
+use std;
 use libc.heap;
 use libc.errno;
 use libc.pthread;
@@ -14,6 +15,7 @@ use std.string.strlen;
 /// 线程本地 async frame 分配器（通过 pthread TSD 绑定）
 var _uya_async_frame_allocator_once: pthread_once_t = pthread_once_t{ state: 0 };
 var _uya_async_frame_allocator_key: pthread_key_t = pthread_key_t{ seq: 0, destructor: null };
+var _uya_async_frame_allocator_web: &IAllocator = null;
 
 fn _uya_init_async_frame_allocator_key(_unused: &void) &void {
     _ = _unused;
@@ -23,20 +25,29 @@ fn _uya_init_async_frame_allocator_key(_unused: &void) &void {
 
 /// 设置当前线程的 async frame 分配器
 export fn set_async_frame_allocator(alloc: &IAllocator) void {
-    pthread_once(&_uya_async_frame_allocator_once, &_uya_init_async_frame_allocator_key as &void);
-    if _uya_async_frame_allocator_key.seq <= 0 {
-        return;
-    }
-    _ = pthread_setspecific(_uya_async_frame_allocator_key, alloc as &void);
+    std.cfg(std.target_os == .tos_unknown, {
+        _uya_async_frame_allocator_web = alloc;
+    }, {
+        pthread_once(&_uya_async_frame_allocator_once, &_uya_init_async_frame_allocator_key as &void);
+        if _uya_async_frame_allocator_key.seq <= 0 {
+            return;
+        }
+        _ = pthread_setspecific(_uya_async_frame_allocator_key, alloc as &void);
+    })
 }
 
 /// 获取当前线程的 async frame 分配器；未设置或初始化失败时返回 null。
 export fn get_async_frame_allocator() &IAllocator {
-    pthread_once(&_uya_async_frame_allocator_once, &_uya_init_async_frame_allocator_key as &void);
-    if _uya_async_frame_allocator_key.seq <= 0 {
-        return null;
-    }
-    return pthread_getspecific(_uya_async_frame_allocator_key) as &IAllocator;
+    var alloc: &IAllocator = null;
+    std.cfg(std.target_os == .tos_unknown, {
+        alloc = _uya_async_frame_allocator_web;
+    }, {
+        pthread_once(&_uya_async_frame_allocator_once, &_uya_init_async_frame_allocator_key as &void);
+        if _uya_async_frame_allocator_key.seq > 0 {
+            alloc = pthread_getspecific(_uya_async_frame_allocator_key) as &IAllocator;
+        }
+    })
+    return alloc;
 }
 
 /// 供接口 box / async helper 复用的分配入口：优先当前线程的 async frame allocator。

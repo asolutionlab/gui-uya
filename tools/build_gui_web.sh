@@ -34,11 +34,19 @@ fi
 TARGET_OS="$TARGET_OS" TARGET_ARCH="$TARGET_ARCH" \
     "$UYA_BIN" build "$APP" --c99 --no-split-c "$UYA_OPT" -o "$OUT_C"
 
+# Web 构建会显式把 Uya 目标切到 unknown，以屏蔽宿主 syscall/asm 路径。
+# 当前 codegen 仍会在生成 C 中保留未被引用的 @syscall helper fallback #error；
+# 对 wasm 目标这里直接去掉该行，避免 helper-only 诊断阻塞后续真实编译错误。
+sed -i '/@syscall C99 backend: supported targets/d' "$OUT_C"
+sed -i '/#include <math.h>/a extern ssize_t write(int fd, const char *buf, size_t count);\nextern ssize_t read(int fd, char *buf, size_t count);\nextern int close(int fd);\nextern int access(const char *pathname, int mode);\nextern int64_t lseek(int fd, int64_t offset, int whence);\nextern void _exit(int code);' "$OUT_C"
+
 "$EMCC_BIN" -std=c99 "$EMCC_OPT" -fno-builtin -fvisibility=hidden -w \
+    -include fcntl.h \
+    -include sys/mman.h \
     -c "$OUT_C" \
     -o "$OUT_GEN_O"
 
-"$EMCC_BIN" -std=c99 "$EMCC_OPT" -Wall -Wextra -pedantic -fvisibility=hidden \
+"$EMCC_BIN" -std=gnu99 "$EMCC_OPT" -Wall -Wextra -pedantic -fvisibility=hidden \
     -c "$ROOT_DIR/gui/platform/web/web_host.c" \
     -o "$OUT_WEB_O"
 
