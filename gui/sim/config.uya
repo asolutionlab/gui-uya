@@ -35,6 +35,7 @@ export enum SimDemoKind {
 export enum SimBackendKind {
     Sdl2,
     FrameBuffer,
+    Web,
 }
 
 export enum SimGpuKind {
@@ -58,6 +59,7 @@ export struct SimConfig {
     hud_enabled: bool,
     show_dirty_regions: bool,
     show_help: bool,
+    persist_data: bool,
     profiler_report_every: u32,
     max_frames: u32,
     title: &const byte,
@@ -133,6 +135,9 @@ export fn sim_backend_name(kind: SimBackendKind) &const byte {
     if kind == SimBackendKind.FrameBuffer {
         return "fb" as &const byte;
     }
+    if kind == SimBackendKind.Web {
+        return "web" as &const byte;
+    }
     return "sdl2" as &const byte;
 }
 
@@ -176,6 +181,7 @@ export fn sim_config_default() SimConfig {
         hud_enabled: true,
         show_dirty_regions: false,
         show_help: false,
+        persist_data: false,
         profiler_report_every: 120u32,
         max_frames: 0u32,
         title: "UyaGUI 模拟器" as &const byte,
@@ -227,6 +233,8 @@ export fn sim_config_from_runtime() SimConfig {
             cfg.show_dirty_regions = true;
         } else if sim_cstr_eq(arg as &const byte, "--hide-dirty") {
             cfg.show_dirty_regions = false;
+        } else if sim_cstr_eq(arg as &const byte, "--persist-data") {
+            cfg.persist_data = true;
         } else if i + 1 < get_argc() {
             const next: &byte = get_argv(i + 1);
             if sim_cstr_eq(arg as &const byte, "--demo") && next != null {
@@ -261,6 +269,8 @@ export fn sim_config_from_runtime() SimConfig {
             } else if sim_cstr_eq(arg as &const byte, "--backend") && next != null {
                 if sim_cstr_eq(next as &const byte, "fb") || sim_cstr_eq(next as &const byte, "framebuffer") {
                     cfg.backend = SimBackendKind.FrameBuffer;
+                } else if sim_cstr_eq(next as &const byte, "web") {
+                    cfg.backend = SimBackendKind.Web;
                 } else {
                     cfg.backend = SimBackendKind.Sdl2;
                 }
@@ -335,7 +345,11 @@ export fn sim_config_from_runtime() SimConfig {
     }
 
     if sim_cstr_empty(cfg.resource_root) {
-        cfg.resource_root = ".";
+        if cfg.backend == SimBackendKind.Web {
+            cfg.resource_root = "/app";
+        } else {
+            cfg.resource_root = ".";
+        }
     }
     return cfg;
 }

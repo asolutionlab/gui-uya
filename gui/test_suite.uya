@@ -20,6 +20,7 @@ use tests.test_dirty_region;
 use tests.test_doudizhu_ai;
 use tests.test_doudizhu_rules;
 use tests.test_widgets;
+use tests.test_web_backend;
 
 test "phase4 suite loads" {
     const sentinel: i32 = TEST_ANIM_MODULE
@@ -43,6 +44,7 @@ test "phase4 suite loads" {
         + TEST_DIRTY_REGION_MODULE
         + TEST_DOUDIZHU_AI_MODULE
         + TEST_DOUDIZHU_RULES_MODULE
-        + TEST_WIDGET_MODULE;
+        + TEST_WIDGET_MODULE
+        + TEST_WEB_BACKEND_MODULE;
     _ = sentinel;
 }

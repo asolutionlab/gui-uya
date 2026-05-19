@@ -1,10 +1,34 @@
 # UyaGUI Web 后端详细设计
 
-> 版本: v0.1.0  
-> 日期: 2026-05-18  
-> 状态: 设计提案（尚未落地实现）
+> 版本: v0.2.0  
+> 日期: 2026-05-19  
+> 状态: 设计已部分落地（以仓库当前实现为准）
 
-> 说明: 本文描述的是“新增原生 Web 后端”的长期方案，目标是在浏览器中运行现有 UyaGUI `sim`/demo，并保持与当前 `SDL2` / `Framebuffer` 后端一致的分层方式。本文中的新增类型、函数签名和文件布局属于提案；若与当前仓库代码不一致，以当前代码为准。
+> 说明: 本文描述“新增原生 Web 后端”的长期方案。`runtime_core`、`platform/web/*`、`runner_web`、Web 构建脚本已经在仓库中落地了一个 MVP；本文既记录目标结构，也记录当前实现与理想设计之间的差距。
+
+## 0. 当前落地情况
+
+- 已落地文件：
+  - `gui/platform/web/disp_web.uya`
+  - `gui/platform/web/indev_web.uya`
+  - `gui/platform/web/web_common.uya`
+  - `gui/platform/web/web_host.c`
+  - `gui/sim/runtime_core.uya`
+  - `gui/sim/runner_web.uya`
+  - `gui/sim_web_main.uya`
+  - `tools/build_gui_web.sh`
+  - `tools/serve_gui_web.sh`
+- 已落地策略：
+  - Web backend 默认资源根为 `/app`
+  - 资源探针改为 `.uya_sim_root_probe`
+  - 默认截图/录制路径改为 `/tmp/last_frame.png` 与 `/tmp/last_input.uyarec`
+  - 首版显示使用 `Canvas2D + full present`
+  - 桌面 `runner.uya` 已改为复用 `SimRuntimeCore`
+- 当前未闭环：
+  - 本机未安装 `emcc`，因此未在当前环境产出最终 `wasm/js/html`
+  - `present_dirty()` 在 Web 侧仍退化为 full present
+  - 截图导出目前只保证写入 MEMFS，未补完 host 下载桥
+  - 浏览器 smoke 与 headless 自动化尚未补齐
 
 ---
 

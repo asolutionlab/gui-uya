@@ -17,6 +17,7 @@ use render.gpu.GpuGlyphCmd;
 use render.gpu.GpuImageCmd;
 use render.gpu.GpuLineCmd;
 use render.gpu.GpuStrokeRectCmd;
+use sim.runtime_core.IRuntimeDisplay;
 
 extern fn malloc(size: usize) &void;
 extern fn free(ptr: &void) void;
@@ -53,7 +54,7 @@ extern fn uya_gui_sim_sdl_gles2_draw_glyphs(handle: &void, cmds: &GpuGlyphCmd, c
 extern fn uya_gui_sim_sdl_gles2_present_frame(handle: &void, pixels: &const byte, pitch: i32, width: i32, height: i32, rects: &Rect, rect_count: i32, overlay_enabled: i32) i32;
 extern fn uya_gui_sim_sdl_last_error() &byte;
 
-export struct SdlDisplay {
+export struct SdlDisplay : IRuntimeDisplay {
     host: &void,
     front_mem: &byte,
     back_mem: &byte,

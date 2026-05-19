@@ -25,13 +25,16 @@ UYA_DASHBOARD_COMPARE_DIR ?= $(BUILD_DIR)/dashboard_compare
 UYA_DASHBOARD_COMPARE_BIN ?= $(UYA_DASHBOARD_COMPARE_DIR)/uya_dashboard_compare
 DASHBOARD_COMPARE_REPORT ?= $(BUILD_DIR)/dashboard_compare/dashboard_compare_report.md
 
-.PHONY: build test bench bench-report bench-json bench-snapshot bench-verify docs-api ci release release-artifacts clean hooks build-arm build-riscv build-esp32 sim-build sim-run sim-debug sim-headless text-compare lvgl-text-compare uya-dashboard-compare-build uya-dashboard-compare lvgl-dashboard-compare-build lvgl-dashboard-compare dashboard-compare dashboard-compare-report font-backend-compare
+.PHONY: build test bench bench-report bench-json bench-snapshot bench-verify docs-api ci release release-artifacts clean hooks build-arm build-riscv build-esp32 sim-build sim-run sim-debug sim-headless sim-web-build sim-web-run sim-web-serve sim-web-smoke text-compare lvgl-text-compare uya-dashboard-compare-build uya-dashboard-compare lvgl-dashboard-compare-build lvgl-dashboard-compare dashboard-compare dashboard-compare-report font-backend-compare
 
 SIM_BUILD_DIR ?= $(BUILD_DIR)/sim
 SIM_BIN ?= $(SIM_BUILD_DIR)/gui_uya_sim
 SIM_ARGS ?=
 SIM_HEADLESS_ARGS ?= --max-frames 3 --screenshot $(SIM_BUILD_DIR)/headless.bmp
 SIM_FB_ARGS ?= --backend fb --max-frames 60
+SIM_WEB_BUILD_DIR ?= $(BUILD_DIR)/web
+SIM_WEB_ARGS ?= --backend web --demo dashboard --max-frames 3
+SIM_WEB_PORT ?= 8000
 
 BENCH_REPORT ?= $(BUILD_DIR)/phase5_bench.txt
 RELEASE_VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' uya.toml)
@@ -182,3 +185,17 @@ sim-headless: sim-build
 
 sim-fb-run: sim-build
 	$(SIM_BIN) $(SIM_FB_ARGS)
+
+sim-web-build:
+	@mkdir -p $(SIM_WEB_BUILD_DIR)
+	@MODE=$(MODE) BUILD_DIR=$(abspath $(SIM_WEB_BUILD_DIR)) bash tools/build_gui_web.sh
+
+sim-web-run: sim-web-build
+	@echo "Open http://127.0.0.1:$(SIM_WEB_PORT)/index.html?args=$(SIM_WEB_ARGS)"
+	@PORT=$(SIM_WEB_PORT) BUILD_DIR=$(abspath $(SIM_WEB_BUILD_DIR)) bash tools/serve_gui_web.sh
+
+sim-web-serve: sim-web-build
+	@PORT=$(SIM_WEB_PORT) BUILD_DIR=$(abspath $(SIM_WEB_BUILD_DIR)) bash tools/serve_gui_web.sh
+
+sim-web-smoke: sim-web-build
+	@echo "sim-web-smoke requires a headless browser runner; build output is ready at $(SIM_WEB_BUILD_DIR)/index.html"

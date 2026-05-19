@@ -136,6 +136,7 @@ use sim.common.SIM_KEY_RIGHT;
 use sim.common.SIM_KEY_SPACE;
 use sim.common.SIM_KEY_UP;
 use sim.config.SimConfig;
+use sim.config.SimBackendKind;
 use sim.config.SimDemoKind;
 use sim.config.sim_config_default;
 use sim.config.sim_demo_default_height;
@@ -190,6 +191,9 @@ const APP_ID_IMAGE: i32 = 15;
 
 const DEFAULT_SCREENSHOT_PATH: &const byte = "build/sim/last_frame.bmp";
 const DEFAULT_RECORD_PATH: &const byte = "build/sim/last_input.uyarec";
+const WEB_DEFAULT_SCREENSHOT_PATH: &const byte = "/tmp/last_frame.png";
+const WEB_DEFAULT_RECORD_PATH: &const byte = "/tmp/last_input.uyarec";
+const RESOURCE_ROOT_SENTINEL: &const byte = ".uya_sim_root_probe";
 const SIM_PREVIEW_RGB_BYTES: [byte: 48] = [
     255, 213, 79,   255, 112, 67,   79, 195, 247,   129, 199, 132,
     255, 171, 145,  255, 241, 118,  77, 182, 172,   100, 181, 246,
@@ -775,7 +779,7 @@ SimApp {
 
     fn probe_resource_root(self: &Self) void {
         var buf: [byte: 64] = [];
-        self.fs_probe_bytes = self.fs.read("Makefile", &buf[0], 64usize) catch {
+        self.fs_probe_bytes = self.fs.read(RESOURCE_ROOT_SENTINEL, &buf[0], 64usize) catch {
             return;
         };
     }
@@ -2278,12 +2282,18 @@ SimApp {
         if !sim_cstr_empty(self.config.screenshot_path) {
             return self.config.screenshot_path;
         }
+        if self.config.backend == SimBackendKind.Web {
+            return WEB_DEFAULT_SCREENSHOT_PATH;
+        }
         return DEFAULT_SCREENSHOT_PATH;
     }
 
     fn recorder_path(self: &Self) &const byte {
         if !sim_cstr_empty(self.config.record_path) {
             return self.config.record_path;
+        }
+        if self.config.backend == SimBackendKind.Web {
+            return WEB_DEFAULT_RECORD_PATH;
         }
         return DEFAULT_RECORD_PATH;
     }

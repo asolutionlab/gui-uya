@@ -1,8 +1,8 @@
 # UyaGUI Web 后端 TODO 文档
 
-> 版本: v0.1.0  
-> 日期: 2026-05-18  
-> 状态: 规划中（尚未开始实现）
+> 版本: v0.2.0  
+> 日期: 2026-05-19  
+> 状态: 已启动实现（Uya 侧主链路已落地，浏览器实产构建待 Emscripten 环境）
 
 > 说明: 本文是“原生 Web 后端”实施路线图，目标是在浏览器中运行当前 `sim`/demo，并保持与现有 `SDL2` / `Framebuffer` 后端一致的分层方式。本文重点记录当前基线、缺口、实施顺序和验收标准。
 
@@ -34,9 +34,9 @@
 | Framebuffer 后端 | [x] 已实现 | `gui/platform/fb/{disp_fb.uya,indev_fb.uya,fb_host.c}` |
 | 模拟器配置 | [x] 已实现 | `gui/sim/config.uya` 已支持 backend/demo/size/fps/screenshot 等参数 |
 | 模拟器主循环 | [x] 已实现 | `gui/sim/runner.uya` 已支持 `SDL2` 与 `FB` |
-| 浏览器后端 | [ ] 未实现 | 当前没有 `gui/platform/web/` |
-| 共享 runtime core | [ ] 未实现 | 当前 `SDL2` / `FB` 主循环仍有较多重复逻辑 |
-| Web 构建脚本 | [ ] 未实现 | 当前只有 `tools/build_gui_sim.sh` |
+| 浏览器后端 | [x] 已有 MVP | 已新增 `gui/platform/web/{disp_web.uya,indev_web.uya,web_common.uya,web_host.c}` |
+| 共享 runtime core | [x] 已实现 | 已新增 `gui/sim/runtime_core.uya`，SDL2/FB 已切到共享帧逻辑 |
+| Web 构建脚本 | [x] 已实现 | 已新增 `tools/build_gui_web.sh` 与 `tools/serve_gui_web.sh` |
 
 ## 关键决策
 
@@ -51,15 +51,33 @@
 
 | 阶段 | 目标 | 当前状态 |
 |------|------|----------|
-| W0 | 收口设计、整理文件布局、确定配置策略 | 进行中 |
-| W1 | 抽共享 `SimRuntimeCore` | 未开始 |
-| W2 | 新增 `platform/web` 目录与 host event 基线 | 未开始 |
-| W3 | Web 显示 MVP（Canvas2D full present） | 未开始 |
-| W4 | Web 输入 MVP（mouse/wheel/key） | 未开始 |
-| W5 | Web runner 与浏览器主循环接线 | 未开始 |
-| W6 | 资源打包、截图/录制、Makefile/构建脚本 | 未开始 |
+| W0 | 收口设计、整理文件布局、确定配置策略 | 已完成 |
+| W1 | 抽共享 `SimRuntimeCore` | 已完成 |
+| W2 | 新增 `platform/web` 目录与 host event 基线 | 已完成 |
+| W3 | Web 显示 MVP（Canvas2D full present） | 已完成 |
+| W4 | Web 输入 MVP（mouse/wheel/key） | 已完成 |
+| W5 | Web runner 与浏览器主循环接线 | 已完成 |
+| W6 | 资源打包、截图/录制、Makefile/构建脚本 | 部分完成 |
 | W7 | dirty present、resize、页面生命周期与 smoke | 未开始 |
 | W8 | WebGL/worker/移动端兼容作为 backlog | 未开始 |
+
+## 当前实现状态
+
+- 已完成：
+  - 新增 `gui/sim/runtime_core.uya`，统一 SDL2 / FB / Web 的帧循环核心。
+  - 新增 `gui/platform/web/` 目录与 `disp_web.uya` / `indev_web.uya` / `web_common.uya` / `web_host.c`。
+  - 新增 `gui/sim/runner_web.uya` 与 `gui/sim_web_main.uya`。
+  - `SimConfig` 已支持 `backend=web` 与 `persist_data` 占位开关。
+  - 资源根探针已改为 `.uya_sim_root_probe`。
+  - Web 默认路径已切到 `/app`、`/tmp/last_frame.png`、`/tmp/last_input.uyarec`。
+  - Make 目标与脚本已补齐：`sim-web-build` / `sim-web-run` / `sim-web-serve` / `sim-web-smoke`。
+  - Web 单测已补入 `gui/tests/test_web_backend.uya`。
+- 已验证：
+  - `./uya/bin/uya test gui/test_suite.uya -O0 --stack-size 65536` 通过，`206` 个测试全部通过。
+  - `./uya/bin/uya build --c99 gui/sim_web_main.uya -O0 -o /tmp/gui_sim_web_check.c` 可成功生成 C99。
+- 当前阻塞：
+  - `tools/build_gui_web.sh` 依赖 `emcc`，当前环境未安装 Emscripten，因此尚未产出真实 `wasm/js/html`。
+  - 浏览器无头 smoke、真实页面首帧、下载式截图导出尚未完成闭环验证。
 
 ---
 
@@ -71,37 +89,37 @@
 
 ### TODO
 
-- [ ] 确认最终目录布局
-  - [ ] `gui/sim_web_main.uya`
-  - [ ] `gui/platform/web/disp_web.uya`
-  - [ ] `gui/platform/web/indev_web.uya`
-  - [ ] `gui/platform/web/web_common.uya`
-  - [ ] `gui/platform/web/web_host.c`
-  - [ ] `gui/sim/runtime_core.uya`
-  - [ ] `gui/sim/runner_web.uya`
-  - [ ] `tools/build_gui_web.sh`
-- [ ] 明确不新增平行 `platform/interface/*` 抽象层
-- [ ] 确认 Web 入口改为 `gui/sim_web_main.uya`
-- [ ] 定稿启动 ownership
-  - [ ] `main()` / bootstrap 只执行一次
-  - [ ] host 不负责反向调用 boot
-  - [ ] host 只负责 frame schedule 与单次 shutdown
-- [ ] 确认浏览器配置仍以 `argv` 为主，host 侧组装 `Module.arguments`
-- [ ] 确认默认资源根目录策略
-  - [ ] backend=`web` 时默认 `resource_root=/app`
-- [ ] 确认资源根探针不再依赖 `Makefile`
-  - [ ] 改为 sentinel 文件 `.uya_sim_root_probe`
-- [ ] 确认 Web 默认路径
-  - [ ] screenshot=`/tmp/last_frame.png`
-  - [ ] record=`/tmp/last_input.uyarec`
-  - [ ] playback=`/tmp/last_input.uyarec`
+- [x] 确认最终目录布局
+  - [x] `gui/sim_web_main.uya`
+  - [x] `gui/platform/web/disp_web.uya`
+  - [x] `gui/platform/web/indev_web.uya`
+  - [x] `gui/platform/web/web_common.uya`
+  - [x] `gui/platform/web/web_host.c`
+  - [x] `gui/sim/runtime_core.uya`
+  - [x] `gui/sim/runner_web.uya`
+  - [x] `tools/build_gui_web.sh`
+- [x] 明确不新增平行 `platform/interface/*` 抽象层
+- [x] 确认 Web 入口改为 `gui/sim_web_main.uya`
+- [x] 定稿启动 ownership
+  - [x] `main()` / bootstrap 只执行一次
+  - [x] host 不负责反向调用 boot
+  - [x] host 只负责 frame schedule 与单次 shutdown
+- [x] 确认浏览器配置仍以 `argv` 为主，host 侧组装 `Module.arguments`
+- [x] 确认默认资源根目录策略
+  - [x] backend=`web` 时默认 `resource_root=/app`
+- [x] 确认资源根探针不再依赖 `Makefile`
+  - [x] 改为 sentinel 文件 `.uya_sim_root_probe`
+- [x] 确认 Web 默认路径
+  - [x] screenshot=`/tmp/last_frame.png`
+  - [x] record=`/tmp/last_input.uyarec`
+  - [x] playback=`/tmp/last_input.uyarec`
 
 ### 验收
 
-- [ ] 所有新增文件路径定稿
-- [ ] `SimConfig` 增量字段列表定稿
-- [ ] 共享 runtime core 是必须项，不再作为可选优化项
-- [ ] Web 构建与桌面构建的入口/host glue 隔离方案定稿
+- [x] 所有新增文件路径定稿
+- [x] `SimConfig` 增量字段列表定稿
+- [x] 共享 runtime core 是必须项，不再作为可选优化项
+- [x] Web 构建与桌面构建的入口/host glue 隔离方案定稿
 
 ---
 
@@ -113,26 +131,26 @@
 
 ### TODO
 
-- [ ] 新增 `gui/sim/runtime_core.uya`
-- [ ] 抽离 `runner.uya` 中 backend 无关逻辑
-  - [ ] app init/finish
-  - [ ] retained seed frame
-  - [ ] input drain
-  - [ ] update
-  - [ ] render
-  - [ ] profiler record
-  - [ ] max-frames/should-exit
-- [ ] 设计 `SimFrameOutput` 或等价结果结构
-- [ ] 让 `run_simulator_sdl()` 先切到新 core
-- [ ] 再让 `run_simulator_fb()` 切到新 core
-- [ ] 约束 `runtime_core.uya` 不依赖任何 `platform/{sdl2,fb,web}/*`
-- [ ] 保证现有 `sim-run` / `sim-headless` / `sim-fb-run` 行为不回归
+- [x] 新增 `gui/sim/runtime_core.uya`
+- [x] 抽离 `runner.uya` 中 backend 无关逻辑
+  - [x] app init/finish
+  - [x] retained seed frame
+  - [x] input drain
+  - [x] update
+  - [x] render
+  - [x] profiler record
+  - [x] max-frames/should-exit
+- [x] 设计 `SimFrameOutput` 或等价结果结构
+- [x] 让 `run_simulator_sdl()` 先切到新 core
+- [x] 再让 `run_simulator_fb()` 切到新 core
+- [x] 约束 `runtime_core.uya` 不依赖任何 `platform/{sdl2,fb,web}/*`
+- [x] 保证现有 `sim-run` / `sim-headless` / `sim-fb-run` 行为不回归
 
 ### 验收
 
-- [ ] `SDL2` 和 `FB` 不再各自持有大段重复 frame logic
-- [ ] `run_simulator_sdl()` / `run_simulator_fb()` 变成“初始化 + present + loop 驱动”的薄封装
-- [ ] 现有 sim 相关测试和 smoke 仍通过
+- [x] `SDL2` 和 `FB` 不再各自持有大段重复 frame logic
+- [x] `run_simulator_sdl()` / `run_simulator_fb()` 变成“初始化 + present + loop 驱动”的薄封装
+- [x] 现有 sim 相关测试和 smoke 仍通过
 
 ---
 
@@ -144,26 +162,26 @@
 
 ### TODO
 
-- [ ] 创建 `gui/platform/web/`
-- [ ] 新增 `gui/platform/web/web_common.uya`
-  - [ ] 定义 `WEB_EVT_*` 常量
-  - [ ] 定义 `WebHostEvent`
-  - [ ] 定义 `web_host_event_none()`
-  - [ ] 定义 `web_feed_host_event(...)`
-  - [ ] 定义 `web_hover_point_default()`
-- [ ] 设计 host 事件环形缓冲区容量
-- [ ] 约定键值映射
-  - [ ] `Esc`
-  - [ ] `Enter`
-  - [ ] `Space`
-  - [ ] 方向键
-  - [ ] `F11`
-- [ ] 明确 blur/visibility/pointercancel/touchcancel 的清状态规则
+- [x] 创建 `gui/platform/web/`
+- [x] 新增 `gui/platform/web/web_common.uya`
+  - [x] 定义 `WEB_EVT_*` 常量
+  - [x] 定义 `WebHostEvent`
+  - [x] 定义 `web_host_event_none()`
+  - [x] 定义 `web_feed_host_event(...)`
+  - [x] 定义 `web_hover_point_default()`
+- [x] 设计 host 事件环形缓冲区容量
+- [x] 约定键值映射
+  - [x] `Esc`
+  - [x] `Enter`
+  - [x] `Space`
+  - [x] 方向键
+  - [x] `F11`
+- [x] 明确 blur/visibility/pointercancel/touchcancel 的清状态规则
 
 ### 验收
 
-- [ ] Web host 事件结构不依赖浏览器具体 API 类型
-- [ ] Uya 侧已经能独立编译和单测输入事件映射逻辑
+- [x] Web host 事件结构不依赖浏览器具体 API 类型
+- [x] Uya 侧已经能独立编译和单测输入事件映射逻辑
 
 ---
 
@@ -175,33 +193,33 @@
 
 ### TODO
 
-- [ ] 新增 `gui/platform/web/disp_web.uya`
-- [ ] 仿照 `disp_sdl.uya` 实现双缓冲
-  - [ ] `front_mem`
-  - [ ] `back_mem`
-  - [ ] `DisplayCtx`
-- [ ] `init()`
-  - [ ] 分配 ARGB8888 双缓冲
-  - [ ] 打开/绑定 HTML canvas
-- [ ] `present()`
-  - [ ] swap buffers
-  - [ ] 调用 host 全帧上传
-- [ ] `refresh_front()`
-  - [ ] 不交换缓冲，仅重传 front
-- [ ] `consume_refresh_request()`
-  - [ ] resize/restore/context invalidation 后可触发
-- [ ] `set_title()`
-  - [ ] 映射到 `document.title`
-- [ ] `toggle_fullscreen()`
-  - [ ] 请求 Fullscreen API
-- [ ] `set_dirty_overlay()`
-  - [ ] 接口占位，首版可先不画 overlay
+- [x] 新增 `gui/platform/web/disp_web.uya`
+- [x] 仿照 `disp_sdl.uya` 实现双缓冲
+  - [x] `front_mem`
+  - [x] `back_mem`
+  - [x] `DisplayCtx`
+- [x] `init()`
+  - [x] 分配 ARGB8888 双缓冲
+  - [x] 打开/绑定 HTML canvas
+- [x] `present()`
+  - [x] swap buffers
+  - [x] 调用 host 全帧上传
+- [x] `refresh_front()`
+  - [x] 不交换缓冲，仅重传 front
+- [x] `consume_refresh_request()`
+  - [x] resize/restore/context invalidation 后可触发
+- [x] `set_title()`
+  - [x] 映射到 `document.title`
+- [x] `toggle_fullscreen()`
+  - [x] 请求 Fullscreen API
+- [x] `set_dirty_overlay()`
+  - [x] 接口占位，首版可先不画 overlay
 
 ### 验收
 
 - [ ] 浏览器中可见首帧画面
 - [ ] framebuffer 逻辑尺寸与 canvas 显示尺寸可以分离
-- [ ] 全屏请求失败时不会导致 sim 崩溃
+- [x] 全屏请求失败时不会导致 sim 崩溃
 
 ---
 
@@ -213,29 +231,29 @@
 
 ### TODO
 
-- [ ] 新增 `gui/platform/web/indev_web.uya`
-- [ ] host 侧注册浏览器事件
-  - [ ] mouse down/up/move
-  - [ ] touch start/end/move/cancel
-  - [ ] wheel
-  - [ ] keydown/keyup
-  - [ ] blur / visibilitychange
-- [ ] `WebInputSystem.init()`
-  - [ ] 绑定 `TouchDriver` / `KeyDriver` / `EncoderDriver`
-- [ ] `pump(timestamp)`
-  - [ ] 从 host 队列拉取 `WebHostEvent`
-- [ ] `poll()`
-  - [ ] 转发到现有 `InputManager`
-- [ ] `poll_hover_coords()`
-  - [ ] 支持 hover 更新
-- [ ] 完成 CSS rect -> framebuffer 坐标映射
-- [ ] pointer down 后自动 focus canvas 容器
-- [ ] 补默认行为抑制策略
-  - [ ] 被 sim 消费的热键调用 `preventDefault()`
-  - [ ] `wheel` / `touchmove` 监听允许 `preventDefault()`
-  - [ ] canvas 容器设置 `tabindex=0`
-  - [ ] canvas 容器样式设置 `touch-action: none`
-  - [ ] canvas 容器样式设置 `overscroll-behavior: contain`
+- [x] 新增 `gui/platform/web/indev_web.uya`
+- [x] host 侧注册浏览器事件
+  - [x] mouse down/up/move
+  - [x] touch start/end/move/cancel
+  - [x] wheel
+  - [x] keydown/keyup
+  - [x] blur / visibilitychange
+- [x] `WebInputSystem.init()`
+  - [x] 绑定 `TouchDriver` / `KeyDriver` / `EncoderDriver`
+- [x] `pump(timestamp)`
+  - [x] 从 host 队列拉取 `WebHostEvent`
+- [x] `poll()`
+  - [x] 转发到现有 `InputManager`
+- [x] `poll_hover_coords()`
+  - [x] 支持 hover 更新
+- [x] 完成 CSS rect -> framebuffer 坐标映射
+- [x] pointer down 后自动 focus canvas 容器
+- [x] 补默认行为抑制策略
+  - [x] 被 sim 消费的热键调用 `preventDefault()`
+  - [x] `wheel` / `touchmove` 监听允许 `preventDefault()`
+  - [x] canvas 容器设置 `tabindex=0`
+  - [x] canvas 容器样式设置 `touch-action: none`
+  - [x] canvas 容器样式设置 `overscroll-behavior: contain`
 
 ### 验收
 
@@ -254,24 +272,24 @@
 
 ### TODO
 
-- [ ] 新增 `gui/sim/runner_web.uya`
-- [ ] 新增 `gui/sim_web_main.uya`
-  - [ ] `main()` 只负责调用 `run_simulator_web_bootstrap()`
-- [ ] 设计并实现导出 callback
-  - [ ] `run_simulator_web_bootstrap()`
-  - [ ] `sim_web_frame(now_ms)`
-  - [ ] `sim_web_shutdown()`
-- [ ] 新增 `gui/platform/web/web_host.c`
-  - [ ] 提供 `uya_gui_web_host_start_loop()`
-  - [ ] 注册 `requestAnimationFrame` 主循环
-  - [ ] 每帧调用 `sim_web_frame(now_ms)`
-  - [ ] 收到停止信号后取消主循环
-  - [ ] `sim_web_shutdown()` 只调用一次
-- [ ] 在 `gui/sim/config.uya` 中新增 `backend=web`
-- [ ] 保持 `gui/sim/runner.uya` 为桌面 runner
-- [ ] `runner_web.uya` 不允许导入 `runner.uya`
-- [ ] 兼容 `--max-frames`
-- [ ] 兼容 screenshot request / finish path
+- [x] 新增 `gui/sim/runner_web.uya`
+- [x] 新增 `gui/sim_web_main.uya`
+  - [x] `main()` 只负责调用 `run_simulator_web_bootstrap()`
+- [x] 设计并实现导出 callback
+  - [x] `run_simulator_web_bootstrap()`
+  - [x] `sim_web_frame(now_ms)`
+  - [x] `sim_web_shutdown()`
+- [x] 新增 `gui/platform/web/web_host.c`
+  - [x] 提供 `uya_gui_web_host_start_loop()`
+  - [x] 注册 `requestAnimationFrame` 主循环
+  - [x] 每帧调用 `sim_web_frame(now_ms)`
+  - [x] 收到停止信号后取消主循环
+  - [x] `sim_web_shutdown()` 只调用一次
+- [x] 在 `gui/sim/config.uya` 中新增 `backend=web`
+- [x] 保持 `gui/sim/runner.uya` 为桌面 runner
+- [x] `runner_web.uya` 不允许导入 `runner.uya`
+- [x] 兼容 `--max-frames`
+- [x] 兼容 screenshot request / finish path
 
 ### 验收
 
@@ -289,37 +307,37 @@
 
 ### TODO
 
-- [ ] 新增 `tools/build_gui_web.sh`
-  - [ ] `APP=gui/sim_web_main.uya`
-  - [ ] `uya build --c99 --no-split-c`
-  - [ ] `emcc` 编译 generated C
-  - [ ] `emcc` 编译 `web_host.c`
-  - [ ] 若存在 `imports.sh` sidecar，改用 `emcc` 编译 sidecar 对象
-  - [ ] 资源预打包到 MEMFS
-  - [ ] 打包 `.uya_sim_root_probe` 到 `/app`
-  - [ ] 初始化 `/tmp`
-  - [ ] 不编译 `sdl_host.c`
-  - [ ] 不编译 `fb_host.c`
-  - [ ] 输出到 `build/web/`
-- [ ] 新增 Make 目标
-  - [ ] `sim-web-build`
-  - [ ] `sim-web-run`
-  - [ ] `sim-web-serve`
-  - [ ] `sim-web-smoke`
-- [ ] 资源根目录方案
-  - [ ] 约定 `/app`
-  - [ ] backend=`web` 时默认 root 回退到 `/app`
-- [ ] 资源探针方案
-  - [ ] `probe_resource_root()` 改读 `.uya_sim_root_probe`
-- [ ] 截图方案
-  - [ ] 空路径时使用 `/tmp/last_frame.png`
-  - [ ] 先写入 MEMFS
+- [x] 新增 `tools/build_gui_web.sh`
+  - [x] `APP=gui/sim_web_main.uya`
+  - [x] `uya build --c99 --no-split-c`
+  - [x] `emcc` 编译 generated C
+  - [x] `emcc` 编译 `web_host.c`
+  - [x] 若存在 `imports.sh` sidecar，改用 `emcc` 编译 sidecar 对象
+  - [x] 资源预打包到 MEMFS
+  - [x] 打包 `.uya_sim_root_probe` 到 `/app`
+  - [x] 初始化 `/tmp`
+  - [x] 不编译 `sdl_host.c`
+  - [x] 不编译 `fb_host.c`
+  - [x] 输出到 `build/web/`
+- [x] 新增 Make 目标
+  - [x] `sim-web-build`
+  - [x] `sim-web-run`
+  - [x] `sim-web-serve`
+  - [x] `sim-web-smoke`
+- [x] 资源根目录方案
+  - [x] 约定 `/app`
+  - [x] backend=`web` 时默认 root 回退到 `/app`
+- [x] 资源探针方案
+  - [x] `probe_resource_root()` 改读 `.uya_sim_root_probe`
+- [x] 截图方案
+  - [x] 空路径时使用 `/tmp/last_frame.png`
+  - [x] 先写入 MEMFS
   - [ ] 再由 host 触发下载或保留给 smoke 读取
-- [ ] 录制/回放默认路径方案
-  - [ ] record 默认 `/tmp/last_input.uyarec`
-  - [ ] playback 默认 `/tmp/last_input.uyarec`
-- [ ] `--persist-data` 方案
-  - [ ] 首版可先占位
+- [x] 录制/回放默认路径方案
+  - [x] record 默认 `/tmp/last_input.uyarec`
+  - [x] playback 默认 `/tmp/last_input.uyarec`
+- [x] `--persist-data` 方案
+  - [x] 首版可先占位
   - [ ] 若开启则挂 `IDBFS`
 
 ### 验收
@@ -349,7 +367,7 @@
   - [ ] resize 后 refresh request
   - [ ] canvas CSS fit-window
 - [ ] 单元测试
-  - [ ] `test_web_input_mapping.uya`
+  - [x] `test_web_input_mapping.uya`
   - [ ] `test_web_present_plan.uya`
   - [ ] `test_web_config.uya`
 - [ ] 浏览器 smoke
@@ -393,15 +411,22 @@
 
 ## 文件落点清单
 
-- [ ] `gui/platform/web/disp_web.uya`
-- [ ] `gui/platform/web/indev_web.uya`
-- [ ] `gui/platform/web/web_common.uya`
-- [ ] `gui/platform/web/web_host.c`
-- [ ] `gui/sim_web_main.uya`
-- [ ] `gui/sim/runtime_core.uya`
-- [ ] `gui/sim/runner_web.uya`
-- [ ] `tools/build_gui_web.sh`
-- [ ] `tools/serve_gui_web.sh`
+- [x] `gui/platform/web/disp_web.uya`
+- [x] `gui/platform/web/indev_web.uya`
+- [x] `gui/platform/web/web_common.uya`
+- [x] `gui/platform/web/web_host.c`
+- [x] `gui/sim_web_main.uya`
+- [x] `gui/sim/runtime_core.uya`
+- [x] `gui/sim/runner_web.uya`
+- [x] `tools/build_gui_web.sh`
+- [x] `tools/serve_gui_web.sh`
+
+## 下一步建议
+
+1. 安装 Emscripten，先跑通 `sim-web-build` 的真实 `wasm/js/html` 产物。
+2. 补浏览器 smoke，把 `--max-frames 3` 和 completion/screenshot 校验自动化。
+3. 实现 Web `present_dirty()`，避免每帧全量 ARGB->RGBA swizzle 上传。
+4. 把截图导出从“写入 MEMFS”补全到“host 下载或 smoke 读取”。
 
 ## 最小验收路径
 

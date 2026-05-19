@@ -13,13 +13,14 @@ use platform.indev.encoder_driver_new;
 use platform.indev.input_manager_new;
 use platform.indev.key_driver_new;
 use platform.indev.touch_driver_new;
+use sim.runtime_core.IRuntimeInput;
 
 extern fn uya_gui_sim_fb_input_open(input_path: &const byte, tty_path: &const byte, width: i32, height: i32) &void;
 extern fn uya_gui_sim_fb_input_close(handle: &void) void;
 extern fn uya_gui_sim_fb_input_poll_event(handle: &void, out_evt: &FbHostEvent) i32;
 extern fn uya_gui_sim_fb_input_last_error() &byte;
 
-export struct FbInputSystem {
+export struct FbInputSystem : IRuntimeInput {
     manager: InputManager,
     touch: TouchDriver,
     key: KeyDriver,
@@ -90,6 +91,22 @@ export struct FbInputSystem {
         out_y[0] = self.hover_point.y;
         self.hover_pending = false;
         return true;
+    }
+
+    fn wait(self: &Self, timeout_ms: i32) bool {
+        _ = self;
+        _ = timeout_ms;
+        return false;
+    }
+
+    fn quit_requested(self: &Self) bool {
+        _ = self;
+        return false;
+    }
+
+    fn pointer_down_active(self: &Self) bool {
+        _ = self;
+        return false;
     }
 }
 

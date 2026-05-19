@@ -1,9 +1,5 @@
-use core.event.Event;
-use core.event.event_none;
-use core.dirty_region.DirtyRegionView;
 use libc.printf;
 use platform.disp.FrameBuffer;
-use platform.disp.framebuffer_copy;
 use platform.disp.framebuffer_new;
 use platform.fb.disp_fb.FbDisplay;
 use platform.fb.disp_fb.fb_display_last_error;
@@ -18,10 +14,8 @@ use platform.sdl2.gpu_sdl.SdlGles2GpuCtx;
 use platform.sdl2.gpu_sdl.sdl_gles2_gpu_new;
 use platform.sdl2.indev_sdl.SdlInputSystem;
 use platform.sdl2.indev_sdl.sdl_input_system_new;
-use platform.tick.get_tick_ms;
 use render.cpu_backend.CpuRenderBackendKind;
 use render.batch.DrawBatch;
-use render.batch.draw_batch_new;
 use render.ctx.RenderCtx;
 use render.ctx.RenderMode;
 use render.ctx.render_ctx_attach_batch;
@@ -30,11 +24,6 @@ use render.ctx.render_ctx_new;
 use render.ctx.render_ctx_set_mode;
 use render.font.ttf_font_set_default_native_backend_c;
 use render.gpu.IGpuCtx;
-use render.scheduler.RenderFramePacer;
-use render.scheduler.RenderFrameResult;
-use render.scheduler.RenderPresentMode;
-use render.scheduler.render_frame_pacer_new;
-use render.scheduler.render_frame_result_idle;
 use sim.app.SimApp;
 use sim.app.sim_app_alloc;
 use sim.app.sim_app_free;
@@ -44,6 +33,12 @@ use sim.config.sim_backend_name;
 use sim.config.sim_config_from_runtime;
 use sim.config.sim_cpu_backend_name;
 use sim.config.sim_gpu_name;
+use sim.runtime_core.IRuntimeRenderBinder;
+use sim.runtime_core.IRuntimeDisplay;
+use sim.runtime_core.IRuntimeInput;
+use sim.runtime_core.SimFrameOutput;
+use sim.runtime_core.SimRuntimeCore;
+use sim.runtime_core.sim_runtime_core_new;
 
 fn sim_print_usage() void {
     _ = printf(
@@ -80,10 +75,36 @@ fn sim_configure_render_ctx(ctx: &RenderCtx, cfg: &SimConfig, batch: &DrawBatch,
     render_ctx_set_mode(ctx, RenderMode.Immediate);
 }
 
+struct CpuRenderBinder : IRuntimeRenderBinder {
+    fn prepare(self: &Self, ctx: &RenderCtx, cfg: &SimConfig, batch: &DrawBatch) void {
+        _ = self;
+        sim_configure_render_ctx(ctx, cfg, batch, null as &IGpuCtx);
+    }
+}
+
+struct SdlRenderBinder : IRuntimeRenderBinder {
+    display: &SdlDisplay,
+    direct_gles2: bool,
+    mirror_ctx: RenderCtx,
+    gpu_ctx: SdlGles2GpuCtx,
+
+    fn prepare(self: &Self, ctx: &RenderCtx, cfg: &SimConfig, batch: &DrawBatch) void {
+        if !self.direct_gles2 || self.display == null {
+            sim_configure_render_ctx(ctx, cfg, batch, null as &IGpuCtx);
+            return;
+        }
+        const back_ref: &FrameBuffer = self.display.get_back_buffer();
+        self.mirror_ctx = render_ctx_new(framebuffer_new(back_ref.pixels, back_ref.size.w, back_ref.size.h, back_ref.stride, back_ref.format));
+        self.gpu_ctx = sdl_gles2_gpu_new(self.display, &self.mirror_ctx);
+        var gpu_iface: IGpuCtx = self.gpu_ctx;
+        sim_configure_render_ctx(ctx, cfg, batch, &gpu_iface);
+    }
+}
+
 fn run_simulator_sdl(cfg: SimConfig) i32 {
     _ = printf("[sim] backend=%s gpu=%s cpu=%s\n" as *byte, sim_backend_name(cfg.backend), sim_gpu_name(cfg.gpu), sim_cpu_backend_name(cfg.cpu_backend));
     sim_ensure_default_font_backend();
- 
+
     var display: SdlDisplay = sdl_display_new();
     if !display.init(cfg.width, cfg.height, cfg.scale, cfg.title, cfg.fullscreen, cfg.gpu as i32, cfg.vsync_enabled) {
         _ = printf("[sim] SDL2 init failed: %s\n" as *byte, sdl_display_last_error());
@@ -94,7 +115,6 @@ fn run_simulator_sdl(cfg: SimConfig) i32 {
     }
     _ = display.set_dirty_overlay(cfg.show_dirty_regions);
     _ = printf("[sim] sdl gpu active=%s\n" as *byte, display.active_gpu_name());
-    const direct_gles2: bool = display.gles2_direct_active();
 
     var input: SdlInputSystem = sdl_input_system_new();
     input.init();
@@ -111,178 +131,32 @@ fn run_simulator_sdl(cfg: SimConfig) i32 {
         _ = printf("[sim] app init failed\n" as *byte);
         return 3;
     }
-    var pacer: RenderFramePacer = render_frame_pacer_new(cfg.target_fps, cfg.vsync_enabled, cfg.adaptive_frame_pacing);
 
-    var first_frame: bool = true;
-    var last_dirty_render: bool = false;
-    var pending_seed_present: bool = false;
-    if app.supports_dirty_render() {
-        const seed_back: &FrameBuffer = display.get_back_buffer();
-        var seed_ctx: RenderCtx = render_ctx_new(framebuffer_new(seed_back.pixels, seed_back.size.w, seed_back.size.h, seed_back.stride, seed_back.format));
-        var seed_batch: DrawBatch = draw_batch_new();
-        if direct_gles2 {
-            var seed_mirror: RenderCtx = render_ctx_new(framebuffer_new(seed_back.pixels, seed_back.size.w, seed_back.size.h, seed_back.stride, seed_back.format));
-            var seed_gpu: SdlGles2GpuCtx = sdl_gles2_gpu_new(&display, &seed_mirror);
-            var seed_gpu_iface: IGpuCtx = seed_gpu;
-            sim_configure_render_ctx(&seed_ctx, &cfg, &seed_batch, &seed_gpu_iface);
-            _ = app.render_retained(&seed_ctx, true);
-        } else {
-            sim_configure_render_ctx(&seed_ctx, &cfg, &seed_batch, null as &IGpuCtx);
-            _ = app.render_retained(&seed_ctx, true);
-        }
-        _ = framebuffer_copy(display.get_front_buffer(), seed_back);
-        if direct_gles2 {
-            if !display.refresh_front() {
-                _ = printf("[sim] present failed: %s\n" as *byte, sdl_display_last_error());
-                return 2;
-            }
-        }
-        first_frame = false;
-        last_dirty_render = true;
-        pending_seed_present = !direct_gles2;
-    }
-    var last_tick_ms: u32 = get_tick_ms();
-    var loop_frame_count: u32 = 0u32;
+    var binder: SdlRenderBinder = SdlRenderBinder{
+        display: &display,
+        direct_gles2: display.gles2_direct_active(),
+        mirror_ctx: render_ctx_new(framebuffer_new(null, 0, 0, 0, 0)),
+        gpu_ctx: sdl_gles2_gpu_new(null as &SdlDisplay, null as &RenderCtx),
+    };
+    var core: SimRuntimeCore = sim_runtime_core_new();
+    var input_iface: IRuntimeInput = input;
+    var display_iface: IRuntimeDisplay = display;
+    var binder_iface: IRuntimeRenderBinder = binder;
+    core.init(cfg, app);
+    core.seed_retained_frame(&display_iface, &binder_iface);
+
     while true {
-        if cfg.max_frames == 0u32 && !input.pointer_down {
-            const idle_delay_ms: i32 = app.next_wake_delay_ms(get_tick_ms());
-            if idle_delay_ms != 0 {
-                _ = input.wait(idle_delay_ms);
-            }
-        }
-        const frame_start_ms: u32 = get_tick_ms();
-        const delta_ms: u32 = frame_start_ms - last_tick_ms;
-        last_tick_ms = frame_start_ms;
-
-        _ = input.pump(frame_start_ms);
-
-        var has_hover: bool = true;
-        while has_hover {
-            var hover_x: i16 = 0;
-            var hover_y: i16 = 0;
-            has_hover = input.poll_hover_coords(&hover_x, &hover_y);
-            if !has_hover {
-                break;
-            }
-            app.handle_hover_coords(hover_x, hover_y, frame_start_ms, true);
-        }
-
-        var evt: Event = event_none();
-        var has_evt: bool = input.poll(&evt);
-        while has_evt {
-            app.handle_translated_event(&evt);
-            evt = event_none();
-            has_evt = input.poll(&evt);
-        }
-
-        app.update(delta_ms, frame_start_ms);
-        const after_update_ms: u32 = get_tick_ms();
-
-        const dirty_render: bool = app.supports_dirty_render();
-        const force_full: bool = first_frame || dirty_render != last_dirty_render;
-        const back_ref: &FrameBuffer = display.get_back_buffer();
-        if dirty_render && !force_full {
-            _ = framebuffer_copy(back_ref, display.get_front_buffer());
-        }
-        var ctx: RenderCtx = render_ctx_new(framebuffer_new(back_ref.pixels, back_ref.size.w, back_ref.size.h, back_ref.stride, back_ref.format));
-        var frame_batch: DrawBatch = draw_batch_new();
-        var retained_result: RenderFrameResult = render_frame_result_idle();
-        if direct_gles2 {
-            var mirror_ctx: RenderCtx = render_ctx_new(framebuffer_new(back_ref.pixels, back_ref.size.w, back_ref.size.h, back_ref.stride, back_ref.format));
-            var frame_gpu: SdlGles2GpuCtx = sdl_gles2_gpu_new(&display, &mirror_ctx);
-            var frame_gpu_iface: IGpuCtx = frame_gpu;
-            sim_configure_render_ctx(&ctx, &cfg, &frame_batch, &frame_gpu_iface);
-            if dirty_render {
-                retained_result = app.render_retained(&ctx, force_full);
-            } else {
-                app.render(&ctx);
-            }
-        } else {
-            sim_configure_render_ctx(&ctx, &cfg, &frame_batch, null as &IGpuCtx);
-            if dirty_render {
-                retained_result = app.render_retained(&ctx, force_full);
-            } else {
-                app.render(&ctx);
-            }
-        }
-        ctx.dirty.merge();
-        const after_render_ms: u32 = get_tick_ms();
-
-        if app.consume_screenshot_request() {
-            app.save_screenshot(display.get_back_buffer());
-        }
-        if app.consume_fullscreen_toggle() {
-            _ = display.toggle_fullscreen();
-        }
-
-        if direct_gles2 {
-            const dirty_view: DirtyRegionView = ctx.dirty.get_regions();
-            if !dirty_render || retained_result.rendered || !dirty_view.is_empty() {
-                if dirty_render {
-                    if !display.present_dirty(&ctx.dirty) {
-                        _ = printf("[sim] present failed: %s\n" as *byte, sdl_display_last_error());
-                        break;
-                    }
-                } else if !display.present() {
-                    _ = printf("[sim] present failed: %s\n" as *byte, sdl_display_last_error());
-                    break;
-                }
-                pending_seed_present = false;
-            } else if pending_seed_present || display.consume_refresh_request() {
-                if !display.refresh_front() {
-                    _ = printf("[sim] present failed: %s\n" as *byte, sdl_display_last_error());
-                    break;
-                }
-                pending_seed_present = false;
-            }
-        } else if dirty_render {
-            if retained_result.present_mode == RenderPresentMode.Full {
-                if !display.present() {
-                    _ = printf("[sim] present failed: %s\n" as *byte, sdl_display_last_error());
-                    break;
-                }
-            } else if pending_seed_present {
-                // Seeded retained content must be uploaded once before partial presents,
-                // otherwise untouched SDL texture regions remain black.
-                if !display.present() {
-                    _ = printf("[sim] present failed: %s\n" as *byte, sdl_display_last_error());
-                    break;
-                }
-            } else if !display.present_dirty(&ctx.dirty) {
-                _ = printf("[sim] present failed: %s\n" as *byte, sdl_display_last_error());
-                break;
-            }
-            pending_seed_present = false;
-        } else if !display.present() {
+        const frame: SimFrameOutput = core.step(&input_iface, &display_iface, &binder_iface);
+        if !frame.present_ok {
             _ = printf("[sim] present failed: %s\n" as *byte, sdl_display_last_error());
             break;
         }
-        const after_present_ms: u32 = get_tick_ms();
-
-        app.record_frame(
-            &ctx,
-            after_update_ms - frame_start_ms,
-            after_render_ms - after_update_ms,
-            after_present_ms - after_render_ms,
-            after_present_ms - frame_start_ms
-        );
-        loop_frame_count = loop_frame_count + 1u32;
-
-        if input.quit_requested || app.should_exit() {
+        if frame.should_exit {
             break;
         }
-        if cfg.max_frames > 0u32 && loop_frame_count >= cfg.max_frames {
-            break;
-        }
-
-        first_frame = false;
-        last_dirty_render = dirty_render;
-
-        const frame_ms: u32 = after_present_ms - frame_start_ms;
-        pacer.sleep_after_frame(frame_ms, !dirty_render || retained_result.rendered);
     }
 
-    app.finish(display.get_front_buffer());
+    core.finish(&display_iface);
     return 0;
 }
 
@@ -328,122 +202,30 @@ fn run_simulator_fb(cfg_in: SimConfig) i32 {
         _ = printf("[sim] app init failed\n" as *byte);
         return 3;
     }
-    var pacer: RenderFramePacer = render_frame_pacer_new(cfg.target_fps, cfg.vsync_enabled, cfg.adaptive_frame_pacing);
 
-    var first_frame: bool = true;
-    var last_dirty_render: bool = false;
-    var pending_seed_present: bool = false;
-    if app.supports_dirty_render() {
-        const seed_back: &FrameBuffer = display.get_back_buffer();
-        var seed_ctx: RenderCtx = render_ctx_new(framebuffer_new(seed_back.pixels, seed_back.size.w, seed_back.size.h, seed_back.stride, seed_back.format));
-        var seed_batch: DrawBatch = draw_batch_new();
-        sim_configure_render_ctx(&seed_ctx, &cfg, &seed_batch, null as &IGpuCtx);
-        _ = app.render_retained(&seed_ctx, true);
-        _ = framebuffer_copy(display.get_front_buffer(), seed_back);
-        first_frame = false;
-        last_dirty_render = true;
-        pending_seed_present = true;
-    }
-    var last_tick_ms: u32 = get_tick_ms();
-    var loop_frame_count: u32 = 0u32;
+    var binder: CpuRenderBinder = CpuRenderBinder{};
+    var core: SimRuntimeCore = sim_runtime_core_new();
+    var input_iface: IRuntimeInput = input;
+    var display_iface: IRuntimeDisplay = display;
+    var binder_iface: IRuntimeRenderBinder = binder;
+    core.init(cfg, app);
+    core.seed_retained_frame(&display_iface, &binder_iface);
+
     while true {
-        const frame_start_ms: u32 = get_tick_ms();
-        const delta_ms: u32 = frame_start_ms - last_tick_ms;
-        last_tick_ms = frame_start_ms;
-
-        _ = input.pump(frame_start_ms);
-        var has_hover: bool = true;
-        while has_hover {
-            var hover_x: i16 = 0;
-            var hover_y: i16 = 0;
-            has_hover = input.poll_hover_coords(&hover_x, &hover_y);
-            if !has_hover {
-                break;
-            }
-            app.handle_hover_coords(hover_x, hover_y, frame_start_ms, true);
-        }
-        var evt: Event = event_none();
-        var has_evt: bool = input.poll(&evt);
-        while has_evt {
-            app.handle_translated_event(&evt);
-            evt = event_none();
-            has_evt = input.poll(&evt);
-        }
-
-        app.update(delta_ms, frame_start_ms);
-        const after_update_ms: u32 = get_tick_ms();
-
-        const dirty_render: bool = app.supports_dirty_render();
-        const force_full: bool = first_frame || dirty_render != last_dirty_render;
-        const back_ref: &FrameBuffer = display.get_back_buffer();
-        if dirty_render && !force_full {
-            _ = framebuffer_copy(back_ref, display.get_front_buffer());
-        }
-        var ctx: RenderCtx = render_ctx_new(framebuffer_new(back_ref.pixels, back_ref.size.w, back_ref.size.h, back_ref.stride, back_ref.format));
-        var frame_batch: DrawBatch = draw_batch_new();
-        sim_configure_render_ctx(&ctx, &cfg, &frame_batch, null as &IGpuCtx);
-        var retained_result: RenderFrameResult = render_frame_result_idle();
-        if dirty_render {
-            retained_result = app.render_retained(&ctx, force_full);
-        } else {
-            app.render(&ctx);
-        }
-        ctx.dirty.merge();
-        const after_render_ms: u32 = get_tick_ms();
-
-        if app.consume_screenshot_request() {
-            app.save_screenshot(display.get_back_buffer());
-        }
-
-        if dirty_render {
-            if retained_result.present_mode == RenderPresentMode.Full {
-                if !display.present() {
-                    _ = printf("[sim] framebuffer present failed: %s\n" as *byte, fb_display_last_error());
-                    break;
-                }
-            } else if pending_seed_present {
-                // Ensure the seeded retained frame reaches the real display before any
-                // dirty-only updates, or untouched regions can keep stale/black pixels.
-                if !display.present() {
-                    _ = printf("[sim] framebuffer present failed: %s\n" as *byte, fb_display_last_error());
-                    break;
-                }
-            } else if !display.present_dirty(&ctx.dirty) {
-                _ = printf("[sim] framebuffer present failed: %s\n" as *byte, fb_display_last_error());
-                break;
-            }
-            pending_seed_present = false;
-        } else if !display.present() {
+        const frame: SimFrameOutput = core.step(&input_iface, &display_iface, &binder_iface);
+        if !frame.present_ok {
             _ = printf("[sim] framebuffer present failed: %s\n" as *byte, fb_display_last_error());
             break;
         }
-        const after_present_ms: u32 = get_tick_ms();
-
-        app.record_frame(
-            &ctx,
-            after_update_ms - frame_start_ms,
-            after_render_ms - after_update_ms,
-            after_present_ms - after_render_ms,
-            after_present_ms - frame_start_ms
-        );
-        loop_frame_count = loop_frame_count + 1u32;
-
-        if app.should_exit() || loop_frame_count >= cfg.max_frames {
+        if frame.should_exit {
             break;
         }
-
-        first_frame = false;
-        last_dirty_render = dirty_render;
-
-        const frame_ms: u32 = after_present_ms - frame_start_ms;
-        pacer.sleep_after_frame(frame_ms, !dirty_render || retained_result.rendered);
     }
 
-    app.finish(display.get_front_buffer());
+    core.finish(&display_iface);
     return 0;
 }
 
-/// 启动模拟器主循环并返回退出码。
 export fn run_simulator() i32 {
     const cfg: SimConfig = sim_config_from_runtime();
     if cfg.show_help {
@@ -452,6 +234,10 @@ export fn run_simulator() i32 {
     }
     if cfg.backend == SimBackendKind.FrameBuffer {
         return run_simulator_fb(cfg);
+    }
+    if cfg.backend == SimBackendKind.Web {
+        _ = printf("[sim] backend=web requires gui/sim_web_main.uya build target\n" as *byte);
+        return 5;
     }
     return run_simulator_sdl(cfg);
 }

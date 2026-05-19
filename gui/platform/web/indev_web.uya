@@ -1,0 +1,296 @@
+use core.event.Event;
+use core.point.Point;
+use platform.indev.EncoderDriver;
+use platform.indev.IInputDev;
+use platform.indev.InputManager;
+use platform.indev.KeyDriver;
+use platform.indev.TouchDriver;
+use platform.indev.encoder_driver_new;
+use platform.indev.input_manager_new;
+use platform.indev.key_driver_new;
+use platform.indev.touch_driver_configure_pointer_precision;
+use platform.indev.touch_driver_new;
+use platform.web.web_common.WEB_EVT_KEY_DOWN;
+use platform.web.web_common.WEB_EVT_KEY_UP;
+use platform.web.web_common.WEB_EVT_POINTER_DOWN;
+use platform.web.web_common.WEB_EVT_POINTER_MOVE;
+use platform.web.web_common.WEB_EVT_POINTER_UP;
+use platform.web.web_common.WEB_EVT_REFRESH;
+use platform.web.web_common.WEB_EVT_RESET_INPUT;
+use platform.web.web_common.WEB_EVT_TOUCH_CANCEL;
+use platform.web.web_common.WEB_EVT_WHEEL;
+use platform.web.web_common.WebHostEvent;
+use platform.web.web_common.web_host_event_none;
+use platform.web.web_common.web_hover_point_default;
+use platform.web.web_common.web_poll_host_event;
+use sim.common.SIM_KEY_DOWN;
+use sim.common.SIM_KEY_ENTER;
+use sim.common.SIM_KEY_ESCAPE;
+use sim.common.SIM_KEY_F11;
+use sim.common.SIM_KEY_LEFT;
+use sim.common.SIM_KEY_RIGHT;
+use sim.common.SIM_KEY_SPACE;
+use sim.common.SIM_KEY_UP;
+use sim.runtime_core.IRuntimeInput;
+
+export struct WebInputSystem : IRuntimeInput {
+    manager: InputManager,
+    touch: TouchDriver,
+    key: KeyDriver,
+    encoder: EncoderDriver,
+    touch_dev: IInputDev,
+    key_dev: IInputDev,
+    encoder_dev: IInputDev,
+    hover_pending: bool,
+    hover_point: Point,
+    last_pointer: Point,
+    pointer_down: bool,
+    escape_down: bool,
+    enter_down: bool,
+    space_down: bool,
+    left_down: bool,
+    right_down: bool,
+    up_down: bool,
+    down_down: bool,
+    f11_down: bool,
+    refresh_requested: bool,
+
+    fn init(self: &Self) void {
+        touch_driver_configure_pointer_precision(&self.touch);
+        var touch_iface: IInputDev = self.touch;
+        var key_iface: IInputDev = self.key;
+        var encoder_iface: IInputDev = self.encoder;
+        self.touch_dev = touch_iface;
+        self.key_dev = key_iface;
+        self.encoder_dev = encoder_iface;
+        self.manager = input_manager_new();
+        _ = self.manager.attach(&self.touch_dev);
+        _ = self.manager.attach(&self.key_dev);
+        _ = self.manager.attach(&self.encoder_dev);
+        self.hover_pending = false;
+        self.hover_point = web_hover_point_default();
+        self.last_pointer = web_hover_point_default();
+        self.pointer_down = false;
+        self.refresh_requested = false;
+    }
+
+    fn remember_key(self: &Self, key_code: u16, pressed: bool) void {
+        if key_code == SIM_KEY_ESCAPE {
+            self.escape_down = pressed;
+            return;
+        }
+        if key_code == SIM_KEY_ENTER {
+            self.enter_down = pressed;
+            return;
+        }
+        if key_code == SIM_KEY_SPACE {
+            self.space_down = pressed;
+            return;
+        }
+        if key_code == SIM_KEY_LEFT {
+            self.left_down = pressed;
+            return;
+        }
+        if key_code == SIM_KEY_RIGHT {
+            self.right_down = pressed;
+            return;
+        }
+        if key_code == SIM_KEY_UP {
+            self.up_down = pressed;
+            return;
+        }
+        if key_code == SIM_KEY_DOWN {
+            self.down_down = pressed;
+            return;
+        }
+        if key_code == SIM_KEY_F11 {
+            self.f11_down = pressed;
+        }
+    }
+
+    fn release_all(self: &Self, timestamp: u32) void {
+        if self.pointer_down {
+            self.touch.feed(-1, timestamp, self.last_pointer, false);
+            self.pointer_down = false;
+        }
+        if self.escape_down {
+            self.key.feed(-1, timestamp, SIM_KEY_ESCAPE, false);
+            self.escape_down = false;
+        }
+        if self.enter_down {
+            self.key.feed(-1, timestamp, SIM_KEY_ENTER, false);
+            self.enter_down = false;
+        }
+        if self.space_down {
+            self.key.feed(-1, timestamp, SIM_KEY_SPACE, false);
+            self.space_down = false;
+        }
+        if self.left_down {
+            self.key.feed(-1, timestamp, SIM_KEY_LEFT, false);
+            self.left_down = false;
+        }
+        if self.right_down {
+            self.key.feed(-1, timestamp, SIM_KEY_RIGHT, false);
+            self.right_down = false;
+        }
+        if self.up_down {
+            self.key.feed(-1, timestamp, SIM_KEY_UP, false);
+            self.up_down = false;
+        }
+        if self.down_down {
+            self.key.feed(-1, timestamp, SIM_KEY_DOWN, false);
+            self.down_down = false;
+        }
+        if self.f11_down {
+            self.key.feed(-1, timestamp, SIM_KEY_F11, false);
+            self.f11_down = false;
+        }
+    }
+
+    fn pump(self: &Self, timestamp: u32) i32 {
+        var pumped: i32 = 0;
+        var raw: WebHostEvent = web_host_event_none();
+        while web_poll_host_event(&raw) {
+            pumped = pumped + 1;
+            const point: Point = Point{ x: raw.x, y: raw.y };
+            self.last_pointer = point;
+
+            if raw.kind == WEB_EVT_RESET_INPUT || raw.kind == WEB_EVT_TOUCH_CANCEL {
+                self.release_all(timestamp);
+                self.hover_pending = false;
+                raw = web_host_event_none();
+                continue;
+            }
+            if raw.kind == WEB_EVT_REFRESH {
+                self.refresh_requested = true;
+                raw = web_host_event_none();
+                continue;
+            }
+            if raw.kind == WEB_EVT_POINTER_MOVE {
+                if self.pointer_down {
+                    self.touch.feed(-1, timestamp, point, true);
+                } else {
+                    self.hover_pending = true;
+                    self.hover_point = point;
+                }
+                raw = web_host_event_none();
+                continue;
+            }
+            if raw.kind == WEB_EVT_POINTER_DOWN {
+                self.pointer_down = true;
+                self.touch.feed(-1, timestamp, point, true);
+                raw = web_host_event_none();
+                continue;
+            }
+            if raw.kind == WEB_EVT_POINTER_UP {
+                if self.pointer_down {
+                    self.touch.feed(-1, timestamp, point, false);
+                }
+                self.pointer_down = false;
+                self.hover_pending = true;
+                self.hover_point = point;
+                raw = web_host_event_none();
+                continue;
+            }
+            if raw.kind == WEB_EVT_KEY_DOWN {
+                self.remember_key(raw.key_code, true);
+                self.key.feed(-1, timestamp, raw.key_code, true);
+                raw = web_host_event_none();
+                continue;
+            }
+            if raw.kind == WEB_EVT_KEY_UP {
+                self.remember_key(raw.key_code, false);
+                self.key.feed(-1, timestamp, raw.key_code, false);
+                raw = web_host_event_none();
+                continue;
+            }
+            if raw.kind == WEB_EVT_WHEEL {
+                self.encoder.feed(-1, timestamp, raw.value as i16);
+            }
+            raw = web_host_event_none();
+        }
+        return pumped;
+    }
+
+    fn poll(self: &Self, out_evt: &Event) bool {
+        return self.manager.poll(out_evt);
+    }
+
+    fn poll_hover_coords(self: &Self, out_x: &i16, out_y: &i16) bool {
+        if !self.hover_pending || out_x == null || out_y == null {
+            return false;
+        }
+        out_x[0] = self.hover_point.x;
+        out_y[0] = self.hover_point.y;
+        self.hover_pending = false;
+        return true;
+    }
+
+    fn wait(self: &Self, timeout_ms: i32) bool {
+        _ = self;
+        _ = timeout_ms;
+        return false;
+    }
+
+    fn quit_requested(self: &Self) bool {
+        _ = self;
+        return false;
+    }
+
+    fn pointer_down_active(self: &Self) bool {
+        return self.pointer_down;
+    }
+}
+
+export fn web_input_system_new() WebInputSystem {
+    return WebInputSystem{
+        manager: input_manager_new(),
+        touch: touch_driver_new(),
+        key: key_driver_new(),
+        encoder: encoder_driver_new(),
+        touch_dev: touch_driver_new(),
+        key_dev: key_driver_new(),
+        encoder_dev: encoder_driver_new(),
+        hover_pending: false,
+        hover_point: web_hover_point_default(),
+        last_pointer: web_hover_point_default(),
+        pointer_down: false,
+        escape_down: false,
+        enter_down: false,
+        space_down: false,
+        left_down: false,
+        right_down: false,
+        up_down: false,
+        down_down: false,
+        f11_down: false,
+        refresh_requested: false,
+    };
+}
+
+export fn web_input_system_init(input: &WebInputSystem) void {
+    if input == null {
+        return;
+    }
+    input.init();
+}
+
+export fn web_input_system_pump(input: &WebInputSystem, timestamp: u32) i32 {
+    if input == null {
+        return 0;
+    }
+    return input.pump(timestamp);
+}
+
+export fn web_input_system_poll(input: &WebInputSystem, out_evt: &Event) bool {
+    if input == null {
+        return false;
+    }
+    return input.poll(out_evt);
+}
+
+export fn web_input_system_poll_hover(input: &WebInputSystem, out_x: &i16, out_y: &i16) bool {
+    if input == null {
+        return false;
+    }
+    return input.poll_hover_coords(out_x, out_y);
+}
