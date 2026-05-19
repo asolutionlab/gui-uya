@@ -8,6 +8,7 @@ on:
       - ".github/workflows/sim-web-pages.yml"
       - "Makefile"
       - "gui/**"
+      - "third_party/**"
       - "tools/**"
       - "uya/**"
       - "uya.toml"
@@ -28,10 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Emscripten and fonts
+      - name: Install Emscripten
         run: |
           sudo apt-get update
-          sudo apt-get install -y emscripten fonts-noto-cjk
+          sudo apt-get install -y emscripten
 
       - name: Build Pages artifact
         run: make sim-web-pages MODE=release

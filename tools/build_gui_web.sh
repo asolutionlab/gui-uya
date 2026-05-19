@@ -19,7 +19,8 @@ WEB_STACK_SIZE="${WEB_STACK_SIZE:-8388608}"
 TARGET_OS="${TARGET_OS:-unknown}"
 TARGET_ARCH="${TARGET_ARCH:-unknown}"
 WEB_CJK_FONT_OUT="${WEB_CJK_FONT_OUT:-/app/fonts/system_ui_cjk_font}"
-WEB_CJK_FONT_SRC="${WEB_CJK_FONT_SRC:-}"
+VENDORED_WEB_CJK_FONT_SRC="$ROOT_DIR/third_party/fonts/wqy/wqy-microhei.ttc"
+WEB_CJK_FONT_SRC="${WEB_CJK_FONT_SRC:-$VENDORED_WEB_CJK_FONT_SRC}"
 WEB_MINIFY_HTML="${WEB_MINIFY_HTML:-auto}"
 
 pick_web_cjk_font() {
@@ -29,9 +30,9 @@ pick_web_cjk_font() {
     fi
 
     local candidate
-    # On web we prefer single-file TTFs first because they probe more
-    # reliably than TTC/OTF collection fonts in the current runtime.
-    # Noto stays as the next fallback when a simpler TTF is unavailable.
+    # Prefer the vendored font via WEB_CJK_FONT_SRC first. If it is missing,
+    # fall back to common distro fonts so local development still works.
+    # Single-file TTFs probe more reliably than TTC/OTF in some runtimes.
     for candidate in \
         /usr/share/fonts/fonts-gb/GB_HT_GB18030.ttf \
         /usr/share/fonts/fonts-gb/GB_ST_GB18030.ttf \
