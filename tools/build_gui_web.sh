@@ -14,6 +14,8 @@ OUT_WEB_O="$BUILD_DIR/${OUT_NAME}.web_host.o"
 OUT_HTML="$BUILD_DIR/index.html"
 OUT_CIMPORT_SIDECAR="${OUT_C}imports.sh"
 MODE="${MODE:-debug}"
+TARGET_OS="${TARGET_OS:-unknown}"
+TARGET_ARCH="${TARGET_ARCH:-unknown}"
 
 mkdir -p "$BUILD_DIR"
 
@@ -29,7 +31,8 @@ if [ "$MODE" = "release" ]; then
     EMCC_OPT="-O2"
 fi
 
-"$UYA_BIN" build "$APP" --c99 --no-split-c "$UYA_OPT" -o "$OUT_C"
+TARGET_OS="$TARGET_OS" TARGET_ARCH="$TARGET_ARCH" \
+    "$UYA_BIN" build "$APP" --c99 --no-split-c "$UYA_OPT" -o "$OUT_C"
 
 "$EMCC_BIN" -std=c99 "$EMCC_OPT" -fno-builtin -fvisibility=hidden -w \
     -c "$OUT_C" \
