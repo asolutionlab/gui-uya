@@ -146,20 +146,27 @@ if [ -f "$OUT_CIMPORT_SIDECAR" ]; then
     done
 fi
 
-"$EMCC_BIN" "$EMCC_OPT" \
-    "$OUT_GEN_O" \
-    "$OUT_WEB_O" \
-    "${CIMPORT_OBJECTS[@]}" \
-    -o "$OUT_HTML" \
-    -sALLOW_MEMORY_GROWTH=1 \
-    -sINITIAL_MEMORY="$WEB_INITIAL_MEMORY" \
-    -sNO_EXIT_RUNTIME=1 \
-    -Wl,-z,stack-size="$WEB_STACK_SIZE" \
-    -sEXPORTED_FUNCTIONS=_main,_uya_gui_web_host_feed_event \
-    -lidbfs.js \
-    --shell-file "$SHELL_FILE" \
-    "${HTML_MINIFY_FLAGS[@]}" \
-    "${PRELOAD_FILES[@]}" \
+# Use an argument array so optional flags like MINIFY_HTML survive shell
+# parsing exactly as intended across distro-specific emcc wrappers.
+declare -a LINK_CMD=(
+    "$EMCC_BIN"
+    "$EMCC_OPT"
+    "$OUT_GEN_O"
+    "$OUT_WEB_O"
+    "${CIMPORT_OBJECTS[@]}"
+    -o "$OUT_HTML"
+    -sALLOW_MEMORY_GROWTH=1
+    -sINITIAL_MEMORY="$WEB_INITIAL_MEMORY"
+    -sNO_EXIT_RUNTIME=1
+    -Wl,-z,stack-size="$WEB_STACK_SIZE"
+    -sEXPORTED_FUNCTIONS=_uya_gui_web_host_feed_event
+    -lidbfs.js
+    --shell-file "$SHELL_FILE"
+    "${HTML_MINIFY_FLAGS[@]}"
+    "${PRELOAD_FILES[@]}"
     "${CIMPORT_LDFLAGS[@]}"
+)
+
+"${LINK_CMD[@]}"
 
 echo "$OUT_HTML"
