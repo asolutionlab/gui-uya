@@ -134,6 +134,11 @@ make dashboard-compare-report
 - `OPENAI_API_KEY`
 - `OPENAI_MODEL`
 - `OPENAI_BASE_URL`
+- `OPENAI_API_PATH`
+
+当前推荐把 `OPENAI_BASE_URL` 指向你自己的 Cloudflare Worker 根地址，
+再把 `OPENAI_API_PATH` 设成斗地主专用接口 `/ddz/decision`。
+游戏侧发的是斗地主业务 JSON，Worker 再在服务端拼接上游 OpenAI chat 请求。
 
 示例：
 

@@ -1226,39 +1226,19 @@ fn ddz_ai_build_user_payload(game: &DdzGameState, player: i32, legal: &DdzAction
     return ddz_ai_append_byte(out_buf, out_cap, &len, '}' as u8);
 }
 
-fn ddz_ai_build_openai_request(game: &DdzGameState, player: i32, legal: &DdzActionList, out_buf: &byte, out_cap: i32, out_len: &i32) bool {
+fn ddz_ai_build_remote_request(game: &DdzGameState, player: i32, legal: &DdzActionList, out_buf: &byte, out_cap: i32, out_len: &i32) bool {
     if game == null || legal == null || out_buf == null || out_len == null || out_cap <= 0 {
         return false;
     }
-    var payload: [byte: DDZ_PROMPT_BYTES] = [];
-    var model_name: [byte: 128] = [];
-    if !ddz_ai_build_user_payload(game, player, legal, &payload[0], DDZ_PROMPT_BYTES) {
-        return false;
-    }
-    if !ddz_ai_load_model_name(&model_name[0], 128) {
+    if !ddz_ai_build_user_payload(game, player, legal, out_buf, out_cap) {
         return false;
     }
     var len: i32 = 0;
-    out_buf[0] = 0;
-    if !ddz_ai_append_bytes(out_buf, out_cap, &len, "{\"model\":" as &const byte) {
-        return false;
+    while len < out_cap && out_buf[len as usize] != 0 {
+        len = len + 1;
     }
-    if !ddz_ai_append_json_string(out_buf, out_cap, &len, &model_name[0]) {
-        return false;
-    }
-    if !ddz_ai_append_bytes(out_buf, out_cap, &len, ",\"messages\":[{\"role\":\"system\",\"content\":" as &const byte) {
-        return false;
-    }
-    if !ddz_ai_append_json_string(out_buf, out_cap, &len, "You are a strong Dou Dizhu AI. Use the full bidding and play history to maximize win probability. If you are a peasant, coordinate implicitly with your teammate instead of selfish short-term play. Choose exactly one legal action id from legal_actions, never invent cards, history, bids, or rules, and return JSON only like {\"action_id\":1}.") {
-        return false;
-    }
-    if !ddz_ai_append_bytes(out_buf, out_cap, &len, "},{\"role\":\"user\",\"content\":" as &const byte) {
-        return false;
-    }
-    if !ddz_ai_append_json_string(out_buf, out_cap, &len, &payload[0]) {
-        return false;
-    }
-    if !ddz_ai_append_bytes(out_buf, out_cap, &len, "}],\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"doudizhu_action\",\"strict\":true,\"schema\":{\"type\":\"object\",\"properties\":{\"action_id\":{\"type\":\"integer\"}},\"required\":[\"action_id\"],\"additionalProperties\":false}}}}" as &const byte) {
+    if len <= 0 || len >= out_cap {
+        out_buf[0] = 0;
         return false;
     }
     out_len[0] = len;
@@ -1312,7 +1292,7 @@ export fn ddz_ai_step_action(state: &DdzAiState, game: &DdzGameState, player: i3
 
     var request: [byte: DDZ_PROMPT_BYTES] = [];
     var request_len: i32 = 0;
-    if !ddz_ai_build_openai_request(game, player, &legal, &request[0], DDZ_PROMPT_BYTES, &request_len) {
+    if !ddz_ai_build_remote_request(game, player, &legal, &request[0], DDZ_PROMPT_BYTES, &request_len) {
         return ddz_ai_make_fallback(state, game, player, &legal);
     }
     const handle: i32 = uya_openai_chat_start_request(&request[0], request_len as usize);

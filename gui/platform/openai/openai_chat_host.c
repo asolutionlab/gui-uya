@@ -37,6 +37,7 @@ typedef struct UyaOpenAiResolvedConfig {
     char api_key[256];
     char model[128];
     char base_url[256];
+    char api_path[128];
     char config_source[64];
 } UyaOpenAiResolvedConfig;
 
@@ -56,6 +57,7 @@ typedef struct UyaOpenAiChatRequest {
     size_t http_len;
     long http_status;
     char base_url[256];
+    char api_path[128];
     char api_key[256];
 } UyaOpenAiChatRequest;
 
@@ -197,6 +199,30 @@ static void uya_openai_chat_copy_value(char *dst, size_t dst_size, const char *v
     (void)snprintf(dst, dst_size, "%s", value);
 }
 
+static void uya_openai_chat_join_url(char *dst, size_t dst_size, const char *base_url, const char *path) {
+    size_t base_len;
+    size_t path_offset = 0u;
+    if (dst == NULL || dst_size == 0u) {
+        return;
+    }
+    dst[0] = '\0';
+    if (base_url == NULL || base_url[0] == '\0') {
+        return;
+    }
+    if (path == NULL || path[0] == '\0') {
+        uya_openai_chat_copy_value(dst, dst_size, base_url);
+        return;
+    }
+    base_len = strlen(base_url);
+    if (base_len > 0u && base_url[base_len - 1u] == '/' && path[0] == '/') {
+        path_offset = 1u;
+    } else if ((base_len == 0u || base_url[base_len - 1u] != '/') && path[0] != '/') {
+        (void)snprintf(dst, dst_size, "%s/%s", base_url, path);
+        return;
+    }
+    (void)snprintf(dst, dst_size, "%s%s", base_url, path + path_offset);
+}
+
 static void uya_openai_chat_apply_kv(UyaOpenAiResolvedConfig *cfg, const char *key, const char *value) {
     if (cfg == NULL || key == NULL || value == NULL) {
         return;
@@ -211,6 +237,10 @@ static void uya_openai_chat_apply_kv(UyaOpenAiResolvedConfig *cfg, const char *k
     }
     if (strcmp(key, "OPENAI_BASE_URL") == 0) {
         uya_openai_chat_copy_value(cfg->base_url, sizeof(cfg->base_url), value);
+        return;
+    }
+    if (strcmp(key, "OPENAI_API_PATH") == 0) {
+        uya_openai_chat_copy_value(cfg->api_path, sizeof(cfg->api_path), value);
         return;
     }
     if (strcmp(key, "UYA_DDZ_USE_OPENAI") == 0) {
@@ -312,6 +342,7 @@ static UyaOpenAiResolvedConfig uya_openai_chat_resolve_config(void) {
     cfg.enabled = 0;
     uya_openai_chat_copy_value(cfg.model, sizeof(cfg.model), "gpt-5.4-mini");
     uya_openai_chat_copy_value(cfg.base_url, sizeof(cfg.base_url), "https://api.openai.com/v1");
+    uya_openai_chat_copy_value(cfg.api_path, sizeof(cfg.api_path), "/ddz/decision");
     uya_openai_chat_copy_value(cfg.config_source, sizeof(cfg.config_source), "defaults");
 
     uya_openai_chat_load_config_file(&cfg);
@@ -334,6 +365,11 @@ static UyaOpenAiResolvedConfig uya_openai_chat_resolve_config(void) {
     env_value = getenv("OPENAI_BASE_URL");
     if (env_value != NULL && env_value[0] != '\0') {
         uya_openai_chat_copy_value(cfg.base_url, sizeof(cfg.base_url), env_value);
+        uya_openai_chat_copy_value(cfg.config_source, sizeof(cfg.config_source), "env");
+    }
+    env_value = getenv("OPENAI_API_PATH");
+    if (env_value != NULL && env_value[0] != '\0') {
+        uya_openai_chat_copy_value(cfg.api_path, sizeof(cfg.api_path), env_value);
         uya_openai_chat_copy_value(cfg.config_source, sizeof(cfg.config_source), "env");
     }
     return cfg;
@@ -373,6 +409,7 @@ static void uya_openai_chat_free_request(UyaOpenAiChatRequest *req) {
     }
     req->result_code = UYA_OPENAI_CHAT_INVALID_HANDLE;
     req->base_url[0] = '\0';
+    req->api_path[0] = '\0';
     req->api_key[0] = '\0';
 }
 
@@ -573,6 +610,24 @@ static int uya_openai_chat_json_decode_string(const char *src, char **out_text, 
     return 1;
 }
 
+static int uya_openai_chat_set_assistant_copy(UyaOpenAiChatRequest *req, const char *src, size_t len) {
+    char *copy;
+    if (req == NULL || src == NULL) {
+        return UYA_OPENAI_CHAT_PARSE_ERROR;
+    }
+    copy = (char *)malloc(len + 1u);
+    if (copy == NULL) {
+        return UYA_OPENAI_CHAT_TRANSPORT_ERROR;
+    }
+    if (len > 0u) {
+        memcpy(copy, src, len);
+    }
+    copy[len] = '\0';
+    req->assistant_content = copy;
+    req->assistant_len = len;
+    return UYA_OPENAI_CHAT_READY;
+}
+
 static int uya_openai_chat_extract_content(UyaOpenAiChatRequest *req) {
     const char *p;
     const char *message_key;
@@ -581,6 +636,10 @@ static int uya_openai_chat_extract_content(UyaOpenAiChatRequest *req) {
     size_t decoded_len = 0u;
     if (req == NULL || req->http_body == NULL) {
         return UYA_OPENAI_CHAT_PARSE_ERROR;
+    }
+    p = uya_openai_chat_find_key(req->http_body, "\"action_id\"");
+    if (p != NULL) {
+        return uya_openai_chat_set_assistant_copy(req, req->http_body, req->http_len);
     }
     p = uya_openai_chat_find_key(req->http_body, "\"refusal\"");
     if (p != NULL) {
@@ -633,7 +692,13 @@ static int uya_openai_chat_exec_request(UyaOpenAiChatRequest *req) {
     request_preview[0] = '\0';
     response_preview[0] = '\0';
     uya_openai_chat_preview(req->request_body, request_preview, sizeof(request_preview));
-    uya_openai_chat_debugf("child request start base_url=%s bytes=%lu preview=%s", req->base_url, (unsigned long)req->request_len, request_preview);
+    uya_openai_chat_debugf(
+        "child request start base_url=%s api_path=%s bytes=%lu preview=%s",
+        req->base_url,
+        req->api_path,
+        (unsigned long)req->request_len,
+        request_preview
+    );
     (void)gettimeofday(&tv_begin, NULL);
     (void)curl_global_init(CURL_GLOBAL_DEFAULT);
     curl = curl_easy_init();
@@ -642,7 +707,7 @@ static int uya_openai_chat_exec_request(UyaOpenAiChatRequest *req) {
         return UYA_OPENAI_CHAT_TRANSPORT_ERROR;
     }
 
-    (void)snprintf(endpoint, sizeof(endpoint), "%s/chat/completions", req->base_url);
+    uya_openai_chat_join_url(endpoint, sizeof(endpoint), req->base_url, req->api_path);
     (void)snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", req->api_key);
 
     headers = curl_slist_append(headers, auth_header);
@@ -756,11 +821,12 @@ int32_t uya_openai_chat_start(const uint8_t *request_body, size_t request_len) {
     }
     cfg = uya_openai_chat_resolve_config();
     uya_openai_chat_debugf(
-        "start request enabled=%d source=%s model=%s base_url=%s api_key_present=%d bytes=%lu",
+        "start request enabled=%d source=%s model=%s base_url=%s api_path=%s api_key_present=%d bytes=%lu",
         cfg.enabled,
         cfg.config_source,
         cfg.model,
         cfg.base_url,
+        cfg.api_path,
         cfg.api_key[0] != '\0',
         (unsigned long)request_len
     );
@@ -795,6 +861,7 @@ int32_t uya_openai_chat_start(const uint8_t *request_body, size_t request_len) {
     req->request_len = request_len;
     req->result_code = UYA_OPENAI_CHAT_PENDING;
     uya_openai_chat_copy_value(req->base_url, sizeof(req->base_url), cfg.base_url);
+    uya_openai_chat_copy_value(req->api_path, sizeof(req->api_path), cfg.api_path);
     uya_openai_chat_copy_value(req->api_key, sizeof(req->api_key), cfg.api_key);
     if (pipe(pipefd) != 0) {
         uya_openai_chat_reset_slot(req);

@@ -1,0 +1,31 @@
+name = "ddz-openai-proxy"
+main = "worker.js"
+compatibility_date = "2026-05-22"
+workers_dev = true
+
+# Worker endpoint:
+#   POST /ddz/decision
+# Optional extra gate:
+#   wrangler secret put CLIENT_BEARER_TOKEN
+
+[vars]
+UPSTREAM_BASE_URL = "https://gpt001.iotalking.top/v1"
+OPENAI_MODEL = "gpt-5.4-mini"
+ALLOWED_MODELS = "gpt-5.4-mini"
+ALLOWED_ORIGINS = "https://your-game.example.com,http://localhost:8787"
+MAX_REQUEST_BYTES = "24576"
+MAX_PROMPT_CHARS = "12000"
+MAX_OUTPUT_TOKENS = "64"
+UPSTREAM_TIMEOUT_MS = "12000"
+CORS_MAX_AGE = "86400"
+
+[secrets]
+required = ["UPSTREAM_OPENAI_API_KEY"]
+
+[[ratelimits]]
+name = "OPENAI_PROXY_LIMITER"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60
