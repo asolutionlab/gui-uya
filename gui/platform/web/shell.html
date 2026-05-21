@@ -2,12 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>UyaGUI Web</title>
     <style>
       :root {
         color-scheme: dark;
         --uya-gui-log-height: 120px;
+        --uya-gui-shell-padding: 12px;
       }
 
       html,
@@ -18,6 +19,7 @@
         background: #0f1115;
         color: #d8dee9;
         font: 14px/1.4 monospace;
+        overscroll-behavior: none;
       }
 
       body {
@@ -56,6 +58,8 @@
         align-items: center;
         justify-content: center;
         overflow: hidden;
+        padding: var(--uya-gui-shell-padding);
+        box-sizing: border-box;
       }
 
       #uya-gui-stage {
@@ -93,6 +97,109 @@
         height: var(--uya-gui-log-height);
         min-height: var(--uya-gui-log-height);
         max-height: var(--uya-gui-log-height);
+      }
+
+      #uya-gui-mobile-hud {
+        position: absolute;
+        inset: 0;
+        display: none;
+        pointer-events: none;
+      }
+
+      #uya-gui-mobile-fullscreen {
+        position: absolute;
+        right: max(12px, env(safe-area-inset-right));
+        bottom: max(12px, env(safe-area-inset-bottom));
+        border: 0;
+        border-radius: 999px;
+        padding: 10px 16px;
+        background: rgba(16, 20, 28, 0.88);
+        color: #f5f7fb;
+        font: 600 14px/1 system-ui, sans-serif;
+        letter-spacing: 0.02em;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+        pointer-events: auto;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+
+      #uya-gui-mobile-rotate {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: min(88vw, 360px);
+        padding: 18px 20px;
+        border-radius: 20px;
+        background: rgba(8, 10, 14, 0.9);
+        color: #f4f7fb;
+        text-align: center;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.36);
+        opacity: 0;
+        transition: opacity 160ms ease;
+      }
+
+      #uya-gui-mobile-rotate strong {
+        display: block;
+        margin-bottom: 8px;
+        font: 700 18px/1.2 system-ui, sans-serif;
+      }
+
+      #uya-gui-mobile-rotate span {
+        display: block;
+        color: rgba(232, 238, 246, 0.82);
+        font: 14px/1.45 system-ui, sans-serif;
+      }
+
+      body.mobile-doudizhu,
+      body.mobile-doudizhu.status-visible,
+      body.mobile-doudizhu.debug-panel {
+        grid-template-rows: 1fr;
+        background:
+          radial-gradient(circle at top, rgba(70, 98, 161, 0.2), transparent 42%),
+          linear-gradient(180deg, #121722 0%, #0b0f16 100%);
+      }
+
+      body.mobile-doudizhu #uya-gui-status,
+      body.mobile-doudizhu #uya-gui-log {
+        display: none !important;
+      }
+
+      body.mobile-doudizhu #uya-gui-root {
+        width: 100%;
+        min-height: 100dvh;
+        padding:
+          max(8px, env(safe-area-inset-top))
+          max(8px, env(safe-area-inset-right))
+          max(8px, env(safe-area-inset-bottom))
+          max(8px, env(safe-area-inset-left));
+      }
+
+      body.mobile-doudizhu #uya-gui-stage {
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow: 0 18px 56px rgba(0, 0, 0, 0.42);
+      }
+
+      body.mobile-doudizhu.uya-gui-fullscreen-active #uya-gui-stage {
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      body.mobile-doudizhu #uya-gui-mobile-hud {
+        display: block;
+      }
+
+      body.mobile-doudizhu.uya-gui-portrait-warning #uya-gui-mobile-rotate {
+        opacity: 1;
+      }
+
+      body.mobile-doudizhu.uya-gui-portrait-warning #uya-gui-stage {
+        opacity: 0.28;
+      }
+
+      body.mobile-doudizhu.uya-gui-fullscreen-active #uya-gui-mobile-fullscreen {
+        display: none;
       }
     </style>
     <script>
@@ -270,8 +377,72 @@
             document.addEventListener('DOMContentLoaded', applyDebugPanelMode, { once: true });
           }
         }
+        function isTruthyQueryValue(value) {
+          return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+        }
+
+        function isFalsyQueryValue(value) {
+          return value === '0' || value === 'false' || value === 'no' || value === 'off';
+        }
+
+        function isLikelyMobileDevice() {
+          if (typeof window === 'undefined') {
+            return false;
+          }
+          try {
+            if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
+              return true;
+            }
+          } catch (err) {
+          }
+          if (typeof navigator !== 'undefined') {
+            if (navigator.maxTouchPoints && navigator.maxTouchPoints > 0) {
+              return true;
+            }
+            if (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '')) {
+              return true;
+            }
+          }
+          return window.innerWidth <= 900 && window.innerHeight <= 900;
+        }
+
+        function applyMobileDoudizhuMode(enabled) {
+          if (typeof document === 'undefined') {
+            return;
+          }
+          if (!document.body) {
+            document.addEventListener('DOMContentLoaded', function() {
+              applyMobileDoudizhuMode(enabled);
+            }, { once: true });
+            return;
+          }
+          if (enabled) {
+            document.body.classList.add('mobile-doudizhu');
+          } else {
+            document.body.classList.remove('mobile-doudizhu');
+          }
+        }
+
         var defaultCanvasId = findArgValue(bootArgs, '--canvas-id', 'uya-gui-canvas');
         var defaultFontAsset = findArgValue(bootArgs, '--font-asset', 'system_ui_cjk_font.data');
+        var requestedDemo = findArgValue(bootArgs, '--demo', '');
+        var mobileModeParam = null;
+        if (typeof window !== 'undefined') {
+          mobileModeParam = new URLSearchParams(window.location.search).get('mobile');
+        }
+        var mobileDoudizhuMode = false;
+        if (isTruthyQueryValue(mobileModeParam)) {
+          mobileDoudizhuMode = true;
+        } else if (isFalsyQueryValue(mobileModeParam)) {
+          mobileDoudizhuMode = false;
+        } else {
+          mobileDoudizhuMode = requestedDemo === 'doudizhu' && isLikelyMobileDevice();
+        }
+        if (mobileDoudizhuMode && !requestedDemo) {
+          upsertArgValue(bootArgs, '--demo', 'doudizhu');
+          requestedDemo = 'doudizhu';
+        }
+        applyMobileDoudizhuMode(mobileDoudizhuMode);
         var bitmapFontSizes = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 25, 26, 29, 31, 35];
         var bitmapFontAssetsBySize = Object.create(null);
         for (var bitmapFontIndex = 0; bitmapFontIndex < bitmapFontSizes.length; bitmapFontIndex += 1) {
@@ -315,6 +486,7 @@
           uyaGuiAutoDownload: true,
           uyaGuiCanvasId: defaultCanvasId,
           uyaGuiFitWindow: fitWindow,
+          uyaGuiMobileDoudizhuMode: mobileDoudizhuMode,
           uyaGuiPersistData: persistData,
           uyaGuiFontAsset: resolveAssetUrl(defaultFontAsset),
           uyaGuiBitmapFontAssetsBySize: bitmapFontAssetsBySize,
@@ -324,6 +496,8 @@
           uyaGuiCompleted: false,
           uyaGuiCompletion: null,
           uyaGuiHasPresented: false,
+          uyaGuiMobileControlsBound: false,
+          uyaGuiFullscreenAutoAttempted: false,
           uyaGuiStatusText: '',
           uyaGuiLastPresentAt: 0,
           uyaGuiLastScreenshotPath: null,
@@ -369,6 +543,39 @@
             return 3;
           }
           return 0;
+        };
+
+        Module.uyaGuiIsFullscreen = function() {
+          if (typeof document === 'undefined') {
+            return false;
+          }
+          return !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement);
+        };
+
+        Module.uyaGuiTryLockLandscape = function() {
+          if (!Module.uyaGuiMobileDoudizhuMode || typeof screen === 'undefined' || !screen.orientation || !screen.orientation.lock) {
+            return;
+          }
+          try {
+            screen.orientation.lock('landscape').catch(function() {});
+          } catch (err) {
+          }
+        };
+
+        Module.uyaGuiUpdateMobileViewportState = function() {
+          if (!Module.uyaGuiMobileDoudizhuMode || typeof document === 'undefined' || !document.body) {
+            return;
+          }
+          var portraitWarning = typeof window !== 'undefined' && window.innerHeight > window.innerWidth;
+          document.body.classList.toggle('uya-gui-portrait-warning', portraitWarning);
+          document.body.classList.toggle('uya-gui-fullscreen-active', Module.uyaGuiIsFullscreen());
+          var fullscreenButton = document.getElementById('uya-gui-mobile-fullscreen');
+          if (fullscreenButton) {
+            fullscreenButton.textContent = portraitWarning ? '横屏后全屏' : '进入全屏';
+          }
+          if (typeof window !== 'undefined') {
+            window.scrollTo(0, 0);
+          }
         };
 
         Module.uyaGuiRequestBitmapFont = function(pixelHeight) {
@@ -526,13 +733,22 @@
           var canvas = Module.uyaGuiCanvas;
           var overlay = Module.uyaGuiOverlayCanvas;
           var stage = document.getElementById('uya-gui-stage');
+          var root = document.getElementById('uya-gui-root');
           if (!canvas || !overlay || !stage) {
             return;
           }
           var cssScale = Math.max(Module.uyaGuiScale || 1, 1);
           if (Module.uyaGuiFitWindow) {
-            var availWidth = Math.max(window.innerWidth - 24, 1);
-            var availHeight = Math.max(window.innerHeight - 24 - document.getElementById('uya-gui-status').offsetHeight - document.getElementById('uya-gui-log').offsetHeight, 1);
+            var availWidth = 1;
+            var availHeight = 1;
+            if (Module.uyaGuiMobileDoudizhuMode && root) {
+              var rootRect = root.getBoundingClientRect();
+              availWidth = Math.max(Math.floor(rootRect.width), 1);
+              availHeight = Math.max(Math.floor(rootRect.height), 1);
+            } else {
+              availWidth = Math.max(window.innerWidth - 24, 1);
+              availHeight = Math.max(window.innerHeight - 24 - document.getElementById('uya-gui-status').offsetHeight - document.getElementById('uya-gui-log').offsetHeight, 1);
+            }
             var fitScale = Math.min(availWidth / canvas.width, availHeight / canvas.height);
             if (isFinite(fitScale) && fitScale > 0) {
               cssScale = fitScale;
@@ -639,6 +855,8 @@
             document.title = title;
           }
           Module.uyaGuiUpdateCanvasCss();
+          Module.uyaGuiUpdateMobileViewportState();
+          Module.uyaGuiBindMobileControls();
           if (canvas.__uyaGuiBound) {
             return 1;
           }
@@ -755,12 +973,28 @@
                 feed(7, 0, 0, 0, 0, 0);
               } else {
                 Module.uyaGuiUpdateCanvasCss();
+                Module.uyaGuiUpdateMobileViewportState();
                 feed(8, 0, 0, 0, 0, 0);
               }
             });
             window.addEventListener('resize', function() {
               Module.uyaGuiUpdateCanvasCss();
+              Module.uyaGuiUpdateMobileViewportState();
               feed(8, 0, 0, 0, 0, 0);
+            });
+            window.addEventListener('orientationchange', function() {
+              setTimeout(function() {
+                Module.uyaGuiUpdateCanvasCss();
+                Module.uyaGuiUpdateMobileViewportState();
+                feed(8, 0, 0, 0, 0, 0);
+              }, 40);
+            });
+            document.addEventListener('fullscreenchange', function() {
+              Module.uyaGuiUpdateCanvasCss();
+              Module.uyaGuiUpdateMobileViewportState();
+              if (Module.uyaGuiIsFullscreen()) {
+                Module.uyaGuiTryLockLandscape();
+              }
             });
             Module.uyaGuiWindowBound = true;
           }
@@ -850,12 +1084,66 @@
           }
         };
 
+        Module.uyaGuiBindMobileControls = function() {
+          if (!Module.uyaGuiMobileDoudizhuMode || Module.uyaGuiMobileControlsBound || typeof document === 'undefined') {
+            return;
+          }
+          var root = document.getElementById('uya-gui-root');
+          var fullscreenButton = document.getElementById('uya-gui-mobile-fullscreen');
+
+          function requestMobileFullscreen() {
+            if (!Module.uyaGuiIsFullscreen()) {
+              Module.uyaGuiRequestFullscreen();
+            }
+          }
+
+          function maybeAutoFullscreen() {
+            if (Module.uyaGuiFullscreenAutoAttempted || typeof window === 'undefined') {
+              return;
+            }
+            if (window.innerHeight > window.innerWidth) {
+              return;
+            }
+            Module.uyaGuiFullscreenAutoAttempted = true;
+            requestMobileFullscreen();
+          }
+
+          if (fullscreenButton) {
+            fullscreenButton.addEventListener('click', function(evt) {
+              requestMobileFullscreen();
+              evt.preventDefault();
+            });
+          }
+          if (root) {
+            root.addEventListener('pointerdown', maybeAutoFullscreen, true);
+            root.addEventListener('touchstart', maybeAutoFullscreen, { capture: true, passive: true });
+          }
+          Module.uyaGuiMobileControlsBound = true;
+        };
+
         Module.uyaGuiRequestFullscreen = function() {
-          var target = Module.uyaGuiCanvas || Module.canvas;
-          if (!target || !target.requestFullscreen) {
+          var target = document.getElementById('uya-gui-root') || Module.uyaGuiCanvas || Module.canvas || document.documentElement;
+          if (!target) {
             return 0;
           }
-          target.requestFullscreen().catch(function() {});
+          var request = target.requestFullscreen || target.webkitRequestFullscreen || target.msRequestFullscreen;
+          if (!request) {
+            return 0;
+          }
+          try {
+            var result = request.call(target);
+            if (result && typeof result.then === 'function') {
+              result.then(function() {
+                Module.uyaGuiTryLockLandscape();
+                Module.uyaGuiUpdateMobileViewportState();
+              }).catch(function() {});
+            } else {
+              Module.uyaGuiTryLockLandscape();
+              Module.uyaGuiUpdateMobileViewportState();
+            }
+          } catch (err) {
+            return 0;
+          }
           return 1;
         };
 
@@ -938,6 +1226,13 @@
       <div id="uya-gui-stage">
         <canvas id="uya-gui-canvas" tabindex="-1"></canvas>
         <canvas id="uya-gui-overlay" tabindex="-1"></canvas>
+      </div>
+      <div id="uya-gui-mobile-hud" aria-live="polite">
+        <div id="uya-gui-mobile-rotate">
+          <strong>请横屏游玩</strong>
+          <span>手机版斗地主会在横屏下铺满显示，轻触右下角可进入全屏。</span>
+        </div>
+        <button id="uya-gui-mobile-fullscreen" type="button">进入全屏</button>
       </div>
     </div>
     <pre id="uya-gui-log"></pre>
