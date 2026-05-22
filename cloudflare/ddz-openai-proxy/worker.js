@@ -10,8 +10,13 @@ const DDZ_SYSTEM_PROMPT = [
   "目标是最大化长期胜率，而不是只看眼前这一手的短期收益。",
   "你必须且只能从 legal_actions[].id 中选择一个 id，并且只返回 JSON，例如 {\"action_id\":1}。",
   "不要虚构牌、叫分、历史、队友信息或规则。",
+  "你需要先在脑中完成四步：看清当前牌权和敌我关系；结合 history 与公开未见牌做保守猜牌；区分 legal_actions 里的赢牌、阻断、配合、试探和高成本动作；最后再选唯一 action_id。",
+  "看牌局时不要只判断这一手能不能压住，还要判断压住之后牌权会落到谁手里、谁最可能被放走。",
+  "猜牌只能基于公开信息做保守推断，不要把猜测当成已知事实。",
   "比较接近的候选动作时，要重点参考 legal_actions[].cards 和 legal_actions[].remaining_hand_count，不要只看 label。",
+  "主动出牌时，如果没有立刻收官或强制阻断的需要，优先考虑能试探外面反应、出弱留强、尽量不暴露控制牌的低成本线路。",
   "如果你是农民，要和队友做隐式配合；除非你能立刻赢牌，或者必须阻止地主，否则不要用高牌抢走队友的节奏。",
+  "如果队友已经拿到牌权，且危险对手没有马上走牌的风险，通常不要或最克制的配合线会优于强行接管。",
   "如果对手快要走完，优先用最小且安全的赢牌动作去卡住对手。",
   "除非能直接赢牌、必须阻止对手跑牌，或者没有可接受的非炸弹线路，否则尽量保留炸弹和火箭。",
   "如果多个方案战略价值接近，优先更小的安全非炸弹、更低的带牌，以及更低的顺子或连对，尽量保留强控牌。"
@@ -90,7 +95,10 @@ const DDZ_ALLOWED_ACTION_KINDS = new Set([
   "rocket",
   "invalid",
 ]);
-const DDZ_ALLOWED_RANKS = new Set(["3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A", "2", "BJ", "RJ"]);
+const DDZ_RANK_ORDER = ["3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A", "2", "BJ", "RJ"];
+const DDZ_ALLOWED_RANKS = new Set(DDZ_RANK_ORDER);
+const DDZ_HIGH_CONTROL_RANKS = ["K", "A", "2", "BJ", "RJ"];
+const DDZ_PROBE_KINDS = new Set(["single", "pair", "straight", "straight_pairs"]);
 const DDZ_RESPONSE_FORMAT = {
   type: "json_schema",
   json_schema: {
@@ -321,20 +329,52 @@ function buildPlayTacticalNotes(payload) {
   const notes = [];
   const liveSeat = payload.history_summary.last_non_pass_player;
   const liveRelation = relationToSeat(payload, liveSeat);
+  const liveAction = findLiveAction(payload);
   const canPass = payload.legal_actions.some((item) => item.kind === "pass");
+  const passAction = payload.legal_actions.find((item) => item.kind === "pass") || null;
   const immediateWins = payload.legal_actions.filter((item) => item.ends_hand);
   const bombOptions = payload.legal_actions.filter((item) => item.is_bomb_like);
   const normalPlayOptions = payload.legal_actions.filter((item) => item.kind !== "pass" && !item.is_bomb_like);
   const dangerousOpponents = findSeatsByRelationWithMaxCards(payload, "opponent", 2);
   const opponentSingles = dangerousOpponents.filter((seat) => payload.card_counts[seat] === 1);
+  const opponentPairs = dangerousOpponents.filter((seat) => payload.card_counts[seat] === 2);
   const teammateSeat = findTeammateSeat(payload);
+  const unseenCounts = buildUnseenRankCounts(payload);
+  const unseenHighSummary = summarizeRankCounts(unseenCounts, ["RJ", "BJ", "2", "A", "K"]);
+  const unseenHighTotal = sumRankCounts(unseenCounts, ["RJ", "BJ", "2", "A", "K"]);
+  const unseenBombThreat = estimateUnseenBombThreat(payload, unseenCounts);
+  const cheapBlocks = liveAction ? selectCheapestResponses(normalPlayOptions, liveAction) : [];
+  const probeActions = selectProbeActions(normalPlayOptions);
+  const expensiveActions = selectExpensiveActions(payload.legal_actions, payload.hand_count);
 
   if (liveSeat < 0) {
-    notes.push("这一轮由你起手，优先考虑高效率地处理弱牌，同时尽量保留强控牌。");
+    notes.push("这一轮由你起手，优先考虑能出弱留强、便于继续观察外面反应的低成本线路。");
   } else if (liveRelation === "teammate") {
     notes.push(`座位 ${liveSeat} 是你的队友，而且当前牌权在他手里；通常应当保住队友牌权，而不是轻易反超。`);
   } else if (liveRelation === "opponent") {
     notes.push(`座位 ${liveSeat} 是对手，而且当前牌权在他手里；如果要接，优先选择最小且安全的非炸弹压制。`);
+  }
+  if (liveAction && liveSeat >= 0) {
+    notes.push(`当前桌面的有效牌是座位 ${liveSeat} 打出的 ${liveAction.label}。`);
+  }
+  if (payload.legal_actions_truncated) {
+    notes.push("legal_actions 已截断显示；更要优先看 ends_hand、最小安全压制和非炸弹线路。");
+  }
+  if (unseenHighTotal > 0) {
+    notes.push(`公开未见的高控制牌大致还有 ${unseenHighSummary}；猜牌时应把这些潜在控制牌仍在外面的风险算进去。`);
+  } else {
+    notes.push("公开信息里几乎没有未见的高控制牌了，后续争牌权可以比平时更积极。");
+  }
+  if (unseenBombThreat > 0) {
+    notes.push(`公开信息仍允许存在 ${unseenBombThreat} 组未见炸弹或火箭候选，因此高价值长链和强控牌更适合先试探再重投。`);
+  }
+  if (liveAction && liveRelation === "opponent") {
+    const higherSameKindThreats = countHigherSameKindThreats(unseenCounts, liveAction);
+    if (higherSameKindThreats > 0) {
+      notes.push(`按公开信息推断，外面仍可能保留 ${higherSameKindThreats} 档比当前 ${liveAction.label} 更大的同类牌；如果接手后未必守得住，不要为抢一手过早交重牌。`);
+    } else if (isComparablePressureKind(liveAction.kind)) {
+      notes.push(`按公开信息推断，继续压过当前 ${liveAction.label} 的同类空间已经不大；若能用较小动作接住，这手的控权价值会更高。`);
+    }
   }
 
   if (dangerousOpponents.length > 0) {
@@ -343,11 +383,26 @@ function buildPlayTacticalNotes(payload) {
   if (opponentSingles.length > 0) {
     notes.push(`座位 ${opponentSingles.join(", ")} 的对手已经报单，当前应优先考虑卡住他，尤其要重视单张和对子这一类应对。`);
   }
+  if (opponentPairs.length > 0) {
+    notes.push(`座位 ${opponentPairs.join(", ")} 的对手只剩 2 张，当前要额外警惕对子、连对或炸弹式收尾。`);
+  }
   if (teammateSeat >= 0 && payload.card_counts[teammateSeat] <= 2) {
     notes.push(`你的队友座位 ${teammateSeat} 牌已经不多了，应尽量配合他走牌，不要无谓消耗高控制牌。`);
   }
   if (immediateWins.length > 0) {
-    notes.push(`动作 id ${summarizeActionIds(immediateWins)} 可以直接出完手牌，应当被高度优先考虑。`);
+    notes.push(`动作 ${describeActionRefs(immediateWins)} 可以直接出完手牌，应当被高度优先考虑。`);
+  }
+  if (liveRelation === "teammate" && passAction) {
+    notes.push(`当前可以不要，对应动作是 id ${passAction.id}；如果你不能直接赢牌，也不是在挡危险对手，通常先不要更像正确配合。`);
+  }
+  if (liveRelation === "opponent" && cheapBlocks.length > 0) {
+    notes.push(`较小的阻断线路可以先检查 ${describeActionRefs(cheapBlocks)}，不要一上来就交最高控制牌。`);
+  }
+  if (!canPass && probeActions.length > 0) {
+    notes.push(`可用于试探外面反应的起手动作有 ${describeActionRefs(probeActions)}；这类动作更适合先摸牌，再决定要不要升高强度。`);
+  }
+  if (expensiveActions.length > 0) {
+    notes.push(`高成本动作提醒：${describeActionRefs(expensiveActions)} 会较早消耗炸弹、王、2 或其他高控制牌，除非为了直接赢牌或强制卡敌，否则应后置。`);
   }
   if (bombOptions.length > 0 && normalPlayOptions.length > 0) {
     notes.push("当前存在非炸弹选择，因此除非能马上赢牌或必须阻止对手跑牌，否则应尽量保留炸弹和火箭。");
@@ -357,8 +412,292 @@ function buildPlayTacticalNotes(payload) {
   } else if (canPass && dangerousOpponents.length === 0) {
     notes.push("如果对手暂时没有立刻跑牌的风险，那么不要往往比浪费控制牌更好。");
   }
-  notes.push("若仍有多个接近选择，请结合 legal_actions.cards 和 remaining_hand_count 比较，优先更低的带牌和更小的安全线路。");
+  notes.push("若仍有多个接近选择，请同时比较 legal_actions.cards、remaining_hand_count 和是否会暴露控制牌，优先更低成本的安全线路。");
   return notes;
+}
+
+function findLiveAction(payload) {
+  if (!isPlainObject(payload) || !Array.isArray(payload.history)) {
+    return null;
+  }
+  const liveSeat = payload.history_summary.last_non_pass_player;
+  for (let index = payload.history.length - 1; index >= 0; index -= 1) {
+    const entry = payload.history[index];
+    if (!entry || entry.phase !== "play" || !isPlainObject(entry.action)) {
+      continue;
+    }
+    if (entry.action.kind === "pass") {
+      continue;
+    }
+    if (liveSeat >= 0 && entry.player !== liveSeat) {
+      continue;
+    }
+    return entry.action;
+  }
+  return null;
+}
+
+function buildUnseenRankCounts(payload) {
+  const visibleCounts = Object.fromEntries(DDZ_RANK_ORDER.map((rank) => [rank, 0]));
+  addRanksToCount(visibleCounts, payload.hand);
+  if (Array.isArray(payload.history)) {
+    for (const entry of payload.history) {
+      if (!entry || !isPlainObject(entry.action)) {
+        continue;
+      }
+      addRanksToCount(visibleCounts, entry.action.cards);
+    }
+  }
+
+  const unseenCounts = {};
+  for (const rank of DDZ_RANK_ORDER) {
+    unseenCounts[rank] = Math.max(totalCopiesForRank(rank) - (visibleCounts[rank] || 0), 0);
+  }
+  return unseenCounts;
+}
+
+function addRanksToCount(counts, ranks) {
+  if (!counts || !Array.isArray(ranks)) {
+    return;
+  }
+  for (const rank of ranks) {
+    if (typeof rank === "string" && Object.prototype.hasOwnProperty.call(counts, rank)) {
+      counts[rank] += 1;
+    }
+  }
+}
+
+function totalCopiesForRank(rank) {
+  return rank === "BJ" || rank === "RJ" ? 1 : 4;
+}
+
+function summarizeRankCounts(counts, ranks) {
+  const parts = [];
+  for (const rank of ranks) {
+    const total = counts && counts[rank];
+    if (total > 0) {
+      parts.push(`${rank}x${total}`);
+    }
+  }
+  return parts.length > 0 ? parts.join("、") : "无";
+}
+
+function sumRankCounts(counts, ranks) {
+  let total = 0;
+  for (const rank of ranks) {
+    total += counts && Number.isInteger(counts[rank]) ? counts[rank] : 0;
+  }
+  return total;
+}
+
+function estimateUnseenBombThreat(payload, unseenCounts) {
+  const maxBombSlots = countPossibleBombSlotsOutsideHand(payload);
+  let total = 0;
+  for (const rank of DDZ_RANK_ORDER) {
+    if (rank === "BJ" || rank === "RJ") {
+      continue;
+    }
+    if ((unseenCounts[rank] || 0) >= 4) {
+      total += 1;
+    }
+  }
+  const bombThreat = Math.min(total, maxBombSlots);
+  const rocketThreat = hasPossibleOutsideRocket(payload, unseenCounts) ? 1 : 0;
+  return bombThreat + rocketThreat;
+}
+
+function countPossibleBombSlotsOutsideHand(payload) {
+  if (!isPlainObject(payload) || !Array.isArray(payload.card_counts)) {
+    return 0;
+  }
+  let total = 0;
+  for (let seat = 0; seat < payload.card_counts.length; seat += 1) {
+    if (seat === payload.seat) {
+      continue;
+    }
+    total += Math.floor(payload.card_counts[seat] / 4);
+  }
+  return total;
+}
+
+function hasPossibleOutsideRocket(payload, unseenCounts) {
+  if (!isPlainObject(payload) || !Array.isArray(payload.card_counts)) {
+    return false;
+  }
+  if ((unseenCounts.BJ || 0) <= 0 || (unseenCounts.RJ || 0) <= 0) {
+    return false;
+  }
+  for (let seat = 0; seat < payload.card_counts.length; seat += 1) {
+    if (seat !== payload.seat && payload.card_counts[seat] >= 2) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function minimumCopiesForPressureKind(kind) {
+  if (kind === "single") {
+    return 1;
+  }
+  if (kind === "pair") {
+    return 2;
+  }
+  if (kind === "triple" || kind === "triple_single" || kind === "triple_pair") {
+    return 3;
+  }
+  if (kind === "bomb") {
+    return 4;
+  }
+  return 0;
+}
+
+function isComparablePressureKind(kind) {
+  return minimumCopiesForPressureKind(kind) > 0;
+}
+
+function countHigherSameKindThreats(unseenCounts, action) {
+  const minCopies = minimumCopiesForPressureKind(action && action.kind);
+  if (minCopies <= 0 || !action || !Number.isInteger(action.main_rank)) {
+    return 0;
+  }
+  let total = 0;
+  for (let index = action.main_rank + 1; index < DDZ_RANK_ORDER.length; index += 1) {
+    const rank = DDZ_RANK_ORDER[index];
+    if ((unseenCounts[rank] || 0) >= minCopies) {
+      total += 1;
+    }
+  }
+  return total;
+}
+
+function selectCheapestResponses(actions, liveAction, limit = 3) {
+  if (!Array.isArray(actions) || actions.length <= 0 || !liveAction) {
+    return [];
+  }
+  const sameKind = actions.filter((item) => item.kind === liveAction.kind);
+  const pool = sameKind.length > 0 ? sameKind : actions;
+  return sortActionsByEconomy(pool).slice(0, limit);
+}
+
+function selectProbeActions(actions, limit = 4) {
+  if (!Array.isArray(actions) || actions.length <= 0) {
+    return [];
+  }
+  const maxProbeRank = DDZ_RANK_ORDER.indexOf("10");
+  const probeActions = actions.filter((action) => {
+    if (!action || !DDZ_PROBE_KINDS.has(action.kind) || action.ends_hand || action.is_bomb_like) {
+      return false;
+    }
+    if (!Number.isInteger(action.main_rank) || action.main_rank < 0 || action.main_rank > maxProbeRank) {
+      return false;
+    }
+    if (countControlCardsInAction(action) > 0) {
+      return false;
+    }
+    if (action.card_count >= 6 || action.remaining_hand_count <= 0) {
+      return false;
+    }
+    return true;
+  });
+  return sortActionsByEconomy(probeActions).slice(0, limit);
+}
+
+function selectExpensiveActions(actions, handCount, limit = 4) {
+  if (!Array.isArray(actions) || actions.length <= 0) {
+    return [];
+  }
+  const expensiveActions = actions.filter((action) => {
+    if (!action || action.kind === "pass") {
+      return false;
+    }
+    const controlCount = countControlCardsInAction(action);
+    return action.is_bomb_like
+      || countRankCopies(action.cards, "BJ") > 0
+      || countRankCopies(action.cards, "RJ") > 0
+      || countRankCopies(action.cards, "2") >= Math.min(2, action.card_count)
+      || controlCount >= 2
+      || (action.card_count >= Math.min(Math.max(5, handCount - 1), 6) && action.remaining_hand_count > 0);
+  });
+  return sortActionsByExpense(expensiveActions).slice(0, limit);
+}
+
+function sortActionsByEconomy(actions) {
+  return [...actions].sort((left, right) => {
+    const mainRankDiff = normalizeMainRank(left.main_rank) - normalizeMainRank(right.main_rank);
+    if (mainRankDiff !== 0) {
+      return mainRankDiff;
+    }
+    const controlDiff = countControlCardsInAction(left) - countControlCardsInAction(right);
+    if (controlDiff !== 0) {
+      return controlDiff;
+    }
+    const cardCountDiff = left.card_count - right.card_count;
+    if (cardCountDiff !== 0) {
+      return cardCountDiff;
+    }
+    const remainingDiff = left.remaining_hand_count - right.remaining_hand_count;
+    if (remainingDiff !== 0) {
+      return remainingDiff;
+    }
+    return left.id - right.id;
+  });
+}
+
+function sortActionsByExpense(actions) {
+  return [...actions].sort((left, right) => {
+    const bombDiff = Number(right.is_bomb_like) - Number(left.is_bomb_like);
+    if (bombDiff !== 0) {
+      return bombDiff;
+    }
+    const controlDiff = countControlCardsInAction(right) - countControlCardsInAction(left);
+    if (controlDiff !== 0) {
+      return controlDiff;
+    }
+    const cardCountDiff = right.card_count - left.card_count;
+    if (cardCountDiff !== 0) {
+      return cardCountDiff;
+    }
+    const mainRankDiff = normalizeMainRank(right.main_rank) - normalizeMainRank(left.main_rank);
+    if (mainRankDiff !== 0) {
+      return mainRankDiff;
+    }
+    return left.id - right.id;
+  });
+}
+
+function normalizeMainRank(mainRank) {
+  return Number.isInteger(mainRank) && mainRank >= 0 ? mainRank : 99;
+}
+
+function countControlCardsInAction(action) {
+  return action && Array.isArray(action.cards)
+    ? countSpecificRanks(action.cards, DDZ_HIGH_CONTROL_RANKS)
+    : 0;
+}
+
+function countSpecificRanks(ranks, targets) {
+  if (!Array.isArray(ranks) || !Array.isArray(targets)) {
+    return 0;
+  }
+  let total = 0;
+  for (const rank of ranks) {
+    if (targets.includes(rank)) {
+      total += 1;
+    }
+  }
+  return total;
+}
+
+function describeActionRefs(actions, limit = 4) {
+  if (!Array.isArray(actions) || actions.length <= 0) {
+    return "";
+  }
+  const refs = actions
+    .slice(0, limit)
+    .map((item) => `id ${item.id}(${item.label})`);
+  return actions.length > limit
+    ? `${refs.join("、")} 等`
+    : refs.join("、");
 }
 
 function relationToSeat(payload, seat) {
@@ -429,15 +768,6 @@ function countRankCopies(hand, targetRank) {
     }
   }
   return total;
-}
-
-function summarizeActionIds(actions, limit = 4) {
-  const ids = actions
-    .slice(0, limit)
-    .map((item) => String(item.id));
-  return actions.length > limit
-    ? `${ids.join(", ")}...`
-    : ids.join(", ");
 }
 
 function extractActionDecision(upstreamText, legalActions) {
