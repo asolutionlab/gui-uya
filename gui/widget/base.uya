@@ -37,6 +37,7 @@ export const WIDGET_TYPE_LIST: u32 = 0x1008u32;
 export const WIDGET_TYPE_GRID_VIEW: u32 = 0x1009u32;
 export const WIDGET_TYPE_CHART: u32 = 0x100Au32;
 export const WIDGET_TYPE_CANVAS: u32 = 0x100Bu32;
+export const WIDGET_TYPE_TEXT_INPUT: u32 = 0x100Cu32;
 const MAX_WIDGET_CULL_RECTS: i32 = 16;
 const MAX_WIDGET_COVER_RECTS: i32 = 4;
 
@@ -263,7 +264,8 @@ fn widget_type_supports_opaque_culling(type_tag: u32) bool {
         || type_tag == WIDGET_TYPE_LIST
         || type_tag == WIDGET_TYPE_GRID_VIEW
         || type_tag == WIDGET_TYPE_CHART
-        || type_tag == WIDGET_TYPE_CANVAS;
+        || type_tag == WIDGET_TYPE_CANVAS
+        || type_tag == WIDGET_TYPE_TEXT_INPUT;
 }
 
 fn widget_collect_opaque_cover(obj: &GuiObj) WidgetCoverSet {

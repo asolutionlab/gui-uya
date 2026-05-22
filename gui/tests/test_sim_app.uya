@@ -1,6 +1,7 @@
 use core.event.Event;
 use core.event.EventType;
 use core.event.InputDev;
+use core.event.event_key;
 use core.event.event_point;
 use core.color.Color;
 use core.point.Point;
@@ -174,6 +175,40 @@ test "sim app renders and reacts to playback-style input" {
     app.render(&ctx);
     try assert_eq_bool(ctx.stats.text_ops > 0u32, true);
     try assert_eq_bool(ctx.stats.image_ops > 0u32, true);
+}
+
+test "phase page text input captures shortcut letters once focused" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Phase4;
+    try assert_eq_bool(app.init(cfg), true);
+
+    const input_area: Rect = app.text_input.widget.base.screen_area();
+    const input_center: Point = Point{
+        x: input_area.x + input_area.w as i16 / 2,
+        y: input_area.y + input_area.h as i16 / 2,
+    };
+    var press_evt: Event = event_point(EventType.Press, InputDev.Touch, -1, 10u32, input_center);
+    var release_evt: Event = event_point(
+        EventType.Release,
+        InputDev.Touch,
+        -1,
+        11u32,
+        Point{ x: input_center.x, y: input_center.y }
+    );
+    app.handle_translated_event(&press_evt);
+    app.handle_translated_event(&release_evt);
+
+    var key_evt: Event = event_key(EventType.KeyDown, InputDev.Keypad, -1, 12u32, 'm' as u16);
+    app.handle_translated_event(&key_evt);
+
+    try assert_eq_i32(app.config.demo as i32, SimDemoKind.Phase4 as i32);
+    try assert_eq_bool(app.text_input.text()[0] == 'm' as byte, true);
 }
 
 test "sim app retained render repaints only affected phase widgets" {

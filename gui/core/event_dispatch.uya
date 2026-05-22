@@ -43,6 +43,8 @@ export struct EventDispatcher {
         var working: Event = evt;
         if event_uses_capture(working) && self.capture_obj >= 0 {
             working.target = self.capture_obj;
+        } else if working.target < 0 && (working.dev_type == InputDev.Keypad || working.dev_type == InputDev.Encoder) {
+            working.target = self.focus_obj;
         } else if working.target < 0 {
             working.target = self.find_target(tree, working.point());
         }

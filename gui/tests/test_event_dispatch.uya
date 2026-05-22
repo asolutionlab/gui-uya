@@ -2,6 +2,7 @@ use core.event.Event;
 use core.event.EventPhase;
 use core.event.EventType;
 use core.event.InputDev;
+use core.event.event_key;
 use core.event.event_point;
 use core.event.event_point_value;
 use core.event_dispatch.EventDispatcher;
@@ -16,6 +17,9 @@ use core.obj_tree.obj_tree_new;
 use core.point.Point;
 use core.rect.Rect;
 use std.testing.assert_eq_i32;
+use std.testing.assert_eq_bool;
+use widget.base.WidgetState;
+use widget.lbl.TextInput;
 
 export const TEST_EVENT_DISPATCH_MODULE: i32 = 1;
 
@@ -168,6 +172,32 @@ test "dispatcher updates focus on press and emits callback" {
     try assert_eq_i32(last_target, 1);
     try assert_eq_i32(last_type, EventType.FocusIn as i32);
     try assert_eq_i32(user_hits, 1);
+}
+
+test "dispatcher routes focused key events into text input" {
+    gui_obj_reset_registry();
+
+    var root: GuiObj = gui_obj_default();
+    var input: TextInput = TextInput.new("Type");
+    root.set_area(Rect{ x: 0, y: 0, w: 120, h: 60 });
+    input.widget.at(10, 10);
+    input.widget.size(80, 28);
+
+    _ = gui_obj_register(0, &root);
+    _ = gui_obj_register(1, input.obj());
+
+    var tree: ObjTree = obj_tree_new();
+    tree.set_root(0, &root);
+    tree.attach(0, 1);
+
+    var dispatcher: EventDispatcher = event_dispatcher_new();
+    _ = dispatcher.dispatch(event_point(EventType.Press, InputDev.Touch, -1, 10u32, Point{ x: 20, y: 20 }), &tree);
+    try assert_eq_i32(dispatcher.get_focus(), 1);
+
+    _ = dispatcher.dispatch(event_key(EventType.KeyDown, InputDev.Keypad, -1, 12u32, 'M' as u16), &tree);
+    _ = dispatcher.dispatch(event_key(EventType.KeyDown, InputDev.Keypad, -1, 14u32, 8u16), &tree);
+    try assert_eq_bool(input.widget.state == WidgetState.Focused, true);
+    try assert_eq_bool(input.text()[0] == 0, true);
 }
 
 test "dispatcher pumps queued touch gestures" {

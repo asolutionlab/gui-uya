@@ -2,6 +2,7 @@ use core.color.Color;
 use core.event.Event;
 use core.event.EventType;
 use core.event.InputDev;
+use core.event.event_key;
 use core.event.event_point;
 use core.obj.gui_obj_register;
 use core.obj.gui_obj_reset_registry;
@@ -35,6 +36,7 @@ use widget.grid_view.GridView;
 use widget.img.Image;
 use widget.lbl.Label;
 use widget.lbl.TextAlign;
+use widget.lbl.TextInput;
 use widget.lbl.TextOverflow;
 use widget.list.ListView;
 use widget.page.Page;
@@ -163,6 +165,23 @@ test "slider and switch propagate value changes" {
     _ = sw.handle_event(&switch_evt);
     try assert_eq_bool(sw.checked, true);
     try assert_eq_i32(value, 1);
+}
+
+test "text input accepts printable keys and backspace while focused" {
+    var input: TextInput = TextInput.new("Type");
+    var focus_evt: Event = event_point(EventType.FocusIn, InputDev.Keypad, 1, 1u32, Point{ x: 0, y: 0 });
+    var key_a_evt: Event = event_key(EventType.KeyDown, InputDev.Keypad, 1, 2u32, 'A' as u16);
+    var key_b_evt: Event = event_key(EventType.KeyDown, InputDev.Keypad, 1, 3u32, 'B' as u16);
+    var backspace_evt: Event = event_key(EventType.KeyDown, InputDev.Keypad, 1, 4u32, 8u16);
+
+    try assert_eq_bool(input.handle_event(&focus_evt), true);
+    try assert_eq_bool(input.handle_event(&key_a_evt), true);
+    try assert_eq_bool(input.handle_event(&key_b_evt), true);
+    try assert_eq_bool(input.text()[0] == 'A' as byte, true);
+    try assert_eq_bool(input.text()[1] == 'B' as byte, true);
+    try assert_eq_bool(input.handle_event(&backspace_evt), true);
+    try assert_eq_bool(input.text()[0] == 'A' as byte, true);
+    try assert_eq_bool(input.text()[1] == 0u8, true);
 }
 
 test "list view selection and grid view children work" {

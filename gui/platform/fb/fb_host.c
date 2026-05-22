@@ -135,6 +135,9 @@ static int uya_gui_sim_fb_tty_keycode(uint8_t ch) {
     if (ch >= 32u && ch < 127u) {
         return (int)ch;
     }
+    if (ch == 8u || ch == 127u) {
+        return 8;
+    }
     if (ch == '\r' || ch == '\n') {
         return 13;
     }
@@ -155,6 +158,7 @@ static int uya_gui_sim_fb_linux_keycode(uint16_t code) {
         return '0';
     }
     switch (code) {
+        case KEY_BACKSPACE: return 8;
         case KEY_ESC: return 27;
         case KEY_ENTER: return 13;
         case KEY_SPACE: return 32;

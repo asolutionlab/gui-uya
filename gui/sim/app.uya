@@ -162,6 +162,7 @@ use widget.chart.Chart;
 use widget.chart.ChartType;
 use widget.img.Image;
 use widget.lbl.Label;
+use widget.lbl.TextInput;
 use widget.lbl.TextAlign;
 use widget.lbl.TextOverflow;
 use widget.page.Page;
@@ -189,6 +190,7 @@ const APP_ID_METRICS: i32 = 12;
 const APP_ID_HELP: i32 = 13;
 const APP_ID_CHART: i32 = 14;
 const APP_ID_IMAGE: i32 = 15;
+const APP_ID_TEXT_INPUT: i32 = 16;
 
 const DEFAULT_SCREENSHOT_PATH: &const byte = "build/sim/last_frame.bmp";
 const DEFAULT_RECORD_PATH: &const byte = "build/sim/last_input.uyarec";
@@ -239,6 +241,7 @@ export struct SimApp {
     status_label: Label,
     fs_label: Label,
     input_label: Label,
+    text_input: TextInput,
     metrics_label: Label,
     help_label: Label,
     animation_demo: AnimationRetained,
@@ -307,12 +310,14 @@ export struct SimApp {
 struct AppButtonClickAdapter : IWidgetEventCallback {}
 struct AppSliderValueAdapter : IWidgetValueCallback {}
 struct AppSwitchValueAdapter : IWidgetValueCallback {}
+struct AppTextInputValueAdapter : IWidgetValueCallback {}
 struct AppRetainedFullAdapter : IRenderScheduleFullCallback {}
 struct AppRetainedOverlayAdapter : IRenderScheduleOverlayCallback {}
 
 var APP_BUTTON_CLICK_ADAPTER: IWidgetEventCallback = AppButtonClickAdapter{};
 var APP_SLIDER_VALUE_ADAPTER: IWidgetValueCallback = AppSliderValueAdapter{};
 var APP_SWITCH_VALUE_ADAPTER: IWidgetValueCallback = AppSwitchValueAdapter{};
+var APP_TEXT_INPUT_VALUE_ADAPTER: IWidgetValueCallback = AppTextInputValueAdapter{};
 var APP_RETAINED_FULL_ADAPTER: IRenderScheduleFullCallback = AppRetainedFullAdapter{};
 var APP_RETAINED_OVERLAY_ADAPTER: IRenderScheduleOverlayCallback = AppRetainedOverlayAdapter{};
 
@@ -435,6 +440,18 @@ AppSwitchValueAdapter {
     }
 }
 
+AppTextInputValueAdapter {
+    fn invoke(self: &Self, widget: &Widget, value: i32, user_data: &void) void {
+        _ = self;
+        _ = widget;
+        _ = value;
+        const app: &SimApp = user_data as &SimApp;
+        if app != null {
+            app.on_text_input_change();
+        }
+    }
+}
+
 SimApp {
     fn init(self: &Self, config: SimConfig) bool {
         self.config = config;
@@ -526,12 +543,14 @@ SimApp {
         self.toggle.widget.at(12, 62);
         self.slider.widget.at(12, 102);
         self.slider.widget.size((left_w - 24) as u16, 28);
-        self.status_label.widget.at(12, 140);
+        self.text_input.widget.at(12, 140);
+        self.text_input.widget.size((left_w - 24) as u16, 34);
+        self.status_label.widget.at(12, 182);
         self.status_label.widget.size((left_w - 24) as u16, 14);
-        self.input_label.widget.at(12, 158);
+        self.input_label.widget.at(12, 200);
         self.input_label.widget.size((left_w - 24) as u16, 14);
-        self.help_label.widget.at(12, 178);
-        self.help_label.widget.size((left_w - 24) as u16, 40);
+        self.help_label.widget.at(12, 220);
+        self.help_label.widget.size((left_w - 24) as u16, 44);
         self.help_label.overflow = TextOverflow.Wrap;
 
         self.phase_label.widget.at(12, 18);
@@ -580,6 +599,7 @@ SimApp {
         self.action_button.on_click(&APP_BUTTON_CLICK_ADAPTER, self as &void);
         self.slider.on_change(&APP_SLIDER_VALUE_ADAPTER, self as &void);
         self.toggle.on_change(&APP_SWITCH_VALUE_ADAPTER, self as &void);
+        self.text_input.on_change(&APP_TEXT_INPUT_VALUE_ADAPTER, self as &void);
     }
 
     fn home_demo_kind(self: &Self) SimDemoKind {
@@ -757,6 +777,7 @@ SimApp {
         if !gui_obj_register(APP_ID_HELP, self.help_label.obj()) {}
         if !gui_obj_register(APP_ID_CHART, self.chart.obj()) {}
         if !gui_obj_register(APP_ID_IMAGE, self.preview.obj()) {}
+        if !gui_obj_register(APP_ID_TEXT_INPUT, self.text_input.obj()) {}
 
         self.page.add(self.title_label.obj());
         self.page.add(self.left_panel.obj());
@@ -765,6 +786,7 @@ SimApp {
         self.left_panel.add(self.action_button.obj());
         self.left_panel.add(self.toggle.obj());
         self.left_panel.add(self.slider.obj());
+        self.left_panel.add(self.text_input.obj());
         self.left_panel.add(self.status_label.obj());
         self.left_panel.add(self.input_label.obj());
         self.left_panel.add(self.help_label.obj());
@@ -870,9 +892,24 @@ SimApp {
         _ = sim_copy_cstr(
             &self.help_text[0],
             SIM_TEXT_CAPACITY as usize,
-            "Esc退出 | P截图 | R录制 | L回放 | Z斗地主 | T托管 | 首页点按钮 | Demo 左上角返回"
+            "Esc退出 | P截图 | R录制 | L回放 | 点输入框键入单行文本 | Z斗地主 | T托管"
         );
         self.help_label.set_text(&self.help_text[0]);
+    }
+
+    fn on_text_input_change(self: &Self) void {
+        const current: &const byte = self.text_input.text();
+        if current == null || current[0] == 0 {
+            self.refresh_status_label("输入框已清空");
+            return;
+        }
+        _ = snprintf(
+            &self.status_text[0],
+            SIM_TEXT_CAPACITY as usize,
+            "输入框: %s" as &const byte,
+            current
+        );
+        self.status_label.set_text(&self.status_text[0]);
     }
 
     fn home_nav_button_rect(self: &Self, index: i32) Rect {
@@ -1923,7 +1960,20 @@ SimApp {
             return;
         }
         if evt.dev_type == InputDev.Keypad {
-            self.handle_key_event(evt.key_code(), evt.event_type == EventType.KeyDown, evt.timestamp, true);
+            self.last_key = evt.key_code();
+            var key_kind: RecorderEventKind = RecorderEventKind.KeyUp;
+            if evt.event_type == EventType.KeyDown {
+                key_kind = RecorderEventKind.KeyDown;
+            }
+            _ = self.recorder.record_event(evt.timestamp, key_kind, self.last_pointer.x, self.last_pointer.y, 0, evt.key_code());
+            if sim_demo_is_phase(self.config.demo) {
+                var working_key_evt: Event = evt[0];
+                if self.dispatcher.dispatch(working_key_evt, &self.tree) {
+                    self.refresh_input_label();
+                    return;
+                }
+            }
+            self.handle_key_event(evt.key_code(), evt.event_type == EventType.KeyDown, evt.timestamp, false);
             return;
         }
         if evt.dev_type == InputDev.Encoder {
@@ -2334,6 +2384,7 @@ fn sim_app_init_defaults(app: &SimApp) void {
     app.status_label = Label.new("状态");
     app.fs_label = Label.new("文件");
     app.input_label = Label.new("输入");
+    app.text_input = TextInput.new("输入单行文本");
     app.metrics_label = Label.new("指标");
     app.help_label = Label.new("帮助");
     app.animation_demo = animation_retained_new();

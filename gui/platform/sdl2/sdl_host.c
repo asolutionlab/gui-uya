@@ -2207,6 +2207,7 @@ static int uya_gui_sim_keycode(SDL_Keycode sym) {
         return (int)sym;
     }
     switch (sym) {
+        case SDLK_BACKSPACE: return 8;
         case SDLK_ESCAPE: return 27;
         case SDLK_RETURN: return 13;
         case SDLK_SPACE: return 32;

@@ -1580,10 +1580,12 @@
             return 1;
           }
 
-          function mapKey(key) {
+          function mapKey(evt) {
+            var key = evt && evt.key ? evt.key : '';
             switch (key) {
               case 'Escape': return 27;
               case 'Enter': return 13;
+              case 'Backspace': return 8;
               case ' ': return 32;
               case 'Spacebar': return 32;
               case 'ArrowLeft': return 1000;
@@ -1591,8 +1593,12 @@
               case 'ArrowUp': return 1002;
               case 'ArrowDown': return 1003;
               case 'F11': return 1011;
-              default: return 0;
+              default: break;
             }
+            if (!evt.altKey && !evt.ctrlKey && !evt.metaKey && key.length === 1) {
+              return key.charCodeAt(0) & 0xffff;
+            }
+            return 0;
           }
 
           function feed(kind, x, y, value, keyCode, modifiers) {
@@ -1687,7 +1693,7 @@
             evt.preventDefault();
           }, { passive: false });
           canvas.addEventListener('keydown', function(evt) {
-            var mapped = mapKey(evt.key);
+            var mapped = mapKey(evt);
             if (!mapped) {
               return;
             }
@@ -1695,7 +1701,7 @@
             evt.preventDefault();
           });
           canvas.addEventListener('keyup', function(evt) {
-            var mapped = mapKey(evt.key);
+            var mapped = mapKey(evt);
             if (!mapped) {
               return;
             }

@@ -1,6 +1,10 @@
 use core.color.Color;
 use core.color.TRANSPARENT;
+use core.color.WHITE;
+use core.event.Event;
+use core.event.EventType;
 use core.obj.GuiObj;
+use core.obj.IGuiInputCallback;
 use core.obj.IGuiRenderCallback;
 use core.rect.Rect;
 use libc.strncmp;
@@ -9,8 +13,11 @@ use render.font.Font;
 use render.font.draw_text;
 use render.font.font_runtime_generation;
 use style.StyleProp;
+use widget.base.IWidgetValueCallback;
 use widget.base.Widget;
+use widget.base.WidgetState;
 use widget.base.WIDGET_TYPE_LABEL;
+use widget.base.WIDGET_TYPE_TEXT_INPUT;
 use widget.base.widget_bind_callbacks;
 use widget.base.widget_draw_surface;
 use widget.base.widget_font;
@@ -42,8 +49,12 @@ export enum TextOverflow {
 }
 
 struct LabelRenderAdapter : IGuiRenderCallback {}
+struct TextInputRenderAdapter : IGuiRenderCallback {}
+struct TextInputInputAdapter : IGuiInputCallback {}
 
 var LABEL_RENDER_ADAPTER: IGuiRenderCallback = LabelRenderAdapter{};
+var TEXT_INPUT_RENDER_ADAPTER: IGuiRenderCallback = TextInputRenderAdapter{};
+var TEXT_INPUT_INPUT_ADAPTER: IGuiInputCallback = TextInputInputAdapter{};
 
 struct TextLine {
     start: usize,
@@ -74,6 +85,29 @@ LabelRenderAdapter {
         if label != null {
             label.render(ctx);
         }
+    }
+}
+
+TextInputRenderAdapter {
+    fn invoke(self: &Self, obj: &GuiObj, ctx: &RenderCtx, user_data: &void) void {
+        _ = self;
+        _ = obj;
+        const input: &TextInput = user_data as &TextInput;
+        if input != null {
+            input.render(ctx);
+        }
+    }
+}
+
+TextInputInputAdapter {
+    fn invoke(self: &Self, obj: &GuiObj, evt: &Event, user_data: &void) bool {
+        _ = self;
+        _ = obj;
+        const input: &TextInput = user_data as &TextInput;
+        if input == null {
+            return false;
+        }
+        return input.handle_event(evt);
     }
 }
 
@@ -266,5 +300,263 @@ Label {
             idx = idx + 1;
         }
         ctx.pop_clip();
+    }
+}
+
+export const TEXT_INPUT_BUFFER_BYTES: i32 = 128;
+const TEXT_INPUT_MAX_LEN: usize = 127usize;
+const TEXT_INPUT_KEY_BACKSPACE: u16 = 8u16;
+const TEXT_INPUT_KEY_ENTER: u16 = 13u16;
+const TEXT_INPUT_KEY_LEFT: u16 = 1000u16;
+const TEXT_INPUT_KEY_RIGHT: u16 = 1001u16;
+const TEXT_INPUT_KEY_UP: u16 = 1002u16;
+const TEXT_INPUT_KEY_DOWN: u16 = 1003u16;
+
+fn text_input_cstr_eq(a: &const byte, b: &const byte) bool {
+    if a == null && b == null {
+        return true;
+    }
+    if a == null || b == null {
+        return false;
+    }
+    var i: usize = 0usize;
+    while a[i] != 0 && b[i] != 0 {
+        if a[i] != b[i] {
+            return false;
+        }
+        i = i + 1usize;
+    }
+    return a[i] == b[i];
+}
+
+fn text_input_is_printable_ascii(key_code: u16) bool {
+    return key_code >= 32u16 && key_code <= 126u16;
+}
+
+fn text_input_is_navigation_key(key_code: u16) bool {
+    return key_code == TEXT_INPUT_KEY_LEFT
+        || key_code == TEXT_INPUT_KEY_RIGHT
+        || key_code == TEXT_INPUT_KEY_UP
+        || key_code == TEXT_INPUT_KEY_DOWN;
+}
+
+fn text_input_placeholder_color(bg: Color, fg: Color) Color {
+    return fg.lerp(bg, 0.45);
+}
+
+export struct TextInput {
+    widget: Widget,
+    placeholder: &const byte,
+    placeholder_len: usize,
+    text_buf: [byte: 128],
+    text_len: usize,
+}
+
+TextInput {
+    fn new(placeholder: &const byte) TextInput {
+        var widget: Widget = widget_new("TextInput", WIDGET_TYPE_TEXT_INPUT, true, true);
+        widget.size(196, 36);
+        widget.base.style.set_color(StyleProp.BgColor, Color{ r: 255, g: 255, b: 255, a: 255 });
+        widget.base.style.set_color(StyleProp.BgHoverColor, Color{ r: 250, g: 252, b: 255, a: 255 });
+        widget.base.style.set_color(StyleProp.BgPressColor, Color{ r: 243, g: 247, b: 255, a: 255 });
+        widget.base.style.set_color(StyleProp.BgFocusColor, Color{ r: 247, g: 251, b: 255, a: 255 });
+        widget.base.style.set_color(StyleProp.FgColor, Color{ r: 15, g: 23, b: 42, a: 255 });
+        widget.base.style.set_color(StyleProp.BorderColor, Color{ r: 203, g: 213, b: 225, a: 255 });
+        widget.base.style.set_u32(StyleProp.BorderWidth, 1u32);
+        widget.base.style.set_u32(StyleProp.Radius, 10u32);
+        widget.base.style.set_u32(StyleProp.PaddingLeft, 10u32);
+        widget.base.style.set_u32(StyleProp.PaddingRight, 10u32);
+        widget.base.style.set_u32(StyleProp.PaddingTop, 8u32);
+        widget.base.style.set_u32(StyleProp.PaddingBottom, 8u32);
+        widget.base.style.set_u32(StyleProp.FontSize, 14u32);
+        return TextInput{
+            widget: widget,
+            placeholder: placeholder,
+            placeholder_len: widget_text_len(placeholder),
+            text_buf: [],
+            text_len: 0usize,
+        };
+    }
+
+    fn obj(self: &Self) &GuiObj {
+        return widget_bind_callbacks(&self.widget.base, &TEXT_INPUT_RENDER_ADAPTER, &TEXT_INPUT_INPUT_ADAPTER, self as &void);
+    }
+
+    fn text(self: &Self) &const byte {
+        return &self.text_buf[0];
+    }
+
+    fn set_placeholder(self: &Self, placeholder: &const byte) &TextInput {
+        if text_input_cstr_eq(self.placeholder, placeholder) {
+            return self;
+        }
+        self.placeholder = placeholder;
+        self.placeholder_len = widget_text_len(placeholder);
+        self.widget.base.invalidate();
+        return self;
+    }
+
+    fn on_change(self: &Self, callback: &IWidgetValueCallback, user_data: &void) &TextInput {
+        self.widget.on_value_change(callback, user_data);
+        return self;
+    }
+
+    fn set_text(self: &Self, text: &const byte) &TextInput {
+        var next_len: usize = widget_text_len(text);
+        if next_len > TEXT_INPUT_MAX_LEN {
+            next_len = TEXT_INPUT_MAX_LEN;
+        }
+
+        var changed: bool = self.text_len != next_len;
+        if !changed {
+            var i: usize = 0usize;
+            while i < next_len {
+                if text == null || self.text_buf[i] != text[i] {
+                    changed = true;
+                    break;
+                }
+                i = i + 1usize;
+            }
+        }
+        if !changed {
+            return self;
+        }
+
+        var copy_idx: usize = 0usize;
+        while copy_idx < next_len {
+            self.text_buf[copy_idx] = text[copy_idx];
+            copy_idx = copy_idx + 1usize;
+        }
+        self.text_len = next_len;
+        self.text_buf[self.text_len] = 0;
+        self.widget.base.invalidate();
+        return self;
+    }
+
+    fn clear(self: &Self) &TextInput {
+        return self.set_text("" as &const byte);
+    }
+
+    fn append_ascii(self: &Self, ch: byte) bool {
+        if self.text_len >= TEXT_INPUT_MAX_LEN {
+            return false;
+        }
+        self.text_buf[self.text_len] = ch;
+        self.text_len = self.text_len + 1usize;
+        self.text_buf[self.text_len] = 0;
+        self.widget.emit_value_change(self.text_len as i32);
+        self.widget.base.invalidate();
+        return true;
+    }
+
+    fn erase_last(self: &Self) bool {
+        if self.text_len == 0usize {
+            return false;
+        }
+        self.text_len = self.text_len - 1usize;
+        self.text_buf[self.text_len] = 0;
+        self.widget.emit_value_change(self.text_len as i32);
+        self.widget.base.invalidate();
+        return true;
+    }
+
+    fn handle_event(self: &Self, evt: &Event) bool {
+        const base_handled: bool = self.widget.handle_input(evt);
+
+        if evt.event_type == EventType.Press {
+            return true;
+        }
+        if evt.event_type == EventType.Release || evt.event_type == EventType.Click {
+            if self.widget.state != WidgetState.Disabled {
+                self.widget.set_state(WidgetState.Focused);
+            }
+            return true;
+        }
+        if evt.event_type == EventType.FocusIn || evt.event_type == EventType.FocusOut {
+            return true;
+        }
+        if evt.event_type == EventType.KeyUp {
+            return self.widget.state == WidgetState.Focused || base_handled;
+        }
+        if evt.event_type != EventType.KeyDown || self.widget.state != WidgetState.Focused {
+            return base_handled;
+        }
+
+        const key_code: u16 = evt.key_code();
+        if key_code == TEXT_INPUT_KEY_BACKSPACE {
+            _ = self.erase_last();
+            return true;
+        }
+        if key_code == TEXT_INPUT_KEY_ENTER || text_input_is_navigation_key(key_code) {
+            return true;
+        }
+        if text_input_is_printable_ascii(key_code) {
+            _ = self.append_ascii((key_code as! byte).value);
+            return true;
+        }
+        return base_handled;
+    }
+
+    fn render(self: &Self, ctx: &RenderCtx) void {
+        const area: Rect = self.widget.base.screen_area();
+        const inner: Rect = widget_draw_surface(&self.widget, ctx);
+        const font: &Font = widget_font(&self.widget.base.style);
+        const base_color: Color = widget_text_color(&self.widget.base.style, self.widget.state);
+        const bg: Color = self.widget.base.style.get_color_or(StyleProp.BgColor, WHITE);
+        const radius: u8 = (self.widget.base.style.get_u32_or(StyleProp.Radius, 0u32) as! u8).value;
+        const border_width: u8 = (self.widget.base.style.get_u32_or(StyleProp.BorderWidth, 1u32) as! u8).value;
+        const focus_border: Color = Color{ r: 37, g: 99, b: 235, a: 255 };
+
+        var draw_ptr: &const byte = &self.text_buf[0];
+        var draw_len: usize = self.text_len;
+        var draw_color: Color = base_color;
+        if draw_len == 0usize && self.placeholder_len > 0usize {
+            draw_ptr = self.placeholder;
+            draw_len = self.placeholder_len;
+            draw_color = text_input_placeholder_color(bg, base_color);
+        }
+
+        var draw_x: i16 = inner.x + 1i16;
+        if self.text_len > 0usize {
+            const text_w: i16 = widget_measure_text(&self.text_buf[0], font);
+            if text_w > inner.w as i16 - 2i16 {
+                draw_x = inner.x + inner.w as i16 - text_w - 2i16;
+            }
+        }
+        const text_y: i16 = inner.y + ((inner.h as i32 - font.glyph_height as i32) / 2) as i16;
+
+        ctx.push_clip(inner);
+        if draw_len > 0usize {
+            draw_text(ctx, draw_x, text_y, draw_ptr, draw_len, font, draw_color);
+        }
+
+        if self.widget.state == WidgetState.Focused {
+            var caret_x: i16 = inner.x + 1i16;
+            if self.text_len > 0usize {
+                caret_x = draw_x + widget_measure_text(&self.text_buf[0], font) + 1i16;
+            }
+            const min_caret_x: i16 = inner.x + 1i16;
+            const max_caret_x: i16 = inner.x + inner.w as i16 - 2i16;
+            if caret_x < min_caret_x {
+                caret_x = min_caret_x;
+            }
+            if caret_x > max_caret_x {
+                caret_x = max_caret_x;
+            }
+            const caret_top: i16 = inner.y + 4i16;
+            const caret_bottom: i16 = inner.y + inner.h as i16 - 4i16;
+            if caret_bottom >= caret_top {
+                ctx.draw_line(caret_x, caret_top, caret_x, caret_bottom, focus_border, 1u8);
+            }
+        }
+        ctx.pop_clip();
+
+        if self.widget.state == WidgetState.Focused {
+            var focus_border_width: u8 = border_width;
+            if focus_border_width < 2u8 {
+                focus_border_width = 2u8;
+            }
+            ctx.draw_round_rect(area, radius, focus_border, focus_border_width);
+        }
     }
 }
