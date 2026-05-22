@@ -181,7 +181,7 @@ Cloudflare Worker。浏览器侧仍然支持用 URL query 或 `localStorage` 覆
 例如首次在 GitHub Pages 上启用网页版 AI：
 
 ```text
-https://uya-lang.github.io/gui-uya/?demo=doudizhu&openai_base_url=https%3A%2F%2Fyour-worker.workers.dev&openai_api_path=%2Fddz%2Fdecision&openai_save=1
+https://uya-lang.github.io/gui-uya/?demo=doudizhu&openai_base_url=https%3A%2F%2Fpurple-hat-afd8.funnywwh-1fe.workers.dev%2F&openai_api_path=%2Fddz%2Fdecision&openai_save=1
 ```
 
 访问一次后，浏览器会把这组配置保存到 `localStorage`，后续直接打开

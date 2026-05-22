@@ -26,6 +26,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      UYA_DDZ_USE_OPENAI: "1"
+      OPENAI_BASE_URL: "https://purple-hat-afd8.funnywwh-1fe.workers.dev/"
+      OPENAI_API_PATH: "/ddz/decision"
     steps:
       - uses: actions/checkout@v4
 
