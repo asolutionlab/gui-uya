@@ -10,6 +10,7 @@
         color-scheme: dark;
         --uya-gui-log-height: 120px;
         --uya-gui-shell-padding: 12px;
+        --uya-gui-view-gap: 12px;
       }
 
       html,
@@ -17,6 +18,7 @@
         margin: 0;
         width: 100%;
         height: 100%;
+        overflow: hidden;
         background: #0f1115;
         color: #d8dee9;
         font: 14px/1.4 monospace;
@@ -47,12 +49,24 @@
       #uya-gui-root {
         position: relative;
         min-height: 0;
+        height: 100%;
         display: flex;
         align-items: center;
         justify-content: center;
         overflow: hidden;
-        padding: var(--uya-gui-shell-padding);
+        width: 100%;
+        padding: 0;
         box-sizing: border-box;
+      }
+
+      body.uya-gui-width-fit-active #uya-gui-root {
+        align-items: center;
+      }
+
+      body.uya-gui-fullscreen-active #uya-gui-root {
+        width: 100%;
+        min-height: 100%;
+        padding: 0;
       }
 
       #uya-gui-loading {
@@ -145,9 +159,31 @@
         }
       }
 
+      #uya-gui-stage-shell {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: 1 1 auto;
+        width: 100%;
+        min-width: 0;
+        min-height: 0;
+        margin: 0;
+        box-sizing: border-box;
+      }
+
       #uya-gui-stage {
         position: relative;
-        display: inline-block;
+        display: block;
+        flex: 0 0 auto;
+      }
+
+      #uya-gui-viewport {
+        position: absolute;
+        left: 0;
+        top: 0;
+        transform-origin: 0 0;
+        will-change: transform;
       }
 
       canvas {
@@ -157,10 +193,50 @@
         image-rendering: pixelated;
       }
 
+      #uya-gui-canvas {
+        background: #000;
+      }
+
       #uya-gui-overlay {
         position: absolute;
         inset: 0;
         pointer-events: none;
+      }
+
+      #uya-gui-view-controls {
+        position: fixed;
+        top: max(12px, env(safe-area-inset-top));
+        right: max(12px, env(safe-area-inset-right));
+        z-index: 6;
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        box-sizing: border-box;
+        pointer-events: none;
+      }
+
+      .uya-gui-view-button {
+        border: 0;
+        border-radius: 999px;
+        padding: 10px 16px;
+        background: rgba(16, 20, 28, 0.88);
+        color: #f5f7fb;
+        font: 600 14px/1 system-ui, sans-serif;
+        letter-spacing: 0.02em;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+        pointer-events: auto;
+        cursor: pointer;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+
+      .uya-gui-view-button:hover {
+        background: rgba(28, 34, 46, 0.96);
+      }
+
+      .uya-gui-view-button:focus-visible {
+        outline: 2px solid rgba(126, 200, 255, 0.95);
+        outline-offset: 2px;
       }
 
       #uya-gui-log {
@@ -193,17 +269,6 @@
         position: absolute;
         right: max(12px, env(safe-area-inset-right));
         bottom: max(12px, env(safe-area-inset-bottom));
-        border: 0;
-        border-radius: 999px;
-        padding: 10px 16px;
-        background: rgba(16, 20, 28, 0.88);
-        color: #f5f7fb;
-        font: 600 14px/1 system-ui, sans-serif;
-        letter-spacing: 0.02em;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
-        pointer-events: auto;
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
       }
 
       body.mobile-doudizhu,
@@ -222,12 +287,24 @@
 
       body.mobile-doudizhu #uya-gui-root {
         width: 100%;
+        height: 100dvh;
         min-height: 100dvh;
-        padding:
-          max(8px, env(safe-area-inset-top))
-          max(8px, env(safe-area-inset-right))
-          max(8px, env(safe-area-inset-bottom))
-          max(8px, env(safe-area-inset-left));
+        padding: 0;
+      }
+
+      body.mobile-doudizhu #uya-gui-stage-shell {
+        margin: 0;
+      }
+
+      body.uya-gui-fullscreen-active #uya-gui-root,
+      body.mobile-doudizhu.uya-gui-fullscreen-active #uya-gui-root {
+        width: 100%;
+        min-height: 100%;
+        padding: 0;
+      }
+
+      body.uya-gui-fullscreen-active #uya-gui-stage-shell {
+        margin: 0;
       }
 
       body.mobile-doudizhu #uya-gui-stage {
@@ -236,7 +313,7 @@
         box-shadow: 0 18px 56px rgba(0, 0, 0, 0.42);
       }
 
-      body.mobile-doudizhu.uya-gui-fullscreen-active #uya-gui-stage {
+      body.uya-gui-fullscreen-active #uya-gui-stage {
         border-radius: 0;
         box-shadow: none;
       }
@@ -368,13 +445,14 @@
         function ensureStageCanvas(canvasId) {
           var root = document.getElementById('uya-gui-root');
           var stage = document.getElementById('uya-gui-stage');
+          var viewport = document.getElementById('uya-gui-viewport');
           var canvas = document.getElementById(canvasId);
           if (!canvas) {
             canvas = document.createElement('canvas');
             canvas.id = canvasId;
-            stage.insertBefore(canvas, document.getElementById('uya-gui-overlay'));
-          } else if (canvas.parentNode !== stage) {
-            stage.insertBefore(canvas, document.getElementById('uya-gui-overlay'));
+            viewport.insertBefore(canvas, document.getElementById('uya-gui-overlay'));
+          } else if (canvas.parentNode !== viewport) {
+            viewport.insertBefore(canvas, document.getElementById('uya-gui-overlay'));
           }
           root.dataset.canvasId = canvasId;
           return canvas;
@@ -872,11 +950,15 @@
           uyaGuiCompletion: null,
           uyaGuiHasPresented: false,
           uyaGuiMobileControlsBound: false,
+          uyaGuiViewControlsBound: false,
           uyaGuiFullscreenAutoAttempted: false,
           uyaGuiRunDependencyMax: 0,
           uyaGuiStatusText: '',
           uyaGuiLastPresentAt: 0,
           uyaGuiLastScreenshotPath: null,
+          uyaGuiRotationQuarterTurns: 0,
+          uyaGuiDisplayCssWidth: 0,
+          uyaGuiDisplayCssHeight: 0,
           uyaGuiFiles: {},
           print: function() {
             if (!outputElement) {
@@ -1103,6 +1185,23 @@
           return !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement);
         };
 
+        Module.uyaGuiIsFullscreenLike = function() {
+          if (Module.uyaGuiIsFullscreen()) {
+            return true;
+          }
+          if (typeof window === 'undefined' || typeof screen === 'undefined') {
+            return false;
+          }
+          var viewportWidth = window.innerWidth || 0;
+          var viewportHeight = window.innerHeight || 0;
+          var screenWidth = Math.max(screen.width || 0, screen.availWidth || 0);
+          var screenHeight = Math.max(screen.height || 0, screen.availHeight || 0);
+          if (screenWidth <= 0 || screenHeight <= 0) {
+            return false;
+          }
+          return viewportWidth >= screenWidth - 2 && viewportHeight >= screenHeight - 2;
+        };
+
         Module.uyaGuiTryLockLandscape = function() {
           if (!Module.uyaGuiMobileDoudizhuMode || typeof screen === 'undefined' || !screen.orientation || !screen.orientation.lock) {
             return;
@@ -1113,11 +1212,79 @@
           }
         };
 
+        Module.uyaGuiGetRotationQuarterTurns = function() {
+          return ((Module.uyaGuiRotationQuarterTurns || 0) % 4 + 4) % 4;
+        };
+
+        Module.uyaGuiGetDisplayMetrics = function() {
+          var canvas = Module.uyaGuiCanvas;
+          var baseWidth = Math.max(Module.uyaGuiDisplayCssWidth || (canvas ? canvas.width : 0), 1);
+          var baseHeight = Math.max(Module.uyaGuiDisplayCssHeight || (canvas ? canvas.height : 0), 1);
+          var rotation = Module.uyaGuiGetRotationQuarterTurns();
+          return {
+            rotation: rotation,
+            baseWidth: baseWidth,
+            baseHeight: baseHeight,
+            rotatedWidth: (rotation & 1) ? baseHeight : baseWidth,
+            rotatedHeight: (rotation & 1) ? baseWidth : baseHeight
+          };
+        };
+
+        Module.uyaGuiApplyViewportTransform = function() {
+          var viewport = document.getElementById('uya-gui-viewport');
+          var metrics = Module.uyaGuiGetDisplayMetrics();
+          if (!viewport) {
+            return;
+          }
+          switch (metrics.rotation) {
+            case 1:
+              viewport.style.transform = 'matrix(0, 1, -1, 0, ' + metrics.baseHeight + ', 0)';
+              break;
+            case 2:
+              viewport.style.transform = 'matrix(-1, 0, 0, -1, ' + metrics.baseWidth + ', ' + metrics.baseHeight + ')';
+              break;
+            case 3:
+              viewport.style.transform = 'matrix(0, -1, 1, 0, 0, ' + metrics.baseWidth + ')';
+              break;
+            default:
+              viewport.style.transform = 'none';
+              break;
+          }
+        };
+
+        Module.uyaGuiUpdateRotationUi = function() {
+          if (typeof document === 'undefined') {
+            return;
+          }
+          var rotation = Module.uyaGuiGetRotationQuarterTurns();
+          var rotateButton = document.getElementById('uya-gui-rotate');
+          if (document.body) {
+            document.body.classList.toggle('uya-gui-width-fit-active', (rotation & 1) !== 0);
+          }
+          if (rotateButton) {
+            rotateButton.setAttribute('aria-label', '顺时针旋转 90 度，当前 ' + (rotation * 90) + ' 度');
+          }
+        };
+
+        Module.uyaGuiRotateClockwise = function() {
+          Module.uyaGuiRotationQuarterTurns = (Module.uyaGuiGetRotationQuarterTurns() + 1) % 4;
+          Module.uyaGuiUpdateCanvasCss();
+        };
+
+        Module.uyaGuiUpdateFullscreenUi = function() {
+          if (typeof document === 'undefined' || !document.body) {
+            return;
+          }
+          document.body.classList.toggle('uya-gui-fullscreen-active', Module.uyaGuiIsFullscreenLike());
+        };
+
         Module.uyaGuiUpdateMobileViewportState = function() {
+          if (typeof document !== 'undefined' && document.body) {
+            Module.uyaGuiUpdateFullscreenUi();
+          }
           if (!Module.uyaGuiMobileDoudizhuMode || typeof document === 'undefined' || !document.body) {
             return;
           }
-          document.body.classList.toggle('uya-gui-fullscreen-active', Module.uyaGuiIsFullscreen());
           var fullscreenButton = document.getElementById('uya-gui-mobile-fullscreen');
           if (fullscreenButton) {
             fullscreenButton.textContent = '进入全屏';
@@ -1277,34 +1444,42 @@
           var overlay = Module.uyaGuiOverlayCanvas;
           var stage = document.getElementById('uya-gui-stage');
           var root = document.getElementById('uya-gui-root');
-          if (!canvas || !overlay || !stage) {
+          var viewport = document.getElementById('uya-gui-viewport');
+          if (!canvas || !overlay || !stage || !viewport) {
             return;
           }
+          Module.uyaGuiUpdateFullscreenUi();
           var cssScale = Math.max(Module.uyaGuiScale || 1, 1);
+          var rotation = Module.uyaGuiGetRotationQuarterTurns();
           if (Module.uyaGuiFitWindow) {
-            var availWidth = 1;
-            var availHeight = 1;
-            if (Module.uyaGuiMobileDoudizhuMode && root) {
-              var rootRect = root.getBoundingClientRect();
-              availWidth = Math.max(Math.floor(rootRect.width), 1);
-              availHeight = Math.max(Math.floor(rootRect.height), 1);
-            } else {
-              availWidth = Math.max(window.innerWidth - 24, 1);
-              availHeight = Math.max(window.innerHeight - 24 - document.getElementById('uya-gui-status').offsetHeight - document.getElementById('uya-gui-log').offsetHeight, 1);
-            }
-            var fitScale = Math.min(availWidth / canvas.width, availHeight / canvas.height);
-            if (isFinite(fitScale) && fitScale > 0) {
-              cssScale = fitScale;
+            var rootRect = root ? root.getBoundingClientRect() : null;
+            var availWidth = rootRect ? Math.max(Math.floor(rootRect.width), 1) : Math.max(window.innerWidth || 1, 1);
+            var availHeight = rootRect ? Math.max(Math.floor(rootRect.height), 1) : Math.max(window.innerHeight || 1, 1);
+            var rotatedWidth = (rotation & 1) ? canvas.height : canvas.width;
+            var rotatedHeight = (rotation & 1) ? canvas.width : canvas.height;
+            var widthFitScale = availWidth / Math.max(rotatedWidth, 1);
+            var heightFitScale = availHeight / Math.max(rotatedHeight, 1);
+            var containScale = Math.min(widthFitScale, heightFitScale);
+            if (isFinite(containScale) && containScale > 0) {
+              cssScale = containScale;
             }
           }
           var cssWidth = Math.max(canvas.width * cssScale, 1);
           var cssHeight = Math.max(canvas.height * cssScale, 1);
-          stage.style.width = cssWidth + 'px';
-          stage.style.height = cssHeight + 'px';
+          var stageWidth = (rotation & 1) ? cssHeight : cssWidth;
+          var stageHeight = (rotation & 1) ? cssWidth : cssHeight;
+          Module.uyaGuiDisplayCssWidth = cssWidth;
+          Module.uyaGuiDisplayCssHeight = cssHeight;
+          viewport.style.width = cssWidth + 'px';
+          viewport.style.height = cssHeight + 'px';
+          stage.style.width = stageWidth + 'px';
+          stage.style.height = stageHeight + 'px';
           canvas.style.width = cssWidth + 'px';
           canvas.style.height = cssHeight + 'px';
           overlay.style.width = cssWidth + 'px';
           overlay.style.height = cssHeight + 'px';
+          Module.uyaGuiApplyViewportTransform();
+          Module.uyaGuiUpdateRotationUi();
         };
 
         function tryCreate2dContext(canvas) {
@@ -1368,12 +1543,12 @@
           }
           var canvas = ensureStageCanvas(Module.uyaGuiCanvasId || 'uya-gui-canvas');
           var overlay = document.getElementById('uya-gui-overlay');
+          var stage = document.getElementById('uya-gui-stage');
           canvas.width = width;
           canvas.height = height;
           canvas.tabIndex = 0;
           canvas.style.touchAction = 'none';
           canvas.style.overscrollBehavior = 'contain';
-          canvas.style.background = '#000';
           overlay.width = 0;
           overlay.height = 0;
           overlay.style.display = 'none';
@@ -1400,6 +1575,7 @@
           Module.uyaGuiUpdateCanvasCss();
           Module.uyaGuiUpdateMobileViewportState();
           Module.uyaGuiBindMobileControls();
+          Module.uyaGuiBindViewControls();
           if (canvas.__uyaGuiBound) {
             return 1;
           }
@@ -1424,11 +1600,30 @@
           }
 
           function pointFromEvent(clientX, clientY) {
-            var rect = canvas.getBoundingClientRect();
-            var scaleX = rect.width > 0 ? canvas.width / rect.width : 1;
-            var scaleY = rect.height > 0 ? canvas.height / rect.height : 1;
-            var x = Math.round((clientX - rect.left) * scaleX);
-            var y = Math.round((clientY - rect.top) * scaleY);
+            var stageRect = stage ? stage.getBoundingClientRect() : canvas.getBoundingClientRect();
+            var stageWidth = stageRect.width > 0 ? stageRect.width : 1;
+            var stageHeight = stageRect.height > 0 ? stageRect.height : 1;
+            var localX = Math.max(0, Math.min(stageWidth, clientX - stageRect.left));
+            var localY = Math.max(0, Math.min(stageHeight, clientY - stageRect.top));
+            var rotation = Module.uyaGuiGetRotationQuarterTurns();
+            var unrotatedX = localX;
+            var unrotatedY = localY;
+            if (rotation === 1) {
+              unrotatedX = localY;
+              unrotatedY = stageWidth - localX;
+            } else if (rotation === 2) {
+              unrotatedX = stageWidth - localX;
+              unrotatedY = stageHeight - localY;
+            } else if (rotation === 3) {
+              unrotatedX = stageHeight - localY;
+              unrotatedY = localX;
+            }
+            var displayWidth = Math.max(Module.uyaGuiDisplayCssWidth || canvas.width, 1);
+            var displayHeight = Math.max(Module.uyaGuiDisplayCssHeight || canvas.height, 1);
+            var scaleX = canvas.width / displayWidth;
+            var scaleY = canvas.height / displayHeight;
+            var x = Math.round(unrotatedX * scaleX);
+            var y = Math.round(unrotatedY * scaleY);
             x = Math.max(0, Math.min(canvas.width - 1, x));
             y = Math.max(0, Math.min(canvas.height - 1, y));
             return { x: x, y: y };
@@ -1664,6 +1859,21 @@
           Module.uyaGuiMobileControlsBound = true;
         };
 
+        Module.uyaGuiBindViewControls = function() {
+          if (Module.uyaGuiViewControlsBound || typeof document === 'undefined') {
+            return;
+          }
+          var rotateButton = document.getElementById('uya-gui-rotate');
+          if (rotateButton) {
+            rotateButton.addEventListener('click', function(evt) {
+              Module.uyaGuiRotateClockwise();
+              evt.preventDefault();
+            });
+          }
+          Module.uyaGuiViewControlsBound = true;
+          Module.uyaGuiUpdateRotationUi();
+        };
+
         Module.uyaGuiRequestFullscreen = function() {
           var target = document.getElementById('uya-gui-root') || Module.uyaGuiCanvas || Module.canvas || document.documentElement;
           if (!target) {
@@ -1776,12 +1986,19 @@
           <div id="uya-gui-loading-percent">Loading</div>
         </div>
       </div>
-      <div id="uya-gui-stage">
-        <canvas id="uya-gui-canvas" tabindex="-1"></canvas>
-        <canvas id="uya-gui-overlay" tabindex="-1"></canvas>
+      <div id="uya-gui-stage-shell">
+        <div id="uya-gui-view-controls" aria-label="View controls">
+          <button id="uya-gui-rotate" class="uya-gui-view-button" type="button">旋转 90°</button>
+        </div>
+        <div id="uya-gui-stage">
+          <div id="uya-gui-viewport">
+            <canvas id="uya-gui-canvas" tabindex="-1"></canvas>
+            <canvas id="uya-gui-overlay" tabindex="-1"></canvas>
+          </div>
+        </div>
       </div>
       <div id="uya-gui-mobile-hud" aria-live="polite">
-        <button id="uya-gui-mobile-fullscreen" type="button">进入全屏</button>
+        <button id="uya-gui-mobile-fullscreen" class="uya-gui-view-button" type="button">进入全屏</button>
       </div>
     </div>
     <pre id="uya-gui-log"></pre>
