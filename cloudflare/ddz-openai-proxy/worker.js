@@ -5,7 +5,17 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 64;
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 12_000;
 const DEFAULT_CORS_MAX_AGE = 86_400;
 const DDZ_ENDPOINT = "/ddz/decision";
-const DDZ_SYSTEM_PROMPT = "You are a strong Dou Dizhu AI. Use the full bidding and play history to maximize win probability. If you are a peasant, coordinate implicitly with your teammate instead of selfish short-term play. Choose exactly one legal action id from legal_actions, never invent cards, history, bids, or rules, and return JSON only like {\"action_id\":1}.";
+const DDZ_SYSTEM_PROMPT = [
+  "你是一个很强的斗地主 AI。",
+  "目标是最大化长期胜率，而不是只看眼前这一手的短期收益。",
+  "你必须且只能从 legal_actions[].id 中选择一个 id，并且只返回 JSON，例如 {\"action_id\":1}。",
+  "不要虚构牌、叫分、历史、队友信息或规则。",
+  "比较接近的候选动作时，要重点参考 legal_actions[].cards 和 legal_actions[].remaining_hand_count，不要只看 label。",
+  "如果你是农民，要和队友做隐式配合；除非你能立刻赢牌，或者必须阻止地主，否则不要用高牌抢走队友的节奏。",
+  "如果对手快要走完，优先用最小且安全的赢牌动作去卡住对手。",
+  "除非能直接赢牌、必须阻止对手跑牌，或者没有可接受的非炸弹线路，否则尽量保留炸弹和火箭。",
+  "如果多个方案战略价值接近，优先更小的安全非炸弹、更低的带牌，以及更低的顺子或连对，尽量保留强控牌。"
+].join(" ");
 const DDZ_USER_ALLOWED_KEYS = new Set([
   "game",
   "phase",
@@ -60,6 +70,8 @@ const DDZ_LEGAL_ACTION_KEYS = new Set([
   "bid",
   "card_count",
   "main_rank",
+  "cards",
+  "remaining_hand_count",
   "is_bomb_like",
   "ends_hand",
 ]);
@@ -181,18 +193,27 @@ export default {
     }
 
     const upstreamUrl = buildUpstreamUrl(env);
+    const tacticalContext = buildTacticalContext(ddzPayload.value);
+    const upstreamMessages = [
+      {
+        role: "system",
+        content: DDZ_SYSTEM_PROMPT,
+      },
+    ];
+    if (tacticalContext) {
+      upstreamMessages.push({
+        role: "system",
+        content: tacticalContext,
+      });
+    }
+    upstreamMessages.push({
+      role: "user",
+      content: JSON.stringify(ddzPayload.value),
+    });
+
     const upstreamBody = {
       model: model.value,
-      messages: [
-        {
-          role: "system",
-          content: DDZ_SYSTEM_PROMPT,
-        },
-        {
-          role: "user",
-          content: JSON.stringify(ddzPayload.value),
-        },
-      ],
+      messages: upstreamMessages,
       response_format: DDZ_RESPONSE_FORMAT,
       max_tokens: readPositiveInt(env.MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS),
       temperature: 0,
@@ -261,6 +282,162 @@ function resolveUpstreamModel(env) {
     ok: true,
     value: model,
   };
+}
+
+function buildTacticalContext(payload) {
+  if (!isPlainObject(payload)) {
+    return "";
+  }
+  const notes = payload.phase === "bid"
+    ? buildBidTacticalNotes(payload)
+    : buildPlayTacticalNotes(payload);
+  if (notes.length <= 0) {
+    return "";
+  }
+  return `根据当前牌桌状态补充的战术提示：\n${notes.map((note) => `- ${note}`).join("\n")}`;
+}
+
+function buildBidTacticalNotes(payload) {
+  const notes = [];
+  const controlCards = countHighControlCards(payload.hand);
+  const twoCount = countRankCopies(payload.hand, "2");
+  const jokerCount = countRankCopies(payload.hand, "BJ") + countRankCopies(payload.hand, "RJ");
+
+  if (jokerCount >= 2 || twoCount >= 2 || controlCards >= 5) {
+    notes.push("这手牌高张控制力比较明显，只有在优势足够明确时才值得继续抬高叫分。");
+  } else {
+    notes.push("这手牌的高张优势并不明显，叫分不要勉强。");
+  }
+  if (payload.highest_bid >= 2) {
+    notes.push(`当前最高叫分已经是 ${payload.highest_bid}，只有在控制力明显更强时才考虑继续压上去。`);
+  }
+  if (payload.legal_actions.some((item) => item.bid === 0)) {
+    notes.push("边缘手牌宁可不叫，也不要硬抬分。");
+  }
+  return notes;
+}
+
+function buildPlayTacticalNotes(payload) {
+  const notes = [];
+  const liveSeat = payload.history_summary.last_non_pass_player;
+  const liveRelation = relationToSeat(payload, liveSeat);
+  const canPass = payload.legal_actions.some((item) => item.kind === "pass");
+  const immediateWins = payload.legal_actions.filter((item) => item.ends_hand);
+  const bombOptions = payload.legal_actions.filter((item) => item.is_bomb_like);
+  const normalPlayOptions = payload.legal_actions.filter((item) => item.kind !== "pass" && !item.is_bomb_like);
+  const dangerousOpponents = findSeatsByRelationWithMaxCards(payload, "opponent", 2);
+  const opponentSingles = dangerousOpponents.filter((seat) => payload.card_counts[seat] === 1);
+  const teammateSeat = findTeammateSeat(payload);
+
+  if (liveSeat < 0) {
+    notes.push("这一轮由你起手，优先考虑高效率地处理弱牌，同时尽量保留强控牌。");
+  } else if (liveRelation === "teammate") {
+    notes.push(`座位 ${liveSeat} 是你的队友，而且当前牌权在他手里；通常应当保住队友牌权，而不是轻易反超。`);
+  } else if (liveRelation === "opponent") {
+    notes.push(`座位 ${liveSeat} 是对手，而且当前牌权在他手里；如果要接，优先选择最小且安全的非炸弹压制。`);
+  }
+
+  if (dangerousOpponents.length > 0) {
+    notes.push(`危险对手提醒：座位 ${dangerousOpponents.join(", ")} 的对手手里只剩 2 张或更少。`);
+  }
+  if (opponentSingles.length > 0) {
+    notes.push(`座位 ${opponentSingles.join(", ")} 的对手已经报单，当前应优先考虑卡住他，尤其要重视单张和对子这一类应对。`);
+  }
+  if (teammateSeat >= 0 && payload.card_counts[teammateSeat] <= 2) {
+    notes.push(`你的队友座位 ${teammateSeat} 牌已经不多了，应尽量配合他走牌，不要无谓消耗高控制牌。`);
+  }
+  if (immediateWins.length > 0) {
+    notes.push(`动作 id ${summarizeActionIds(immediateWins)} 可以直接出完手牌，应当被高度优先考虑。`);
+  }
+  if (bombOptions.length > 0 && normalPlayOptions.length > 0) {
+    notes.push("当前存在非炸弹选择，因此除非能马上赢牌或必须阻止对手跑牌，否则应尽量保留炸弹和火箭。");
+  }
+  if (canPass && liveRelation === "teammate") {
+    notes.push("当前可以不要，而且如果队友已经拿到牌权，通常不要会比强行接管更合理。");
+  } else if (canPass && dangerousOpponents.length === 0) {
+    notes.push("如果对手暂时没有立刻跑牌的风险，那么不要往往比浪费控制牌更好。");
+  }
+  notes.push("若仍有多个接近选择，请结合 legal_actions.cards 和 remaining_hand_count 比较，优先更低的带牌和更小的安全线路。");
+  return notes;
+}
+
+function relationToSeat(payload, seat) {
+  if (!Number.isInteger(seat) || seat < 0 || seat > 2) {
+    return "none";
+  }
+  if (seat === payload.seat) {
+    return "self";
+  }
+  if (payload.role === "landlord") {
+    return "opponent";
+  }
+  if (payload.role === "peasant") {
+    return seat === payload.landlord ? "opponent" : "teammate";
+  }
+  return "other";
+}
+
+function findTeammateSeat(payload) {
+  if (payload.role !== "peasant") {
+    return -1;
+  }
+  for (let seat = 0; seat < 3; seat += 1) {
+    if (seat !== payload.seat && seat !== payload.landlord) {
+      return seat;
+    }
+  }
+  return -1;
+}
+
+function findSeatsByRelationWithMaxCards(payload, relation, maxCards) {
+  const seats = [];
+  for (let seat = 0; seat < 3; seat += 1) {
+    if (seat === payload.seat) {
+      continue;
+    }
+    if (relationToSeat(payload, seat) !== relation) {
+      continue;
+    }
+    if (payload.card_counts[seat] <= maxCards) {
+      seats.push(seat);
+    }
+  }
+  return seats;
+}
+
+function countHighControlCards(hand) {
+  if (!Array.isArray(hand)) {
+    return 0;
+  }
+  let total = 0;
+  for (const rank of hand) {
+    if (rank === "A" || rank === "2" || rank === "BJ" || rank === "RJ" || rank === "K") {
+      total += 1;
+    }
+  }
+  return total;
+}
+
+function countRankCopies(hand, targetRank) {
+  if (!Array.isArray(hand)) {
+    return 0;
+  }
+  let total = 0;
+  for (const rank of hand) {
+    if (rank === targetRank) {
+      total += 1;
+    }
+  }
+  return total;
+}
+
+function summarizeActionIds(actions, limit = 4) {
+  const ids = actions
+    .slice(0, limit)
+    .map((item) => String(item.id));
+  return actions.length > limit
+    ? `${ids.join(", ")}...`
+    : ids.join(", ");
 }
 
 function extractActionDecision(upstreamText, legalActions) {
@@ -363,7 +540,7 @@ function sanitizeDdzUserPayload(payload) {
   if (!history.ok) {
     return history;
   }
-  const legalActions = sanitizeLegalActions(payload.legal_actions);
+  const legalActions = sanitizeLegalActions(payload.legal_actions, handCount.value);
   if (!legalActions.ok) {
     return legalActions;
   }
@@ -538,7 +715,7 @@ function sanitizeAction(payload, fieldName) {
   if (!mainRank.ok) {
     return mainRank;
   }
-  const cards = sanitizeRankArray(payload.cards, undefined, `${fieldName}.cards`, 20);
+  const cards = sanitizeRankArray(payload.cards, cardCount.value, `${fieldName}.cards`, 20);
   if (!cards.ok) {
     return cards;
   }
@@ -557,7 +734,7 @@ function sanitizeAction(payload, fieldName) {
   };
 }
 
-function sanitizeLegalActions(payload) {
+function sanitizeLegalActions(payload, handCount) {
   if (!Array.isArray(payload) || payload.length <= 0 || payload.length > 128) {
     return fail("INVALID_LEGAL_ACTIONS", "legal_actions must be a non-empty array with at most 128 items.", 400);
   }
@@ -594,6 +771,21 @@ function sanitizeLegalActions(payload) {
     if (!mainRank.ok) {
       return mainRank;
     }
+    const cards = sanitizeRankArray(item.cards, cardCount.value, `legal_actions[${index}].cards`, 20);
+    if (!cards.ok) {
+      return cards;
+    }
+    const remainingHandCount = sanitizeInt(item.remaining_hand_count, 0, 20, `legal_actions[${index}].remaining_hand_count`);
+    if (!remainingHandCount.ok) {
+      return remainingHandCount;
+    }
+    if (remainingHandCount.value !== handCount - cardCount.value) {
+      return fail(
+        "INVALID_REMAINING_HAND_COUNT",
+        `legal_actions[${index}].remaining_hand_count does not match hand_count - card_count.`,
+        400
+      );
+    }
 
     out.push({
       id: id.value,
@@ -602,6 +794,8 @@ function sanitizeLegalActions(payload) {
       bid: bid.value,
       card_count: cardCount.value,
       main_rank: mainRank.value,
+      cards: cards.value,
+      remaining_hand_count: remainingHandCount.value,
       is_bomb_like: item.is_bomb_like,
       ends_hand: item.ends_hand,
     });

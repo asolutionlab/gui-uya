@@ -945,6 +945,19 @@ fn ddz_ai_append_legal_actions_json(game: &DdzGameState, legal: &DdzActionList, 
         if !ddz_ai_append_byte(buf, cap, len, ',' as u8) {
             return false;
         }
+        if !ddz_ai_append_json_key(buf, cap, len, "cards" as &const byte) || !ddz_ai_append_action_cards_json(game, &legal.items[i as usize], buf, cap, len) {
+            return false;
+        }
+        if !ddz_ai_append_byte(buf, cap, len, ',' as u8) {
+            return false;
+        }
+        if !ddz_ai_append_json_key(buf, cap, len, "remaining_hand_count" as &const byte)
+            || !ddz_ai_append_i32(buf, cap, len, hand_count - legal.items[i as usize].card_count) {
+            return false;
+        }
+        if !ddz_ai_append_byte(buf, cap, len, ',' as u8) {
+            return false;
+        }
         if !ddz_ai_append_json_key(buf, cap, len, "is_bomb_like" as &const byte) || !ddz_ai_append_bool(buf, cap, len, ddz_ai_is_bomb_like(&legal.items[i as usize])) {
             return false;
         }

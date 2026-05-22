@@ -530,6 +530,60 @@ export fn ddz_action_label_format(action: &DdzAction) void {
         _ = snprintf(&action.label[0], DDZ_ACTION_LABEL_BYTES as usize, "炸弹 %s" as &const byte, ddz_rank_name(action.combo.main_rank));
         return;
     }
+    if action.combo.kind == DdzComboKind.Single {
+        _ = snprintf(&action.label[0], DDZ_ACTION_LABEL_BYTES as usize, "单 %s" as &const byte, ddz_rank_name(action.combo.main_rank));
+        return;
+    }
+    if action.combo.kind == DdzComboKind.Pair {
+        _ = snprintf(&action.label[0], DDZ_ACTION_LABEL_BYTES as usize, "对 %s" as &const byte, ddz_rank_name(action.combo.main_rank));
+        return;
+    }
+    if action.combo.kind == DdzComboKind.Triple {
+        _ = snprintf(&action.label[0], DDZ_ACTION_LABEL_BYTES as usize, "三张 %s" as &const byte, ddz_rank_name(action.combo.main_rank));
+        return;
+    }
+    if action.combo.kind == DdzComboKind.TripleSingle {
+        _ = snprintf(
+            &action.label[0],
+            DDZ_ACTION_LABEL_BYTES as usize,
+            "三带一 %s+%s" as &const byte,
+            ddz_rank_name(action.combo.main_rank),
+            ddz_rank_name(action.combo.kick_rank)
+        );
+        return;
+    }
+    if action.combo.kind == DdzComboKind.TriplePair {
+        _ = snprintf(
+            &action.label[0],
+            DDZ_ACTION_LABEL_BYTES as usize,
+            "三带对 %s+%s" as &const byte,
+            ddz_rank_name(action.combo.main_rank),
+            ddz_rank_name(action.combo.kick_rank)
+        );
+        return;
+    }
+    if action.combo.kind == DdzComboKind.Straight {
+        const start_rank: i32 = action.combo.main_rank - action.combo.chain_len + 1;
+        _ = snprintf(
+            &action.label[0],
+            DDZ_ACTION_LABEL_BYTES as usize,
+            "顺子 %s-%s" as &const byte,
+            ddz_rank_name(start_rank),
+            ddz_rank_name(action.combo.main_rank)
+        );
+        return;
+    }
+    if action.combo.kind == DdzComboKind.StraightPairs {
+        const start_rank2: i32 = action.combo.main_rank - action.combo.chain_len + 1;
+        _ = snprintf(
+            &action.label[0],
+            DDZ_ACTION_LABEL_BYTES as usize,
+            "连对 %s-%s" as &const byte,
+            ddz_rank_name(start_rank2),
+            ddz_rank_name(action.combo.main_rank)
+        );
+        return;
+    }
     _ = snprintf(
         &action.label[0],
         DDZ_ACTION_LABEL_BYTES as usize,
