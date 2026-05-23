@@ -316,6 +316,12 @@ async def run_richtext_smoke(page, timeout_ms: int) -> dict:
     if focus_state.get("fontSize") != "16px" or focus_state.get("inputMode") != "text" or focus_state.get("enterKeyHint") != "done":
         return {"ok": False, "error": "mobile_ime_sink_attributes_invalid", "state": focus_state}
 
+    await page.setViewport({"width": 414, "height": 736, "isMobile": True, "hasTouch": True, "deviceScaleFactor": 2})
+    await page.evaluate("window.dispatchEvent(new Event('resize'))")
+    resize_state = await wait_for_richtext_ime_state(page, timeout_ms)
+    if not resize_state.get("sinkFocused") or resize_state.get("sinkMode") != "richtext" or resize_state.get("sinkActive") != "1":
+        return {"ok": False, "error": "resize_ime_state_lost", "state": resize_state}
+
     input_ok = await dispatch_richtext_input(page, RICHTEXT_INPUT_TOKEN)
     if not input_ok:
         return {"ok": False, "error": "input_event_unavailable", "state": focus_state}
@@ -430,6 +436,7 @@ async def run_richtext_smoke(page, timeout_ms: int) -> dict:
         "copyTextBytes": len(copy_result.get("text", "").encode("utf-8")),
         "cutTextBytes": len(cut_result.get("text", "").encode("utf-8")),
         "focusState": focus_state,
+        "resizeState": resize_state,
         "blurState": blur_state,
         "state": richtext_state,
     }

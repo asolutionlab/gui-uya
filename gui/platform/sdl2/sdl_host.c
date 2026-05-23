@@ -223,6 +223,15 @@ static int uya_gui_sim_sdl_has_shortcut_modifier(SDL_Keymod mod) {
     return (mod & KMOD_CTRL) != 0 || (mod & KMOD_GUI) != 0;
 }
 
+static uint16_t uya_gui_sim_sdl_modifier_bits(SDL_Keymod mod) {
+    uint16_t bits = 0u;
+    if ((mod & KMOD_ALT) != 0) bits |= 1u;
+    if ((mod & KMOD_CTRL) != 0) bits |= 2u;
+    if ((mod & KMOD_GUI) != 0) bits |= 4u;
+    if ((mod & KMOD_SHIFT) != 0) bits |= 8u;
+    return bits;
+}
+
 static int uya_gui_sim_sdl_handle_richtext_clipboard_shortcut(const SDL_KeyboardEvent *key) {
     const uint8_t *selection_text = NULL;
     size_t selection_len = 0u;
@@ -2654,7 +2663,7 @@ int32_t uya_gui_sim_sdl_poll_event(SdlHostEvent *out_evt) {
             }
             out_evt->kind = SDL_EVT_KEY_DOWN;
             out_evt->key_code = (uint16_t)uya_gui_sim_keycode(evt.key.keysym.sym);
-            out_evt->reserved = (uint16_t)(evt.key.repeat != 0 ? 1 : 0);
+            out_evt->reserved = (uint16_t)(uya_gui_sim_sdl_modifier_bits((SDL_Keymod)evt.key.keysym.mod) | (evt.key.repeat != 0 ? 0x8000u : 0u));
             return 1;
         case SDL_KEYUP:
             if (g_text_editing_active) {
@@ -2662,6 +2671,7 @@ int32_t uya_gui_sim_sdl_poll_event(SdlHostEvent *out_evt) {
             }
             out_evt->kind = SDL_EVT_KEY_UP;
             out_evt->key_code = (uint16_t)uya_gui_sim_keycode(evt.key.keysym.sym);
+            out_evt->reserved = uya_gui_sim_sdl_modifier_bits((SDL_Keymod)evt.key.keysym.mod);
             return 1;
         default:
             return 0;

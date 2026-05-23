@@ -41,6 +41,14 @@ export struct SdlHostEvent {
     text_bytes: [byte: EVENT_TEXT_INPUT_MAX_BYTES],
 }
 
+fn sdl_host_event_key_repeat(raw: &SdlHostEvent) bool {
+    return (raw.reserved & 0x8000u16) != 0u16;
+}
+
+fn sdl_host_event_modifiers(raw: &SdlHostEvent) u16 {
+    return raw.reserved & 0x7FFFu16;
+}
+
 export struct SdlInputSystem : IRuntimeInput {
     manager: InputManager,
     touch: TouchDriver,
@@ -117,11 +125,11 @@ export struct SdlInputSystem : IRuntimeInput {
                 continue;
             }
             if raw.kind == SDL_EVT_KEY_DOWN {
-                self.key.feed_repeat(-1, timestamp, raw.key_code, true, raw.reserved != 0u16);
+                self.key.feed_modifiers(-1, timestamp, raw.key_code, true, sdl_host_event_modifiers(&raw), sdl_host_event_key_repeat(&raw));
                 continue;
             }
             if raw.kind == SDL_EVT_KEY_UP {
-                self.key.feed(-1, timestamp, raw.key_code, false);
+                self.key.feed_modifiers(-1, timestamp, raw.key_code, false, sdl_host_event_modifiers(&raw), false);
                 continue;
             }
             if raw.kind == SDL_EVT_TEXT_INPUT {

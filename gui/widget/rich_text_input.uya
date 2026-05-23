@@ -3,6 +3,9 @@ use core.color.TRANSPARENT;
 use core.color.WHITE;
 use core.event.Event;
 use core.event.EventType;
+use core.event.EVENT_MOD_CTRL;
+use core.event.EVENT_MOD_META;
+use core.event.EVENT_MOD_SHIFT;
 use core.obj.GuiObj;
 use core.obj.IGuiInputCallback;
 use core.obj.IGuiRenderCallback;
@@ -147,6 +150,14 @@ fn rich_text_input_placeholder_color(bg: Color, fg: Color) Color {
 
 fn rich_text_input_is_printable_ascii(key_code: u16) bool {
     return key_code >= 32u16 && key_code < 127u16;
+}
+
+fn rich_text_input_has_shortcut_modifier(evt: &Event) bool {
+    return evt.has_modifier(EVENT_MOD_CTRL) || evt.has_modifier(EVENT_MOD_META);
+}
+
+fn rich_text_input_is_key(key_code: u16, lower: u16, upper: u16) bool {
+    return key_code == lower || key_code == upper;
 }
 
 fn rich_text_input_clone_doc(source: &RichDocument) !RichDocument {
@@ -1255,6 +1266,14 @@ RichTextInput {
         return true;
     }
 
+    fn extend_to(self: &Self, pos: RichPos) bool {
+        self.selection_range.focus = pos;
+        self.scroll_selection_into_view();
+        self.sync_host_state();
+        self.widget.base.invalidate();
+        return true;
+    }
+
     fn exec(self: &Self, cmd: RichCommand) bool {
         if cmd.kind == RichCommandKind.InsertText || cmd.kind == RichCommandKind.PastePlain {
             var merge_kind: RichHistoryMergeKind = RichHistoryMergeKind.None;
@@ -1457,6 +1476,28 @@ RichTextInput {
         }
 
         const key_code: u16 = evt.key_code();
+        if rich_text_input_has_shortcut_modifier(evt) {
+            if rich_text_input_is_key(key_code, 'b' as u16, 'B' as u16) {
+                return self.toggle_inline_mark(RICH_MARK_BOLD, evt.timestamp);
+            }
+            if rich_text_input_is_key(key_code, 'z' as u16, 'Z' as u16) {
+                if evt.has_modifier(EVENT_MOD_SHIFT) {
+                    return self.exec(RichCommand{
+                        kind: RichCommandKind.Redo,
+                        text_ptr: null,
+                        text_len: 0usize,
+                    });
+                }
+                return self.exec(RichCommand{
+                    kind: RichCommandKind.Undo,
+                    text_ptr: null,
+                    text_len: 0usize,
+                });
+            }
+            if rich_text_input_is_key(key_code, 'v' as u16, 'V' as u16) {
+                return true;
+            }
+        }
         if key_code == RICH_TEXT_INPUT_KEY_BACKSPACE {
             return self.apply_backspace(evt.timestamp);
         }
@@ -1467,24 +1508,36 @@ RichTextInput {
             const next_pos: RichPos = self.doc.move_left(self.selection_range.focus) catch {
                 self.selection_range.focus;
             };
+            if evt.has_modifier(EVENT_MOD_SHIFT) {
+                return self.extend_to(next_pos);
+            }
             return self.collapse_to(next_pos);
         }
         if key_code == RICH_TEXT_INPUT_KEY_RIGHT {
             const next_pos: RichPos = self.doc.move_right(self.selection_range.focus) catch {
                 self.selection_range.focus;
             };
+            if evt.has_modifier(EVENT_MOD_SHIFT) {
+                return self.extend_to(next_pos);
+            }
             return self.collapse_to(next_pos);
         }
         if key_code == RICH_TEXT_INPUT_KEY_UP {
             const next_pos: RichPos = self.doc.move_up(self.selection_range.focus) catch {
                 self.selection_range.focus;
             };
+            if evt.has_modifier(EVENT_MOD_SHIFT) {
+                return self.extend_to(next_pos);
+            }
             return self.collapse_to(next_pos);
         }
         if key_code == RICH_TEXT_INPUT_KEY_DOWN {
             const next_pos: RichPos = self.doc.move_down(self.selection_range.focus) catch {
                 self.selection_range.focus;
             };
+            if evt.has_modifier(EVENT_MOD_SHIFT) {
+                return self.extend_to(next_pos);
+            }
             return self.collapse_to(next_pos);
         }
         if key_code == RICH_TEXT_INPUT_KEY_ENTER {

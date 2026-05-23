@@ -228,11 +228,15 @@ export struct KeyDriver : IInputDev {
     }
 
     fn feed_repeat(self: &Self, target: i32, timestamp: u32, key_code: u16, pressed: bool, key_repeat: bool) void {
+        self.feed_modifiers(target, timestamp, key_code, pressed, 0u16, key_repeat);
+    }
+
+    fn feed_modifiers(self: &Self, target: i32, timestamp: u32, key_code: u16, pressed: bool, modifiers: u16, key_repeat: bool) void {
         var event_type: EventType = EventType.KeyUp;
         if pressed {
             event_type = EventType.KeyDown;
         }
-        _ = self.queue.push(event_key_repeat(event_type, InputDev.Keypad, target, timestamp, key_code, key_repeat && pressed));
+        _ = self.queue.push(event_key_modifiers(event_type, InputDev.Keypad, target, timestamp, key_code, modifiers, key_repeat && pressed));
     }
 
     fn read(self: &Self, out_evt: &Event) bool {

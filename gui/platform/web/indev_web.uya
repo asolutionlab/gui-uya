@@ -25,6 +25,7 @@ use platform.web.web_common.WEB_EVT_WHEEL;
 use platform.web.web_common.WebHostEvent;
 use platform.web.web_common.web_host_event_none;
 use platform.web.web_common.web_host_event_is_key_repeat;
+use platform.web.web_common.web_host_event_modifiers;
 use platform.web.web_common.web_hover_point_default;
 use platform.web.web_common.web_poll_host_event;
 use sim.common.SIM_KEY_DOWN;
@@ -203,13 +204,13 @@ export struct WebInputSystem : IRuntimeInput {
             }
             if raw.kind == WEB_EVT_KEY_DOWN {
                 self.remember_key(raw.key_code, true);
-                self.key.feed_repeat(-1, timestamp, raw.key_code, true, web_host_event_is_key_repeat(&raw));
+                self.key.feed_modifiers(-1, timestamp, raw.key_code, true, web_host_event_modifiers(&raw), web_host_event_is_key_repeat(&raw));
                 raw = web_host_event_none();
                 continue;
             }
             if raw.kind == WEB_EVT_KEY_UP {
                 self.remember_key(raw.key_code, false);
-                self.key.feed(-1, timestamp, raw.key_code, false);
+                self.key.feed_modifiers(-1, timestamp, raw.key_code, false, web_host_event_modifiers(&raw), false);
                 raw = web_host_event_none();
                 continue;
             }

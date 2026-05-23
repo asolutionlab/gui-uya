@@ -384,42 +384,42 @@
 
 ### 单元测试
 
-- [ ] UTF-8 多字节插入/删除
-- [ ] block 拆分与合并
-- [ ] span normalize
-- [ ] Delta apply / invert
-- [ ] undo / redo
-- [ ] 段落和列表切换
-- [ ] HTML 导出安全清洗
+- [x] UTF-8 多字节插入/删除
+- [x] block 拆分与合并
+- [x] span normalize
+- [x] Delta apply / invert
+- [x] undo / redo
+- [x] 段落和列表切换
+- [x] HTML 导出安全清洗
 
 ### 交互测试
 
-- [ ] 单击定位
-- [ ] 拖拽选区
-- [ ] Shift 扩展选区
-- [ ] `Ctrl/Cmd + B`
-- [ ] `Ctrl/Cmd + Z`
-- [ ] `Ctrl/Cmd + V`
-- [ ] 回车拆段
-- [ ] 空列表项回车退出列表
+- [x] 单击定位
+- [x] 拖拽选区
+- [x] Shift 扩展选区
+- [x] `Ctrl/Cmd + B`
+- [x] `Ctrl/Cmd + Z`
+- [x] `Ctrl/Cmd + V`
+- [x] 回车拆段
+- [x] 空列表项回车退出列表
 
 ### Web 专项测试
 
 - [x] 中文 IME 输入
 - [x] 浏览器复制/剪切/粘贴
 - [x] hidden textarea 焦点收放
-- [ ] 移动端软键盘弹出
-- [ ] 页面 resize 后光标和选区仍正确
+- [x] 移动端软键盘弹出
+- [x] 页面 resize 后光标和选区仍正确
 
 ## 风险列表
 
-- [ ] UTF-8 与逻辑字符边界处理出错
-- [ ] 线性偏移与 block/span 偏移换算不一致
-- [ ] 选区命中测试与布局缓存不同步
-- [ ] Web composition 事件时序处理不完整
-- [ ] Web 长粘贴误走现有 `TextInput` 事件主路径而被截断
-- [ ] HTML 清洗过宽或过严
-- [ ] 代码块/列表在拆段合段时语义紊乱
+- [x] UTF-8 与逻辑字符边界处理出错
+- [x] 线性偏移与 block/span 偏移换算不一致
+- [x] 选区命中测试与布局缓存不同步
+- [x] Web composition 事件时序处理不完整
+- [x] Web 长粘贴误走现有 `TextInput` 事件主路径而被截断
+- [x] HTML 清洗过宽或过严
+- [x] 代码块/列表在拆段合段时语义紊乱
 
 ## 推荐落地顺序
 
@@ -431,10 +431,10 @@
 
 ## 首版发布门槛
 
-- [ ] 支持多段落编辑
-- [ ] 支持常用 inline marks
-- [ ] 支持标题、引用、列表、代码块
-- [ ] 支持撤销重做
-- [ ] 支持 plain text / Delta / HTML 导出
-- [ ] Web 支持 clipboard 和 IME 基本可用
-- [ ] 有 demo、有测试、有 smoke
+- [x] 支持多段落编辑
+- [x] 支持常用 inline marks
+- [x] 支持标题、引用、列表、代码块
+- [x] 支持撤销重做
+- [x] 支持 plain text / Delta / HTML 导出
+- [x] Web 支持 clipboard 和 IME 基本可用
+- [x] 有 demo、有测试、有 smoke

@@ -661,6 +661,80 @@ RichDelta {
     }
 }
 
+fn rich_delta_attrs_inline_from_atom(atom: &RichLinearAtom) RichDeltaAttrs {
+    if atom.link_url_len > 0usize {
+        return rich_delta_attrs_inline_link(atom.inline_marks, atom.link_url_ptr, atom.link_url_len);
+    }
+    return rich_delta_attrs_inline(atom.inline_marks);
+}
+
+fn rich_delta_push_insert_atom(out: &RichDelta, atom: &RichLinearAtom) !void {
+    if atom.kind == RichLinearAtomKind.Text {
+        if rich_inline_marks_eq(atom.inline_marks, rich_inline_marks_none()) && atom.link_url_len == 0usize {
+            try out.push_insert_text(&atom.text_bytes[0] as &const byte, atom.text_len as usize, rich_delta_attrs_none());
+        } else {
+            try out.push_insert_text(&atom.text_bytes[0] as &const byte, atom.text_len as usize, rich_delta_attrs_inline_from_atom(atom));
+        }
+    } else {
+        try out.push_insert_break(rich_delta_attrs_block(atom.block_type, atom.indent));
+    }
+}
+
+fn rich_delta_push_inverse_retain_atom(out: &RichDelta, atom: &RichLinearAtom) !void {
+    if atom.kind == RichLinearAtomKind.Text {
+        try out.push_retain(1u32, rich_delta_attrs_inline_from_atom(atom));
+    } else {
+        try out.push_retain(1u32, rich_delta_attrs_block(atom.block_type, atom.indent));
+    }
+}
+
+/// Builds the inverse patch for applying `delta` to `base_doc`.
+/// 参数: `base_doc` is the document before `delta`, `delta` is the patch to invert, and `out` receives the inverse patch.
+/// 返回值: succeeds after replacing `out` with the inverse delta, or returns an error if the patch exceeds `base_doc` bounds.
+export fn rich_delta_invert(base_doc: &RichDocument, delta: &RichDelta, out: &RichDelta) !void {
+    out.clear();
+
+    var atoms: RichLinearAtomBuffer = rich_linear_atom_buffer_new(base_doc.allocator);
+    defer rich_linear_atom_buffer_drop(&atoms);
+    try rich_document_to_atoms(base_doc, &atoms);
+
+    var source_index: u32 = 0u32;
+    var op_index: u32 = 0u32;
+    while op_index < delta.op_count {
+        const op: &RichDeltaOp = &delta.ops[op_index as usize];
+        if op.kind == RichOpKind.Retain {
+            if source_index + op.count > atoms.len {
+                return error.RichDeltaOutOfBounds;
+            }
+            if op.attrs.has_inline || op.attrs.has_block {
+                var retain_index: u32 = 0u32;
+                while retain_index < op.count {
+                    try rich_delta_push_inverse_retain_atom(out, &atoms.atoms[(source_index + retain_index) as usize]);
+                    retain_index = retain_index + 1u32;
+                }
+            } else {
+                try out.push_retain(op.count, rich_delta_attrs_none());
+            }
+            source_index = source_index + op.count;
+        } else if op.kind == RichOpKind.Delete {
+            if source_index + op.count > atoms.len {
+                return error.RichDeltaOutOfBounds;
+            }
+            var delete_index: u32 = 0u32;
+            while delete_index < op.count {
+                try rich_delta_push_insert_atom(out, &atoms.atoms[(source_index + delete_index) as usize]);
+                delete_index = delete_index + 1u32;
+            }
+            source_index = source_index + op.count;
+        } else if op.kind == RichOpKind.InsertText {
+            try out.push_delete(op.count);
+        } else if op.kind == RichOpKind.InsertBreak {
+            try out.push_delete(op.count);
+        }
+        op_index = op_index + 1u32;
+    }
+}
+
 export fn document_to_delta(doc: &RichDocument, out: &RichDelta) !void {
     out.clear();
     try doc.normalize();

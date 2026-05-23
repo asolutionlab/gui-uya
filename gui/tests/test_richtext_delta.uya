@@ -9,6 +9,7 @@ use richtext.delta.rich_delete_forward;
 use richtext.delta.rich_delete_range;
 use richtext.delta.rich_delta_attrs_inline;
 use richtext.delta.rich_delta_attrs_none;
+use richtext.delta.rich_delta_invert;
 use richtext.delta.rich_delta_new;
 use richtext.delta.rich_insert_break;
 use richtext.delta.rich_insert_text;
@@ -71,6 +72,42 @@ test "apply delta can rebuild document from snapshot delta" {
     const written: usize = target.export_plain_text(&out[0], 32usize);
     try assert_eq_i32(written as i32, 7);
     try assert_eq_bool(strncmp(&out[0] as *const byte, "One\nTwo" as *const byte, 7usize) == 0, true);
+}
+
+test "delta invert restores text marks and block breaks after apply" {
+    var doc: RichDocument = rich_document_new();
+    defer doc.dispose();
+    try doc.set_plain_text("ab\ncd" as &const byte);
+    doc.blocks[1].block_type = RichBlockType.Quote;
+
+    var patch: RichDelta = rich_delta_new();
+    defer patch.dispose();
+    try patch.push_retain(1u32, rich_delta_attrs_inline(RichInlineMarks{
+        bits: RICH_MARK_BOLD,
+        link_ref: 0u16,
+    }));
+    try patch.push_delete(3u32);
+    try patch.push_insert_text("中" as &const byte, 3usize, rich_delta_attrs_none());
+
+    var inverse: RichDelta = rich_delta_new();
+    defer inverse.dispose();
+    try rich_delta_invert(&doc, &patch, &inverse);
+
+    try apply_delta(&doc, &patch);
+    var after_patch: [byte: 32] = [];
+    const after_patch_written: usize = doc.export_plain_text(&after_patch[0], 32usize);
+    try assert_eq_i32(after_patch_written as i32, 5);
+    try assert_eq_bool(strncmp(&after_patch[0] as *const byte, "a中d" as *const byte, 5usize) == 0, true);
+    try assert_eq_i32(doc.blocks[0].spans[0].marks.bits as i32, RICH_MARK_BOLD as i32);
+
+    try apply_delta(&doc, &inverse);
+    var restored: [byte: 32] = [];
+    const restored_written: usize = doc.export_plain_text(&restored[0], 32usize);
+    try assert_eq_i32(restored_written as i32, 5);
+    try assert_eq_bool(strncmp(&restored[0] as *const byte, "ab\ncd" as *const byte, 5usize) == 0, true);
+    try assert_eq_i32(doc.block_count as i32, 2);
+    try assert_eq_i32(doc.blocks[0].spans[0].marks.bits as i32, 0);
+    try assert_eq_i32(doc.blocks[1].block_type as i32, RichBlockType.Quote as i32);
 }
 
 test "patch delta can insert text after retained block break" {
@@ -150,6 +187,46 @@ test "insert text replaces selection through patch delta helper" {
     try assert_eq_i32(written as i32, 4);
     try assert_eq_bool(strncmp(&out[0] as *const byte, "aXYd" as *const byte, 4usize) == 0, true);
     try assert_eq_i32((try doc.pos_to_linear_offset(caret)) as i32, 3);
+}
+
+test "utf8 multibyte insert and delete keep character boundaries" {
+    var doc: RichDocument = rich_document_new();
+    defer doc.dispose();
+    try doc.set_plain_text("你a好" as &const byte);
+
+    const insert_caret: RichPos = try rich_insert_text(&doc, rich_range_collapsed(try doc.linear_offset_to_pos(1u32)), "世" as &const byte, 3usize, rich_inline_marks_none());
+    try assert_eq_i32((try doc.pos_to_linear_offset(insert_caret)) as i32, 2);
+
+    var after_insert: [byte: 32] = [];
+    const after_insert_written: usize = doc.export_plain_text(&after_insert[0], 32usize);
+    try assert_eq_i32(after_insert_written as i32, 10);
+    try assert_eq_bool(strncmp(&after_insert[0] as *const byte, "你世a好" as *const byte, 10usize) == 0, true);
+
+    const delete_caret: RichPos = try rich_delete_range(&doc, RichRange{
+        anchor: try doc.linear_offset_to_pos(1u32),
+        focus: try doc.linear_offset_to_pos(3u32),
+    });
+    try assert_eq_i32((try doc.pos_to_linear_offset(delete_caret)) as i32, 1);
+
+    var after_range_delete: [byte: 32] = [];
+    const after_range_delete_written: usize = doc.export_plain_text(&after_range_delete[0], 32usize);
+    try assert_eq_i32(after_range_delete_written as i32, 6);
+    try assert_eq_bool(strncmp(&after_range_delete[0] as *const byte, "你好" as *const byte, 6usize) == 0, true);
+
+    const backspace_caret: RichPos = try rich_backspace(&doc, rich_range_collapsed(try doc.linear_offset_to_pos(2u32)));
+    try assert_eq_i32((try doc.pos_to_linear_offset(backspace_caret)) as i32, 1);
+
+    var after_backspace: [byte: 32] = [];
+    const after_backspace_written: usize = doc.export_plain_text(&after_backspace[0], 32usize);
+    try assert_eq_i32(after_backspace_written as i32, 3);
+    try assert_eq_bool(strncmp(&after_backspace[0] as *const byte, "你" as *const byte, 3usize) == 0, true);
+
+    const forward_caret: RichPos = try rich_delete_forward(&doc, rich_range_collapsed(try doc.linear_offset_to_pos(0u32)));
+    try assert_eq_i32((try doc.pos_to_linear_offset(forward_caret)) as i32, 0);
+
+    var after_forward_delete: [byte: 32] = [];
+    const after_forward_delete_written: usize = doc.export_plain_text(&after_forward_delete[0], 32usize);
+    try assert_eq_i32(after_forward_delete_written as i32, 0);
 }
 
 test "backspace and delete forward can remove block breaks" {

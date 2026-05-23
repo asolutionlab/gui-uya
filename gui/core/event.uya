@@ -3,6 +3,11 @@ use core.point.Point;
 
 export const EVENT_QUEUE_SIZE: i32 = 64;
 export const EVENT_TEXT_INPUT_MAX_BYTES: i32 = 96;
+export const EVENT_MOD_ALT: u16 = 1u16;
+export const EVENT_MOD_CTRL: u16 = 2u16;
+export const EVENT_MOD_META: u16 = 4u16;
+export const EVENT_MOD_SHIFT: u16 = 8u16;
+
 
 fn distance_sq(a: Point, b: Point) i32 {
     const dx: i32 = a.x as i32 - b.x as i32;
@@ -144,6 +149,7 @@ export struct Event {
     timestamp: u32,
     data: EventData,
     key_repeat: bool,
+    modifiers: u16,
     stop_bubble: bool,
     handled: bool,
     
@@ -171,6 +177,10 @@ export struct Event {
             else => {},
         };
         return 0;
+    }
+
+    fn has_modifier(self: &Self, mask: u16) bool {
+        return (self.modifiers & mask) != 0u16;
     }
 
     fn text_len(self: &Self) usize {
@@ -449,6 +459,7 @@ export fn event_point_value(kind: EventType, dev: InputDev, target: i32, timesta
             value: value,
         }),
         key_repeat: false,
+        modifiers: 0u16,
         stop_bubble: false,
         handled: false,
     };
@@ -464,6 +475,7 @@ export fn event_focus(kind: EventType, target: i32, timestamp: u32) Event {
         timestamp: timestamp,
         data: EventData.None(),
         key_repeat: false,
+        modifiers: 0u16,
         stop_bubble: false,
         handled: false,
     };
@@ -479,6 +491,7 @@ export fn event_none() Event {
         timestamp: 0,
         data: EventData.None(),
         key_repeat: false,
+        modifiers: 0u16,
         stop_bubble: false,
         handled: false,
     };
@@ -510,6 +523,7 @@ export fn event_point(kind: EventType, dev: InputDev, target: i32, timestamp: u3
         timestamp: timestamp,
         data: EventData.Point(point),
         key_repeat: false,
+        modifiers: 0u16,
         stop_bubble: false,
         handled: false,
     };
@@ -522,6 +536,11 @@ export fn event_key(kind: EventType, dev: InputDev, target: i32, timestamp: u32,
 
 /// 构造携带键码并标记是否为重复触发的事件。
 export fn event_key_repeat(kind: EventType, dev: InputDev, target: i32, timestamp: u32, key_code: u16, key_repeat: bool) Event {
+    return event_key_modifiers(kind, dev, target, timestamp, key_code, 0u16, key_repeat);
+}
+
+/// 构造携带键码、修饰键和重复触发标记的事件。
+export fn event_key_modifiers(kind: EventType, dev: InputDev, target: i32, timestamp: u32, key_code: u16, modifiers: u16, key_repeat: bool) Event {
     return Event{
         event_type: kind,
         phase: EventPhase.Target,
@@ -530,6 +549,7 @@ export fn event_key_repeat(kind: EventType, dev: InputDev, target: i32, timestam
         timestamp: timestamp,
         data: EventData.KeyCode(key_code),
         key_repeat: key_repeat,
+        modifiers: modifiers,
         stop_bubble: false,
         handled: false,
     };
@@ -556,6 +576,7 @@ export fn event_text_input(dev: InputDev, target: i32, timestamp: u32, text: &co
         timestamp: timestamp,
         data: EventData.Text(value),
         key_repeat: false,
+        modifiers: 0u16,
         stop_bubble: false,
         handled: false,
     };
@@ -571,6 +592,7 @@ export fn event_value(kind: EventType, dev: InputDev, target: i32, timestamp: u3
         timestamp: timestamp,
         data: EventData.Value(value),
         key_repeat: false,
+        modifiers: 0u16,
         stop_bubble: false,
         handled: false,
     };

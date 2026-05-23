@@ -119,3 +119,10 @@ export fn web_host_event_is_key_repeat(raw: &WebHostEvent) bool {
     }
     return (raw.modifiers & WEB_MODIFIER_KEY_REPEAT) != 0u16;
 }
+
+export fn web_host_event_modifiers(raw: &WebHostEvent) u16 {
+    if raw == null {
+        return 0u16;
+    }
+    return raw.modifiers & 0x7FFFu16;
+}

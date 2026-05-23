@@ -1966,10 +1966,16 @@
               case 'F11': return 1011;
               default: break;
             }
-            if (!evt.altKey && !evt.ctrlKey && !evt.metaKey && key.length === 1) {
+            if (!evt.altKey && key.length === 1) {
               var code = key.charCodeAt(0);
               if (code >= 32 && code <= 126) {
-                return code & 0xffff;
+                if (!evt.ctrlKey && !evt.metaKey) {
+                  return code & 0xffff;
+                }
+                var lower = key.toLowerCase();
+                if (lower === 'b' || lower === 'z' || lower === 'v') {
+                  return code & 0xffff;
+                }
               }
             }
             return 0;

@@ -1,8 +1,11 @@
 use core.color.Color;
 use core.event.Event;
 use core.event.EventType;
+use core.event.EVENT_MOD_SHIFT;
+use core.event.EVENT_MOD_CTRL;
 use core.event.InputDev;
 use core.event.event_key;
+use core.event.event_key_modifiers;
 use core.event.event_point;
 use core.event.event_text_input;
 use core.point.Point;
@@ -197,6 +200,77 @@ test "rich text input handles text events undo redo and drag selection" {
     try assert_eq_bool(input.handle_event(&release_evt), true);
     try assert_eq_i32((try input.doc.pos_to_linear_offset(input.selection().anchor)) as i32, 2);
     try assert_eq_i32((try input.doc.pos_to_linear_offset(input.selection().focus)) as i32, 13);
+}
+
+test "rich text input click shift extend and shortcuts work" {
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    input.widget.at(0, 0);
+    input.widget.size(180, 72);
+    try input.set_plain_text("alpha" as &const byte);
+    var focus_evt: Event = event_point(EventType.FocusIn, InputDev.Keypad, 1, 0u32, Point{ x: 0, y: 0 });
+    try assert_eq_bool(input.handle_event(&focus_evt), true);
+
+    var bytes: [byte: 32768] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 128, 64, 512, PixelFormat.ARGB8888));
+    ctx.clear(Color{ r: 0, g: 0, b: 0, a: 255 });
+    input.render(&ctx);
+
+    const inner: Rect = widget_inner_rect(&input.widget);
+    const font: &Font = widget_font(&input.widget.base.style);
+    var click_evt: Event = event_point(
+        EventType.Press,
+        InputDev.Touch,
+        1,
+        1u32,
+        Point{
+            x: inner.x + input.layout.lines[0].x + text_width("a" as &const byte, 1usize, font) + 2i16,
+            y: inner.y + input.layout.lines[0].y + 1i16,
+        },
+    );
+    var release_evt: Event = event_point(EventType.Release, InputDev.Touch, 1, 2u32, click_evt.point());
+
+    try assert_eq_bool(input.handle_event(&click_evt), true);
+    try assert_eq_bool(input.handle_event(&release_evt), true);
+    try assert_eq_i32((try input.doc.pos_to_linear_offset(input.selection().anchor)) as i32, 2);
+    try assert_eq_i32((try input.doc.pos_to_linear_offset(input.selection().focus)) as i32, 2);
+
+    var shift_right_evt: Event = event_key_modifiers(EventType.KeyDown, InputDev.Keypad, 1, 3u32, 1001u16, EVENT_MOD_SHIFT, false);
+    try assert_eq_bool(input.handle_event(&shift_right_evt), true);
+    try assert_eq_i32((try input.doc.pos_to_linear_offset(input.selection().anchor)) as i32, 2);
+    try assert_eq_i32((try input.doc.pos_to_linear_offset(input.selection().focus)) as i32, 3);
+
+    var bold_evt: Event = event_key_modifiers(EventType.KeyDown, InputDev.Keypad, 1, 4u32, 'b' as u16, EVENT_MOD_CTRL, false);
+    try assert_eq_bool(input.handle_event(&bold_evt), true);
+
+    var bold_html: [byte: 64] = [];
+    const bold_html_written: usize = input.export_html(&bold_html[0], 64usize);
+    try assert_eq_i32(bold_html_written as i32, 29);
+    try assert_eq_bool(strncmp(&bold_html[0] as *const byte, "<p>al<strong>p</strong>ha</p>" as *const byte, 29usize) == 0, true);
+
+    var undo_evt: Event = event_key_modifiers(EventType.KeyDown, InputDev.Keypad, 1, 5u32, 'z' as u16, EVENT_MOD_CTRL, false);
+    try assert_eq_bool(input.handle_event(&undo_evt), true);
+
+    var html: [byte: 64] = [];
+    const html_written: usize = input.export_html(&html[0], 64usize);
+    try assert_eq_i32(html_written as i32, 12);
+    try assert_eq_bool(strncmp(&html[0] as *const byte, "<p>alpha</p>" as *const byte, 12usize) == 0, true);
+}
+
+test "rich text input enter exits empty list item" {
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    input.widget.at(0, 0);
+    input.widget.size(180, 72);
+    try input.set_plain_text("" as &const byte);
+    input.doc.blocks[0].block_type = RichBlockType.BulletItem;
+
+    var focus_evt: Event = event_point(EventType.FocusIn, InputDev.Keypad, 1, 1u32, Point{ x: 0, y: 0 });
+    var enter_evt: Event = event_key(EventType.KeyDown, InputDev.Keypad, 1, 2u32, 13u16);
+    try assert_eq_bool(input.handle_event(&focus_evt), true);
+    try assert_eq_bool(input.handle_event(&enter_evt), true);
+    try assert_eq_i32(input.doc.block_count as i32, 1);
+    try assert_eq_i32(input.doc.blocks[0].block_type as i32, RichBlockType.Paragraph as i32);
 }
 
 test "rich text input insert invalidates caret sized dirty region" {
