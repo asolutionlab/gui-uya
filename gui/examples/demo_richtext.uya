@@ -1,4 +1,5 @@
 use core.color.Color;
+use core.obj.gui_obj_register;
 use core.obj_tree.ObjTree;
 use core.obj_tree.obj_tree_new;
 use render.ctx.RenderCtx;
@@ -17,6 +18,17 @@ use widget.page.Page;
 use widget.panel.Panel;
 use widget.rich_text_input.RichTextInput;
 use widget.rich_toolbar.RichToolbar;
+
+const RICHTEXT_ID_PAGE: i32 = 80;
+const RICHTEXT_ID_HERO: i32 = 81;
+const RICHTEXT_ID_TITLE: i32 = 82;
+const RICHTEXT_ID_SUBTITLE: i32 = 83;
+const RICHTEXT_ID_EDITOR_PANEL: i32 = 84;
+const RICHTEXT_ID_EDITOR_TITLE: i32 = 85;
+const RICHTEXT_ID_EDITOR_HINT: i32 = 86;
+const RICHTEXT_ID_TOOLBAR: i32 = 87;
+const RICHTEXT_ID_EDITOR: i32 = 88;
+const RICHTEXT_ID_FOOTER: i32 = 89;
 
 export struct RichTextRetained {
     tree: ObjTree,
@@ -115,6 +127,17 @@ export fn richtext_retained_init(demo: &RichTextRetained) void {
     demo.footer.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 71, g: 85, b: 105, a: 255 });
     demo.footer.overflow = TextOverflow.Wrap;
 
+    _ = gui_obj_register(RICHTEXT_ID_PAGE, demo.page.obj());
+    _ = gui_obj_register(RICHTEXT_ID_HERO, demo.hero.obj());
+    _ = gui_obj_register(RICHTEXT_ID_TITLE, demo.title.obj());
+    _ = gui_obj_register(RICHTEXT_ID_SUBTITLE, demo.subtitle.obj());
+    _ = gui_obj_register(RICHTEXT_ID_EDITOR_PANEL, demo.editor_panel.obj());
+    _ = gui_obj_register(RICHTEXT_ID_EDITOR_TITLE, demo.editor_title.obj());
+    _ = gui_obj_register(RICHTEXT_ID_EDITOR_HINT, demo.editor_hint.obj());
+    _ = gui_obj_register(RICHTEXT_ID_TOOLBAR, demo.toolbar.obj());
+    _ = gui_obj_register(RICHTEXT_ID_EDITOR, demo.editor.obj());
+    _ = gui_obj_register(RICHTEXT_ID_FOOTER, demo.footer.obj());
+
     demo.page.add(demo.hero.obj());
     demo.page.add(demo.editor_panel.obj());
     demo.hero.add(demo.title.obj());
@@ -125,7 +148,7 @@ export fn richtext_retained_init(demo: &RichTextRetained) void {
     demo.editor_panel.add(demo.editor.obj());
     demo.editor_panel.add(demo.footer.obj());
 
-    demo.tree.set_root(0, demo.page.obj());
+    demo.tree.set_root(RICHTEXT_ID_PAGE, demo.page.obj());
     demo.ready = true;
 }
 

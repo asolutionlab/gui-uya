@@ -986,6 +986,8 @@ SimApp {
     fn switch_demo(self: &Self, demo: SimDemoKind, status: &const byte) void {
         self.config.demo = demo;
         self.force_full_redraw = true;
+        self.dispatcher.set_focus(-1);
+        self.dispatcher.clear_capture();
         self.reset_standalone_demo_state(demo);
         // Phase smoke runners mutate global GUI registries and are only safe to
         // execute during isolated app startup, not while the live simulator UI

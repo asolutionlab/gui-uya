@@ -256,6 +256,47 @@ test "phase page text input accepts utf8 text events once focused" {
     try assert_eq_bool(app.text_input.text()[0] != 0u8, true);
 }
 
+test "richtext demo editor captures typing instead of home shortcuts" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.RichText;
+    cfg.width = SIM_DEFAULT_RES_WIDTH;
+    cfg.height = SIM_DEFAULT_RES_HEIGHT;
+    try assert_eq_bool(app.init(cfg), true);
+
+    app.sync_richtext_demo();
+    try app.richtext_demo.editor.set_plain_text("" as &const byte);
+    const editor_area: Rect = app.richtext_demo.editor.widget.base.screen_area();
+    const editor_center: Point = Point{
+        x: editor_area.x + editor_area.w as i16 / 2,
+        y: editor_area.y + editor_area.h as i16 / 2,
+    };
+    var press_evt: Event = event_point(EventType.Press, InputDev.Touch, -1, 40u32, editor_center);
+    var release_evt: Event = event_point(
+        EventType.Release,
+        InputDev.Touch,
+        -1,
+        41u32,
+        Point{ x: editor_center.x, y: editor_center.y }
+    );
+    app.handle_translated_event(&press_evt);
+    app.handle_translated_event(&release_evt);
+
+    var key_evt: Event = event_key(EventType.KeyDown, InputDev.Keypad, -1, 42u32, 'd' as u16);
+    app.handle_translated_event(&key_evt);
+
+    var out: [byte: 8] = [];
+    const written: usize = app.richtext_demo.editor.plain_text(&out[0], 8usize);
+    try assert_eq_i32(app.config.demo as i32, SimDemoKind.RichText as i32);
+    try assert_eq_i32(written as i32, 1);
+    try assert_eq_bool(out[0] == 'd' as byte, true);
+}
+
 test "repeated global shortcut keydown does not retrigger toggle actions" {
     const app: &SimApp = sim_app_alloc();
     try assert_eq_bool(app != null, true);
