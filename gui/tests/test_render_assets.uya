@@ -414,7 +414,7 @@ test "system ui outline font respects runtime override path" {
     font_ui_reset_runtime();
 }
 
-test "widget font prefers demo bitmap atlas at default dpi and scales to outline fonts" {
+test "widget font uses outline fonts across dpi scales" {
     font_ui_reset_runtime();
     var small_style: Style = style_default();
     var large_style: Style = style_default();
@@ -423,8 +423,8 @@ test "widget font prefers demo bitmap atlas at default dpi and scales to outline
 
     const small_font: &Font = widget_font(&small_style);
     const large_font: &Font = widget_font(&large_style);
-    try assert_eq_bool(small_font.render_kind == FontRenderKind.BitmapAtlas, true);
-    try assert_eq_bool(large_font.render_kind == FontRenderKind.BitmapAtlas, true);
+    try assert_eq_bool(small_font.render_kind == FontRenderKind.TrueTypeOutline, true);
+    try assert_eq_bool(large_font.render_kind == FontRenderKind.TrueTypeOutline, true);
     try assert_eq_i32(small_font.height as i32, 11);
     try assert_eq_i32(large_font.height as i32, 14);
     try assert_eq_bool(text_width("Hint", 4usize, small_font) < text_width("Hint", 4usize, large_font), true);
@@ -438,11 +438,11 @@ test "widget font prefers demo bitmap atlas at default dpi and scales to outline
     font_ui_reset_runtime();
 }
 
-test "system ui bitmap atlas falls back to outline for uncached glyphs" {
+test "system ui outline font provides cjk glyphs" {
     font_ui_reset_runtime();
     const demo_font: &Font = font_system_ui_ref(12u8);
     try assert_eq_bool(demo_font != null, true);
-    try assert_eq_bool(demo_font.render_kind == FontRenderKind.BitmapAtlas, true);
+    try assert_eq_bool(demo_font.render_kind == FontRenderKind.TrueTypeOutline, true);
     try assert_eq_bool(text_width("测", 3usize, demo_font) > 0, true);
 }
 

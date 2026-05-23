@@ -6,7 +6,6 @@ use core.rect.Rect;
 use libc.O_RDONLY;
 use libc.Stat;
 use libc.getenv;
-use libc.snprintf;
 use libc.sys_close;
 use libc.sys_fstat;
 use libc.sys_open;
@@ -28,22 +27,10 @@ extern fn uya_c_stb_font_get_glyph_metrics(handle: &void, codepoint: u32, glyph_
 extern fn uya_c_stb_font_get_kerning_adjust(handle: &void, left_codepoint: u32, right_codepoint: u32) i32;
 extern fn uya_c_stb_font_render_glyph(handle: &void, glyph_id: u16, dst: &byte, dst_stride: usize,
                                       width: i32, height: i32, hint_enabled: i32) i32;
-extern fn uya_gui_web_host_request_bitmap_font(pixel_height: u16) i32;
-extern fn uya_gui_web_host_bitmap_font_state(pixel_height: u16) i32;
 
 const CJK_GLYPH_8X8_BYTES: &[const byte] = @embed("cjk_unifont_4e00_9fff_8x8.bin");
 const DEFAULT_UI_FONT_BYTES: &[const byte] = @embed("DejaVuSans.ttf");
 const WEB_SYSTEM_UI_FONT_PATH: &const byte = "/app/fonts/system_ui_cjk_font\0";
-const WEB_SYSTEM_UI_BITMAP_FONT_DIR: &const byte = "/app/gui/render/generated\0";
-const LOCAL_SYSTEM_UI_BITMAP_FONT_DIR: &const byte = "gui/render/generated\0";
-const SYSTEM_UI_BITMAP_FONT_DIR_ENV_PATH: &const byte = "UYA_SYSTEM_UI_BITMAP_FONT_DIR\0";
-const SYSTEM_UI_BITMAP_FONT_PATH_FORMAT: &const byte = "%s/wqy_microhei_demo_%u.%s\0";
-const SYSTEM_UI_BITMAP_FONT_FILE_SUFFIX_DESC: &const byte = "fnt\0";
-const SYSTEM_UI_BITMAP_FONT_FILE_SUFFIX_BITMAP: &const byte = "a8\0";
-const WEB_BITMAP_FONT_STATE_IDLE: i32 = 0;
-const WEB_BITMAP_FONT_STATE_LOADING: i32 = 1;
-const WEB_BITMAP_FONT_STATE_READY: i32 = 2;
-const WEB_BITMAP_FONT_STATE_FAILED: i32 = 3;
 const CJK_UNIFIED_START: u32 = 0x4E00u32;
 const CJK_UNIFIED_END: u32 = 0x9FFFu32;
 const SYSTEM_UI_FONT_VENDORED_PATH: &const byte = "third_party/fonts/wqy/wqy-microhei.ttc\0";
@@ -253,13 +240,6 @@ struct SystemUiFontSlot {
     ready: bool,
 }
 
-struct SystemUiBitmapFontSlot {
-    asset: BitmapFontAsset,
-    bitmap_data: &const byte,
-    ready: bool,
-    request_inflight: bool,
-}
-
 var _builtin_font_lookup: GlyphLookupTable = GlyphLookupTable{
     ascii_index: [],
     unicode_entries: null,
@@ -289,23 +269,6 @@ var _system_ui_font_attempted: bool = false;
 var _ui_default_font_slots: [SystemUiFontSlot: 16] = [];
 var _ui_default_font_slots_ready: bool = false;
 var _system_ui_font_slots: [SystemUiFontSlot: 16] = [];
-var _system_ui_bitmap_font_slot_10: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
-var _system_ui_bitmap_font_slot_11: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
-var _system_ui_bitmap_font_slot_12: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
-var _system_ui_bitmap_font_slot_13: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
-var _system_ui_bitmap_font_slot_14: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
-var _system_ui_bitmap_font_slot_15: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
-var _system_ui_bitmap_font_slot_16: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
-var _system_ui_bitmap_font_slot_17: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
-var _system_ui_bitmap_font_slot_18: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
-var _system_ui_bitmap_font_slot_20: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
-var _system_ui_bitmap_font_slot_22: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
-var _system_ui_bitmap_font_slot_24: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
-var _system_ui_bitmap_font_slot_25: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
-var _system_ui_bitmap_font_slot_26: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
-var _system_ui_bitmap_font_slot_29: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
-var _system_ui_bitmap_font_slot_31: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
-var _system_ui_bitmap_font_slot_35: SystemUiBitmapFontSlot = SystemUiBitmapFontSlot{};
 var _font_ui_dpi: u16 = UI_FONT_BASE_DPI;
 var _font_runtime_generation: u32 = 1u32;
 var _gpu_text_glyph_cmds: [GpuGlyphCmd: 16] = [];
@@ -2045,17 +2008,6 @@ fn font_cjk_companion_height(base_height: u8) u8 {
     return base_height + 2u8;
 }
 
-fn system_ui_outline_fallback(font: &Font, codepoint: u32) &Font {
-    if font == null || !font_is_system_ui(font) || font.render_kind != FontRenderKind.BitmapAtlas {
-        return null;
-    }
-    const outline: &Font = font_system_ui_outline_ref(font_runtime_height(font));
-    if outline != null && outline != font && font_has_codepoint(outline, codepoint) {
-        return outline;
-    }
-    return null;
-}
-
 fn font_resolve_ui_height(logical_height: u16) u16 {
     if logical_height == 0u16 {
         return 0u16;
@@ -2739,40 +2691,6 @@ fn system_ui_font_slots_reset() void {
     }
 }
 
-fn system_ui_bitmap_font_slot_reset(slot: &SystemUiBitmapFontSlot) void {
-    if slot == null {
-        return;
-    }
-    if slot.bitmap_data != null {
-        free(slot.bitmap_data as &void);
-    }
-    bitmap_font_asset_reset(&slot.asset);
-    slot.asset = bitmap_font_asset_new();
-    slot.bitmap_data = null;
-    slot.ready = false;
-    slot.request_inflight = false;
-}
-
-fn system_ui_bitmap_font_slots_reset() void {
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_10);
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_11);
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_12);
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_13);
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_14);
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_15);
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_16);
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_17);
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_18);
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_20);
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_22);
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_24);
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_25);
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_26);
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_29);
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_31);
-    system_ui_bitmap_font_slot_reset(&_system_ui_bitmap_font_slot_35);
-}
-
 fn font_runtime_bump_generation() void {
     _font_runtime_generation = _font_runtime_generation + 1u32;
     if _font_runtime_generation == 0u32 {
@@ -2913,9 +2831,6 @@ export fn font_system_ui_retry_refresh() bool {
         if system_ui_font_source_attempt() {
             changed = true;
         }
-    }
-    if system_ui_bitmap_font_retry_refresh_all() {
-        changed = true;
     }
     if changed {
         font_runtime_bump_generation();
@@ -3207,30 +3122,13 @@ fn resolve_glyph_for_font(font: &Font, codepoint: u32) ResolvedGlyph {
         }
     }
 
-    const outline_font: &Font = system_ui_outline_fallback(font, codepoint);
-    if outline_font != null {
-        return ResolvedGlyph{
-            font: outline_font,
-            glyph: outline_font.get_glyph(codepoint),
-        };
-    }
-
     if glyph_is_cjk(codepoint) {
         const cjk_font: &Font = font_system_ui_ref(font_cjk_companion_height(font_runtime_height(font)));
-        if cjk_font != null && cjk_font != font {
-            if font_has_codepoint(cjk_font, codepoint) {
-                return ResolvedGlyph{
-                    font: cjk_font,
-                    glyph: cjk_font.get_glyph(codepoint),
-                };
-            }
-            const cjk_outline: &Font = system_ui_outline_fallback(cjk_font, codepoint);
-            if cjk_outline != null {
-                return ResolvedGlyph{
-                    font: cjk_outline,
-                    glyph: cjk_outline.get_glyph(codepoint),
-                };
-            }
+        if cjk_font != null && cjk_font != font && font_has_codepoint(cjk_font, codepoint) {
+            return ResolvedGlyph{
+                font: cjk_font,
+                glyph: cjk_font.get_glyph(codepoint),
+            };
         }
     }
 
@@ -3834,167 +3732,6 @@ export fn font_ui_default_ref(pixel_height: u8) &Font {
     return &slot.asset.font;
 }
 
-fn system_ui_bitmap_font_build_path(base_dir: &const byte, pixel_height: u8, suffix: &const byte, out_path: &byte, capacity: usize) bool {
-    if base_dir == null || base_dir[0] == 0 || out_path == null || capacity == 0usize {
-        return false;
-    }
-    const written: i32 = snprintf(
-        out_path,
-        capacity,
-        SYSTEM_UI_BITMAP_FONT_PATH_FORMAT,
-        base_dir,
-        pixel_height as u32,
-        suffix
-    );
-    return written > 0 && ((written as! usize).value) < capacity;
-}
-
-fn system_ui_bitmap_font_try_dir(slot: &SystemUiBitmapFontSlot, pixel_height: u8, base_dir: &const byte) &Font {
-    if slot == null || base_dir == null || base_dir[0] == 0 {
-        return null;
-    }
-
-    var desc_path: [byte: 256] = [];
-    var bitmap_path: [byte: 256] = [];
-    if !system_ui_bitmap_font_build_path(base_dir, pixel_height, SYSTEM_UI_BITMAP_FONT_FILE_SUFFIX_DESC, &desc_path[0], 256usize) {
-        return null;
-    }
-    if !system_ui_bitmap_font_build_path(base_dir, pixel_height, SYSTEM_UI_BITMAP_FONT_FILE_SUFFIX_BITMAP, &bitmap_path[0], 256usize) {
-        return null;
-    }
-
-    var desc_data: &const byte = null;
-    var desc_len: usize = 0usize;
-    var bitmap_data: &const byte = null;
-    var bitmap_len: usize = 0usize;
-    if !system_ui_font_map_file(&desc_path[0], &desc_data, &desc_len) {
-        return null;
-    }
-    if !system_ui_font_map_file(&bitmap_path[0], &bitmap_data, &bitmap_len) {
-        free(desc_data as &void);
-        return null;
-    }
-    _ = bitmap_len;
-
-    if !bitmap_font_load_bmfont(&slot.asset, desc_data, desc_len, bitmap_data, 0u16) {
-        free(desc_data as &void);
-        free(bitmap_data as &void);
-        return null;
-    }
-
-    free(desc_data as &void);
-    slot.asset.font.name = SYSTEM_UI_FONT_NAME;
-    slot.asset.font.height = pixel_height;
-    slot.asset.font.backend = null;
-    slot.bitmap_data = bitmap_data;
-    slot.ready = true;
-    return &slot.asset.font;
-}
-
-fn system_ui_bitmap_font_try_paths(slot: &SystemUiBitmapFontSlot, pixel_height: u8) &Font {
-    const override_dir: &byte = getenv(SYSTEM_UI_BITMAP_FONT_DIR_ENV_PATH as *const byte);
-    if override_dir != null && override_dir[0] != 0 {
-        const override_font: &Font = system_ui_bitmap_font_try_dir(slot, pixel_height, override_dir as &const byte);
-        if override_font != null {
-            return override_font;
-        }
-    }
-
-    const web_font: &Font = system_ui_bitmap_font_try_dir(slot, pixel_height, WEB_SYSTEM_UI_BITMAP_FONT_DIR);
-    if web_font != null {
-        return web_font;
-    }
-    return system_ui_bitmap_font_try_dir(slot, pixel_height, LOCAL_SYSTEM_UI_BITMAP_FONT_DIR);
-}
-
-fn system_ui_bitmap_font_slot_retry_refresh(slot: &SystemUiBitmapFontSlot, pixel_height: u8) bool {
-    if slot == null || slot.ready || !slot.request_inflight || pixel_height == 0u8 {
-        return false;
-    }
-
-    const state: i32 = uya_gui_web_host_bitmap_font_state(pixel_height as u16);
-    if state == WEB_BITMAP_FONT_STATE_READY {
-        if system_ui_bitmap_font_try_paths(slot, pixel_height) != null {
-            slot.request_inflight = false;
-            return true;
-        }
-        return false;
-    }
-    if state == WEB_BITMAP_FONT_STATE_FAILED || state == WEB_BITMAP_FONT_STATE_IDLE {
-        slot.request_inflight = false;
-        return false;
-    }
-    if state == WEB_BITMAP_FONT_STATE_LOADING {
-        return false;
-    }
-    return false;
-}
-
-fn system_ui_bitmap_font_retry_refresh_all() bool {
-    var changed: bool = false;
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_10, 10u8) { changed = true; }
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_11, 11u8) { changed = true; }
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_12, 12u8) { changed = true; }
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_13, 13u8) { changed = true; }
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_14, 14u8) { changed = true; }
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_15, 15u8) { changed = true; }
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_16, 16u8) { changed = true; }
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_17, 17u8) { changed = true; }
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_18, 18u8) { changed = true; }
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_20, 20u8) { changed = true; }
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_22, 22u8) { changed = true; }
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_24, 24u8) { changed = true; }
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_25, 25u8) { changed = true; }
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_26, 26u8) { changed = true; }
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_29, 29u8) { changed = true; }
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_31, 31u8) { changed = true; }
-    if system_ui_bitmap_font_slot_retry_refresh(&_system_ui_bitmap_font_slot_35, 35u8) { changed = true; }
-    return changed;
-}
-
-fn system_ui_bitmap_font_slot_ref(slot: &SystemUiBitmapFontSlot, pixel_height: u8) &Font {
-    if slot == null || pixel_height == 0u8 {
-        return null;
-    }
-    if slot.ready {
-        return &slot.asset.font;
-    }
-
-    const sync_font: &Font = system_ui_bitmap_font_try_paths(slot, pixel_height);
-    if sync_font != null {
-        return sync_font;
-    }
-
-    if slot.request_inflight {
-        return null;
-    }
-    if uya_gui_web_host_request_bitmap_font(pixel_height as u16) != 0 {
-        slot.request_inflight = true;
-    }
-    return null;
-}
-
-fn system_ui_bitmap_font_ref(pixel_height: u8) &Font {
-    if pixel_height == 10u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_10, 10u8); }
-    if pixel_height == 11u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_11, 11u8); }
-    if pixel_height == 12u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_12, 12u8); }
-    if pixel_height == 13u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_13, 13u8); }
-    if pixel_height == 14u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_14, 14u8); }
-    if pixel_height == 15u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_15, 15u8); }
-    if pixel_height == 16u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_16, 16u8); }
-    if pixel_height == 17u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_17, 17u8); }
-    if pixel_height == 18u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_18, 18u8); }
-    if pixel_height == 20u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_20, 20u8); }
-    if pixel_height == 22u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_22, 22u8); }
-    if pixel_height == 24u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_24, 24u8); }
-    if pixel_height == 25u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_25, 25u8); }
-    if pixel_height == 26u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_26, 26u8); }
-    if pixel_height == 29u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_29, 29u8); }
-    if pixel_height == 31u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_31, 31u8); }
-    if pixel_height == 35u8 { return system_ui_bitmap_font_slot_ref(&_system_ui_bitmap_font_slot_35, 35u8); }
-    return null;
-}
-
 fn font_system_ui_outline_ref(pixel_height: u8) &Font {
     if pixel_height == 0u8 {
         return null;
@@ -4044,10 +3781,6 @@ export fn font_system_ui_ref(pixel_height: u8) &Font {
     if pixel_height == 0u8 {
         return null;
     }
-    const bitmap_font: &Font = system_ui_bitmap_font_ref(pixel_height);
-    if bitmap_font != null {
-        return bitmap_font;
-    }
     return font_system_ui_outline_ref(pixel_height);
 }
 
@@ -4084,7 +3817,6 @@ export fn font_ui_pixel_height(logical_height: u8) u8 {
 /// 重置 UI 字体运行时缓存和 DPI 状态。
 export fn font_ui_reset_runtime() void {
     ui_default_font_slots_reset();
-    system_ui_bitmap_font_slots_reset();
     _ui_default_font_slots_ready = false;
     system_ui_font_source_clear();
     _system_ui_font_attempted = false;

@@ -229,14 +229,14 @@ sim-web-serve:
 	@PORT=$(SIM_WEB_PORT) BUILD_DIR=$(abspath $(SIM_WEB_BUILD_DIR)) bash tools/serve_gui_web.sh
 
 sim-web-smoke: sim-web-build
-	@BUILD_DIR=$(abspath $(SIM_WEB_BUILD_DIR)) SMOKE_EXPECT_BITMAP_READY_AT_LEAST=1 SMOKE_EXPECT_BITMAP_REQUESTED_AT_MOST=6 bash tools/smoke_gui_web.sh
+	@BUILD_DIR=$(abspath $(SIM_WEB_BUILD_DIR)) SMOKE_EXPECT_BITMAP_READY_AT_LEAST=0 SMOKE_EXPECT_BITMAP_REQUESTED_AT_MOST=0 bash tools/smoke_gui_web.sh
 
 sim-web-richtext-smoke: sim-web-build
 	@BUILD_DIR=$(abspath $(SIM_WEB_BUILD_DIR)) \
 	SMOKE_SCENARIO=richtext \
 	SMOKE_ARGS="--backend web --demo richtext --max-frames 240 --screenshot /tmp/last_frame.png" \
-	SMOKE_EXPECT_BITMAP_READY_AT_LEAST=1 \
-	SMOKE_EXPECT_BITMAP_REQUESTED_AT_MOST=6 \
+	SMOKE_EXPECT_BITMAP_READY_AT_LEAST=0 \
+	SMOKE_EXPECT_BITMAP_REQUESTED_AT_MOST=0 \
 	SMOKE_TIMEOUT_MS=45000 \
 	bash tools/smoke_gui_web.sh
 
