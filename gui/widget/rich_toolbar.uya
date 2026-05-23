@@ -205,11 +205,17 @@ RichToolbar {
     }
 
     fn obj(self: &Self) &GuiObj {
+        if self.editor != null {
+            _ = self.editor.bind_format_observer(&self.widget.base);
+        }
         return widget_bind_callbacks(&self.widget.base, &RICH_TOOLBAR_RENDER_ADAPTER, &RICH_TOOLBAR_INPUT_ADAPTER, self as &void);
     }
 
     fn bind_editor(self: &Self, editor: &RichTextInput) &RichToolbar {
         self.editor = editor;
+        if editor != null {
+            _ = editor.bind_format_observer(&self.widget.base);
+        }
         self.widget.base.invalidate();
         return self;
     }

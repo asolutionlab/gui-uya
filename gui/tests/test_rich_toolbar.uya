@@ -265,3 +265,44 @@ test "rich toolbar click keeps editor focus and selection range" {
     try assert_eq_i32(written as i32, expected_len as i32);
     try assert_eq_bool(strncmp(&html[0] as *const byte, expected_html as *const byte, expected_len) == 0, true);
 }
+
+test "rich toolbar observes editor format changes after direct construction" {
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    var toolbar: RichToolbar = RichToolbar.new(&input);
+    _ = toolbar.obj();
+
+    toolbar.widget.base.flags.invalid = false;
+    toolbar.widget.base.flags.dirty = false;
+    toolbar.widget.base.self_invalid = false;
+    toolbar.widget.base.invalid_area = Rect{ x: 0, y: 0, w: 0, h: 0 };
+
+    try assert_eq_bool(input.exec(RichCommand{
+        kind: RichCommandKind.ToggleBold,
+        text_ptr: null,
+        text_len: 0usize,
+    }), true);
+    try assert_eq_bool(toolbar.widget.base.flags.invalid, true);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[0]), true);
+}
+
+test "rich toolbar observes editor format changes after bind_editor" {
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    var toolbar: RichToolbar = RichToolbar.new(null);
+    _ = toolbar.bind_editor(&input);
+    _ = toolbar.obj();
+
+    toolbar.widget.base.flags.invalid = false;
+    toolbar.widget.base.flags.dirty = false;
+    toolbar.widget.base.self_invalid = false;
+    toolbar.widget.base.invalid_area = Rect{ x: 0, y: 0, w: 0, h: 0 };
+
+    try assert_eq_bool(input.exec(RichCommand{
+        kind: RichCommandKind.ToggleBold,
+        text_ptr: null,
+        text_len: 0usize,
+    }), true);
+    try assert_eq_bool(toolbar.widget.base.flags.invalid, true);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[0]), true);
+}

@@ -462,6 +462,7 @@ export struct RichTextInput {
     drag_anchor: RichPos,
     session_id: u32,
     host_composing: bool,
+    format_observer: &GuiObj,
 }
 
 RichTextInputRenderAdapter {
@@ -524,6 +525,7 @@ RichTextInput {
             drag_anchor: zero,
             session_id: rich_text_input_next_session_id(),
             host_composing: false,
+            format_observer: null,
         };
     }
 
@@ -539,6 +541,12 @@ RichTextInput {
 
     fn on_change(self: &Self, callback: &IWidgetValueCallback, user_data: &void) &RichTextInput {
         self.widget.on_value_change(callback, user_data);
+        return self;
+    }
+
+    fn bind_format_observer(self: &Self, observer: &GuiObj) &RichTextInput {
+        self.format_observer = observer;
+        self.notify_format_observer();
         return self;
     }
 
@@ -752,6 +760,7 @@ RichTextInput {
                 self.widget.set_state(WidgetState.Normal);
                 rich_text_host_deactivate(self.session_id);
                 self.widget.base.invalidate();
+                self.notify_format_observer();
             }
             cmd = RichTextHostCommand{
                 kind: 0u8,
@@ -834,6 +843,12 @@ RichTextInput {
         self.widget.emit_value_change(self.current_plain_text_len());
     }
 
+    fn notify_format_observer(self: &Self) void {
+        if self.format_observer != null {
+            self.format_observer.invalidate();
+        }
+    }
+
     fn invalidate_caret_region(self: &Self, before_rect: Rect, before_scroll_y: i32) void {
         const area: Rect = self.widget.base.screen_area();
         const after_rect: Rect = self.current_caret_rect();
@@ -852,6 +867,7 @@ RichTextInput {
         }
         self.sync_host_state();
         self.widget.base.invalidate();
+        self.notify_format_observer();
     }
 
     fn set_plain_text(self: &Self, text: &const byte) !&RichTextInput {
@@ -1045,6 +1061,7 @@ RichTextInput {
         self.scroll_selection_into_view();
         self.emit_change();
         self.widget.base.invalidate();
+        self.notify_format_observer();
         return true;
     }
 
@@ -1080,6 +1097,7 @@ RichTextInput {
         self.scroll_selection_into_view();
         self.emit_change();
         self.widget.base.invalidate();
+        self.notify_format_observer();
         return true;
     }
 
@@ -1154,6 +1172,7 @@ RichTextInput {
         self.scroll_selection_into_view();
         self.emit_change();
         self.invalidate_caret_region(before_caret_rect, before_scroll_y);
+        self.notify_format_observer();
         return true;
     }
 
@@ -1179,6 +1198,7 @@ RichTextInput {
         self.scroll_selection_into_view();
         self.emit_change();
         self.widget.base.invalidate();
+        self.notify_format_observer();
         return true;
     }
 
@@ -1204,6 +1224,7 @@ RichTextInput {
         self.scroll_selection_into_view();
         self.emit_change();
         self.widget.base.invalidate();
+        self.notify_format_observer();
         return true;
     }
 
@@ -1230,6 +1251,7 @@ RichTextInput {
         self.emit_change();
         self.sync_host_state();
         self.widget.base.invalidate();
+        self.notify_format_observer();
         return true;
     }
 
@@ -1255,6 +1277,7 @@ RichTextInput {
         self.scroll_selection_into_view();
         self.emit_change();
         self.widget.base.invalidate();
+        self.notify_format_observer();
         return true;
     }
 
@@ -1263,6 +1286,7 @@ RichTextInput {
         self.scroll_selection_into_view();
         self.sync_host_state();
         self.widget.base.invalidate();
+        self.notify_format_observer();
         return true;
     }
 
@@ -1271,6 +1295,7 @@ RichTextInput {
         self.scroll_selection_into_view();
         self.sync_host_state();
         self.widget.base.invalidate();
+        self.notify_format_observer();
         return true;
     }
 
@@ -1323,6 +1348,7 @@ RichTextInput {
             self.scroll_selection_into_view();
             self.sync_host_state();
             self.widget.base.invalidate();
+            self.notify_format_observer();
             return true;
         }
         if cmd.kind == RichCommandKind.ToggleBold {
@@ -1376,6 +1402,7 @@ RichTextInput {
             self.emit_change();
             self.sync_host_state();
             self.widget.base.invalidate();
+            self.notify_format_observer();
             return true;
         }
         if cmd.kind == RichCommandKind.Redo {
@@ -1390,6 +1417,7 @@ RichTextInput {
             self.emit_change();
             self.sync_host_state();
             self.widget.base.invalidate();
+            self.notify_format_observer();
             return true;
         }
         return false;
@@ -1405,6 +1433,7 @@ RichTextInput {
             self.selection_range = rich_range_collapsed(self.drag_anchor);
             self.sync_host_state();
             self.widget.base.invalidate();
+            self.notify_format_observer();
             return true;
         }
         if evt.event_type == EventType.Release {
@@ -1424,6 +1453,7 @@ RichTextInput {
             self.scroll_selection_into_view();
             self.sync_host_state();
             self.widget.base.invalidate();
+            self.notify_format_observer();
             return true;
         }
         if evt.event_type == EventType.DragStart {
@@ -1440,6 +1470,7 @@ RichTextInput {
             self.scroll_selection_into_view();
             self.sync_host_state();
             self.widget.base.invalidate();
+            self.notify_format_observer();
             return true;
         }
         if evt.event_type == EventType.DragEnd {
@@ -1458,6 +1489,7 @@ RichTextInput {
             self.host_composing = false;
             rich_text_host_deactivate(self.session_id);
             self.widget.base.invalidate();
+            self.notify_format_observer();
             return true;
         }
         if evt.event_type == EventType.TextInput {
