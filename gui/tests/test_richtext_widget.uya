@@ -257,6 +257,35 @@ test "rich text input click shift extend and shortcuts work" {
     try assert_eq_bool(strncmp(&html[0] as *const byte, "<p>alpha</p>" as *const byte, 12usize) == 0, true);
 }
 
+test "rich text input press focuses immediately for border feedback" {
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    input.widget.at(0, 0);
+    input.widget.size(180, 72);
+    try input.set_plain_text("alpha" as &const byte);
+
+    var bytes: [byte: 32768] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 128, 64, 512, PixelFormat.ARGB8888));
+    ctx.clear(Color{ r: 0, g: 0, b: 0, a: 255 });
+    input.render(&ctx);
+
+    const inner: Rect = widget_inner_rect(&input.widget);
+    const font: &Font = widget_font(&input.widget.base.style);
+    var press_evt: Event = event_point(
+        EventType.Press,
+        InputDev.Touch,
+        1,
+        1u32,
+        Point{
+            x: inner.x + input.layout.lines[0].x + text_width("a" as &const byte, 1usize, font) + 2i16,
+            y: inner.y + input.layout.lines[0].y + 1i16,
+        },
+    );
+
+    try assert_eq_bool(input.handle_event(&press_evt), true);
+    try assert_eq_bool(input.widget.state == WidgetState.Focused, true);
+}
+
 test "rich text input enter exits empty list item" {
     var input: RichTextInput = RichTextInput.new("" as &const byte);
     defer input.dispose();

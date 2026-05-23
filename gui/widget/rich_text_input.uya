@@ -1429,6 +1429,9 @@ RichTextInput {
 
         if evt.event_type == EventType.Press {
             self.pointer_selecting = true;
+            if self.widget.state != WidgetState.Disabled {
+                self.widget.set_state(WidgetState.Focused);
+            }
             self.drag_anchor = self.pos_from_point(evt.point());
             self.selection_range = rich_range_collapsed(self.drag_anchor);
             self.sync_host_state();
