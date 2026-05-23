@@ -1610,6 +1610,10 @@
           var utf8Encoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
           var imeComposing = false;
           var imeCommitHandled = false;
+          var imeAwaitingFinalInput = false;
+          var imeClosingKeyGuard = false;
+          var imeClosingKeyGuardToken = 0;
+          var pendingPrintableKey = null;
 
           function encodeUtf8(text) {
             if (!text) {
@@ -1650,12 +1654,91 @@
             }
           }
 
+          function clearPendingPrintableKey() {
+            pendingPrintableKey = null;
+          }
+
+          function isPrintableAsciiKeyCode(keyCode) {
+            return keyCode >= 32 && keyCode <= 126;
+          }
+
+          function stagePrintableKey(evt, keyCode) {
+            pendingPrintableKey = {
+              keyCode: keyCode | 0,
+              downModifiers: keyModifiers(evt) | 0,
+              upModifiers: modifierBits(evt) | 0,
+              emitted: false,
+              released: false,
+            };
+          }
+
+          function emitPrintableKeyDown(keyCode, modifiers) {
+            feed(5, 0, 0, 0, keyCode | 0, modifiers | 0);
+          }
+
+          function emitPrintableKeyUp(keyCode, modifiers) {
+            feed(6, 0, 0, 0, keyCode | 0, modifiers | 0);
+          }
+
+          function commitPendingPrintableKeyFromInput(evt, text) {
+            var keyCode = text && text.length > 0 ? (text.charCodeAt(0) & 0xffff) : 0;
+            var pending = pendingPrintableKey;
+            if (!pending || pending.keyCode !== keyCode) {
+              pending = {
+                keyCode: keyCode,
+                downModifiers: keyModifiers(evt) | 0,
+                upModifiers: modifierBits(evt) | 0,
+                emitted: false,
+                released: false,
+              };
+            }
+            emitPrintableKeyDown(pending.keyCode, pending.downModifiers);
+            if (pending.released) {
+              emitPrintableKeyUp(pending.keyCode, pending.upModifiers);
+              clearPendingPrintableKey();
+              return;
+            }
+            pending.emitted = true;
+            pendingPrintableKey = pending;
+          }
+
+          function readImeSinkValue() {
+            if (!imeSink || typeof imeSink.value !== 'string') {
+              return '';
+            }
+            return imeSink.value;
+          }
+
+          function clearImeClosingKeyGuard() {
+            imeClosingKeyGuardToken += 1;
+            imeClosingKeyGuard = false;
+          }
+
+          function armImeClosingKeyGuard() {
+            imeClosingKeyGuard = true;
+            var token = imeClosingKeyGuardToken + 1;
+            imeClosingKeyGuardToken = token;
+            var release = function() {
+              if (imeClosingKeyGuardToken !== token) {
+                return;
+              }
+              imeClosingKeyGuard = false;
+              imeAwaitingFinalInput = false;
+            };
+            if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+              window.requestAnimationFrame(release);
+            } else {
+              setTimeout(release, 24);
+            }
+          }
+
           function focusImeSink(clientX, clientY) {
             if (!imeSink) {
               return;
             }
             placeImeSink(clientX, clientY);
             clearImeSink();
+            clearPendingPrintableKey();
             if (document.activeElement !== imeSink) {
               try {
                 imeSink.focus({ preventScroll: true });
@@ -1759,6 +1842,22 @@
             return modifierBits(evt) | (evt.repeat ? 0x8000 : 0);
           }
 
+          function shouldDeferKeyToIme(evt) {
+            if (!evt) {
+              return imeComposing || imeClosingKeyGuard;
+            }
+            var key = evt.key || '';
+            var legacyCode = ((evt.keyCode || evt.which || 0) | 0);
+            return !!(
+              imeComposing ||
+              imeClosingKeyGuard ||
+              evt.isComposing ||
+              legacyCode === 229 ||
+              key === 'Process' ||
+              key === 'Unidentified'
+            );
+          }
+
           canvas.addEventListener('mousedown', function(evt) {
             var p = pointFromEvent(evt.clientX, evt.clientY);
             focusImeSink(evt.clientX, evt.clientY);
@@ -1813,22 +1912,42 @@
             evt.preventDefault();
           }, { passive: false });
           imeSink.addEventListener('keydown', function(evt) {
-            if (imeComposing || evt.isComposing) {
+            if (shouldDeferKeyToIme(evt)) {
+              clearPendingPrintableKey();
               return;
             }
             var mapped = mapKey(evt);
             if (!mapped) {
+                return;
+            }
+            if (isPrintableAsciiKeyCode(mapped)) {
+              stagePrintableKey(evt, mapped);
               return;
             }
             feed(5, 0, 0, 0, mapped, keyModifiers(evt));
             evt.preventDefault();
           });
           imeSink.addEventListener('keyup', function(evt) {
-            if (imeComposing || evt.isComposing) {
+            if (shouldDeferKeyToIme(evt)) {
+              clearPendingPrintableKey();
               return;
             }
             var mapped = mapKey(evt);
             if (!mapped) {
+              return;
+            }
+            if (isPrintableAsciiKeyCode(mapped)) {
+              if (pendingPrintableKey && pendingPrintableKey.keyCode === mapped) {
+                pendingPrintableKey.upModifiers = modifierBits(evt) | 0;
+                if (pendingPrintableKey.emitted) {
+                  emitPrintableKeyUp(mapped, pendingPrintableKey.upModifiers);
+                  clearPendingPrintableKey();
+                  evt.preventDefault();
+                  return;
+                }
+                pendingPrintableKey.released = true;
+                return;
+              }
               return;
             }
             feed(6, 0, 0, 0, mapped, modifierBits(evt));
@@ -1837,16 +1956,27 @@
           imeSink.addEventListener('compositionstart', function() {
             imeComposing = true;
             imeCommitHandled = false;
+            imeAwaitingFinalInput = false;
+            clearImeClosingKeyGuard();
+            clearPendingPrintableKey();
           });
           imeSink.addEventListener('compositionend', function(evt) {
             imeComposing = false;
             imeCommitHandled = false;
+            armImeClosingKeyGuard();
             var text = evt && typeof evt.data === 'string' ? evt.data : '';
-            if (text && !isSinglePrintableAscii(text)) {
+            if (!text) {
+              text = readImeSinkValue();
+            }
+            if (text) {
+              clearPendingPrintableKey();
               feedTextUtf8(text, modifierBits(evt));
               imeCommitHandled = true;
+              imeAwaitingFinalInput = false;
+              clearImeSink();
+              return;
             }
-            clearImeSink();
+            imeAwaitingFinalInput = true;
           });
           imeSink.addEventListener('input', function(evt) {
             if (imeComposing || evt.isComposing) {
@@ -1854,26 +1984,44 @@
             }
             if (imeCommitHandled) {
               imeCommitHandled = false;
+              imeAwaitingFinalInput = false;
+              clearPendingPrintableKey();
               clearImeSink();
               return;
             }
-            var text = imeSink.value || (evt && typeof evt.data === 'string' ? evt.data : '');
+            var text = readImeSinkValue() || (evt && typeof evt.data === 'string' ? evt.data : '');
             var inputType = evt && typeof evt.inputType === 'string' ? evt.inputType : '';
             var fromPaste = inputType.indexOf('insertFromPaste') >= 0 || inputType.indexOf('insertFromDrop') >= 0;
-            if (text && (fromPaste || !isSinglePrintableAscii(text))) {
+            if (text && !fromPaste && !imeAwaitingFinalInput && isSinglePrintableAscii(text)) {
+              commitPendingPrintableKeyFromInput(evt, text);
+              clearImeSink();
+              return;
+            }
+            if (text && (fromPaste || imeAwaitingFinalInput || !isSinglePrintableAscii(text))) {
+              clearPendingPrintableKey();
               feedTextUtf8(text, modifierBits(evt));
             }
+            imeAwaitingFinalInput = false;
             clearImeSink();
           });
           if (!Module.uyaGuiWindowBound) {
             window.addEventListener('blur', function() {
               imeComposing = false;
               imeCommitHandled = false;
+              imeAwaitingFinalInput = false;
+              clearImeClosingKeyGuard();
+              clearPendingPrintableKey();
               clearImeSink();
               feed(7, 0, 0, 0, 0, 0);
             });
             document.addEventListener('visibilitychange', function() {
               if (document.hidden) {
+                imeComposing = false;
+                imeCommitHandled = false;
+                imeAwaitingFinalInput = false;
+                clearImeClosingKeyGuard();
+                clearPendingPrintableKey();
+                clearImeSink();
                 feed(7, 0, 0, 0, 0, 0);
               } else {
                 Module.uyaGuiUpdateCanvasCss();
