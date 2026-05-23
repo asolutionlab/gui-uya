@@ -39,6 +39,17 @@ typedef struct UyaGuiWebDisplay {
 
 extern bool web_feed_host_event(uint8_t kind, int16_t x, int16_t y, int32_t value, uint16_t key_code, uint16_t modifiers);
 extern bool web_feed_host_text_event(const uint8_t *text, size_t len, uint16_t modifiers);
+extern void rich_text_host_activate(uint32_t session_id, void *obj);
+extern void rich_text_host_deactivate(uint32_t session_id);
+extern uint32_t rich_text_host_active_session(void);
+extern int16_t rich_text_host_caret_rect_x(void);
+extern int16_t rich_text_host_caret_rect_y(void);
+extern uint16_t rich_text_host_caret_rect_w(void);
+extern uint16_t rich_text_host_caret_rect_h(void);
+extern const uint8_t *rich_text_host_selection_text_ptr(void);
+extern size_t rich_text_host_selection_text_len(void);
+extern bool rich_text_host_feed_command(uint8_t kind);
+extern bool rich_text_host_feed_text_command(uint8_t kind, const uint8_t *text, size_t len);
 extern int32_t sim_web_frame(int32_t now_ms);
 extern void sim_web_shutdown(void);
 
@@ -352,6 +363,45 @@ EMSCRIPTEN_KEEPALIVE void uya_gui_web_host_feed_text_input(const uint8_t *text, 
         return;
     }
     (void)web_feed_host_text_event(text, (size_t)len, modifiers);
+}
+
+EMSCRIPTEN_KEEPALIVE uint32_t uya_gui_web_host_richtext_active_session(void) {
+    return rich_text_host_active_session();
+}
+
+EMSCRIPTEN_KEEPALIVE int32_t uya_gui_web_host_richtext_caret_x(void) {
+    return (int32_t)rich_text_host_caret_rect_x();
+}
+
+EMSCRIPTEN_KEEPALIVE int32_t uya_gui_web_host_richtext_caret_y(void) {
+    return (int32_t)rich_text_host_caret_rect_y();
+}
+
+EMSCRIPTEN_KEEPALIVE int32_t uya_gui_web_host_richtext_caret_w(void) {
+    return (int32_t)rich_text_host_caret_rect_w();
+}
+
+EMSCRIPTEN_KEEPALIVE int32_t uya_gui_web_host_richtext_caret_h(void) {
+    return (int32_t)rich_text_host_caret_rect_h();
+}
+
+EMSCRIPTEN_KEEPALIVE const uint8_t *uya_gui_web_host_richtext_selection_text_ptr(void) {
+    return rich_text_host_selection_text_ptr();
+}
+
+EMSCRIPTEN_KEEPALIVE int32_t uya_gui_web_host_richtext_selection_text_len(void) {
+    return (int32_t)rich_text_host_selection_text_len();
+}
+
+EMSCRIPTEN_KEEPALIVE void uya_gui_web_host_richtext_feed_command(uint8_t kind) {
+    (void)rich_text_host_feed_command(kind);
+}
+
+EMSCRIPTEN_KEEPALIVE void uya_gui_web_host_richtext_feed_text(uint8_t kind, const uint8_t *text, int32_t len) {
+    if (text == NULL || len < 0) {
+        return;
+    }
+    (void)rich_text_host_feed_text_command(kind, text, (size_t)len);
 }
 
 void *uya_gui_web_display_open(int32_t width, int32_t height, int32_t scale, const uint8_t *title) {

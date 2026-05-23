@@ -1,0 +1,1374 @@
+use core.color.Color;
+use core.color.TRANSPARENT;
+use core.color.WHITE;
+use core.event.Event;
+use core.event.EventType;
+use core.obj.GuiObj;
+use core.obj.IGuiInputCallback;
+use core.obj.IGuiRenderCallback;
+use core.point.Point;
+use core.rect.RECT_ZERO;
+use core.rect.Rect;
+use platform.text_host.RICH_TEXT_HOST_CMD_COMPOSITION_END;
+use platform.text_host.RICH_TEXT_HOST_CMD_COMPOSITION_START;
+use platform.text_host.RICH_TEXT_HOST_CMD_COMPOSITION_UPDATE;
+use platform.text_host.RICH_TEXT_HOST_CMD_COPY;
+use platform.text_host.RICH_TEXT_HOST_CMD_CUT;
+use platform.text_host.RICH_TEXT_HOST_CMD_INSERT_TEXT;
+use platform.text_host.RICH_TEXT_HOST_CMD_PASTE_TEXT;
+use platform.text_host.RICH_TEXT_HOST_TEXT_BYTES;
+use platform.text_host.RichTextHostCommand;
+use platform.text_host.rich_text_host_activate;
+use platform.text_host.rich_text_host_deactivate;
+use platform.text_host.rich_text_host_poll_for_session;
+use platform.text_host.rich_text_host_set_caret_rect;
+use platform.text_host.rich_text_host_set_selection_text;
+use richtext.delta.RichDelta;
+use richtext.delta.RichInlineToggleResult;
+use richtext.delta.apply_delta;
+use richtext.delta.document_to_delta;
+use richtext.delta.rich_backspace;
+use richtext.delta.rich_delete_range;
+use richtext.delta.rich_delete_forward;
+use richtext.delta.rich_insert_break;
+use richtext.delta.rich_insert_text;
+use richtext.delta.rich_set_block_type;
+use richtext.delta.rich_toggle_inline_mark;
+use richtext.delta.rich_delta_new;
+use richtext.document.RICH_MARK_BOLD;
+use richtext.document.RICH_MARK_INLINE_CODE;
+use richtext.document.RICH_MARK_ITALIC;
+use richtext.document.RICH_MARK_STRIKE;
+use richtext.document.RICH_MARK_UNDERLINE;
+use richtext.document.RichBlock;
+use richtext.document.RichBlockType;
+use richtext.document.RichDocument;
+use richtext.document.RichInlineMarks;
+use richtext.document.RichSpan;
+use richtext.document.rich_document_new;
+use richtext.document.rich_inline_marks_none;
+use richtext.document.rich_utf8_next_index;
+use richtext.history.RichHistory;
+use richtext.history.RichHistoryMergeKind;
+use richtext.history.rich_history_new;
+use richtext.layout.RichLayoutCache;
+use richtext.layout.RichVisualLine;
+use richtext.layout.rich_layout_cache_new;
+use richtext.render.RichTextRenderer;
+use richtext.render.rich_text_renderer_new;
+use richtext.selection.RichPos;
+use richtext.selection.RichRange;
+use richtext.selection.rich_pos_compare;
+use richtext.selection.rich_pos_zero;
+use richtext.selection.rich_range_collapsed;
+use richtext.selection.rich_range_is_collapsed;
+use richtext.selection.rich_range_normalized;
+use render.ctx.RenderCtx;
+use render.font.Font;
+use style.StyleProp;
+use widget.base.IWidgetValueCallback;
+use widget.base.Widget;
+use widget.base.WidgetState;
+use widget.base.WIDGET_TYPE_RICH_TEXT_INPUT;
+use widget.base.widget_bind_callbacks;
+use widget.base.widget_draw_surface;
+use widget.base.widget_font;
+use widget.base.widget_inner_rect;
+use widget.base.widget_new;
+use widget.base.widget_text_len;
+
+const RICH_TEXT_INPUT_KEY_BACKSPACE: u16 = 8u16;
+const RICH_TEXT_INPUT_KEY_ENTER: u16 = 13u16;
+const RICH_TEXT_INPUT_KEY_DELETE: u16 = 127u16;
+const RICH_TEXT_INPUT_KEY_LEFT: u16 = 1000u16;
+const RICH_TEXT_INPUT_KEY_RIGHT: u16 = 1001u16;
+const RICH_TEXT_INPUT_KEY_UP: u16 = 1002u16;
+const RICH_TEXT_INPUT_KEY_DOWN: u16 = 1003u16;
+
+struct RichTextInputRenderAdapter : IGuiRenderCallback {}
+struct RichTextInputInputAdapter : IGuiInputCallback {}
+
+var RICH_TEXT_INPUT_RENDER_ADAPTER: IGuiRenderCallback = RichTextInputRenderAdapter{};
+var RICH_TEXT_INPUT_INPUT_ADAPTER: IGuiInputCallback = RichTextInputInputAdapter{};
+var G_RICH_TEXT_INPUT_NEXT_SESSION_ID: u32 = 1u32;
+
+fn rich_text_input_next_session_id() u32 {
+    const next_id: u32 = G_RICH_TEXT_INPUT_NEXT_SESSION_ID;
+    G_RICH_TEXT_INPUT_NEXT_SESSION_ID = G_RICH_TEXT_INPUT_NEXT_SESSION_ID + 1u32;
+    if G_RICH_TEXT_INPUT_NEXT_SESSION_ID == 0u32 {
+        G_RICH_TEXT_INPUT_NEXT_SESSION_ID = 1u32;
+    }
+    return next_id;
+}
+
+fn rich_text_input_clamp_i16(value: i32) i16 {
+    if value <= -32768 {
+        return -32768i16;
+    }
+    if value >= 32767 {
+        return 32767i16;
+    }
+    return (value as! i16).value;
+}
+
+fn rich_text_input_clamp_u16(value: i32) u16 {
+    if value <= 0 {
+        return 0u16;
+    }
+    if value >= 65535 {
+        return 65535u16;
+    }
+    return (value as! u16).value;
+}
+
+fn rich_text_input_placeholder_color(bg: Color, fg: Color) Color {
+    return fg.lerp(bg, 0.45);
+}
+
+fn rich_text_input_is_printable_ascii(key_code: u16) bool {
+    return key_code >= 32u16 && key_code < 127u16;
+}
+
+fn rich_text_input_clone_doc(source: &RichDocument) !RichDocument {
+    var snapshot: RichDelta = rich_delta_new();
+    defer snapshot.dispose();
+    try document_to_delta(source, &snapshot);
+
+    var clone: RichDocument = rich_document_new();
+    try apply_delta(&clone, &snapshot);
+    return clone;
+}
+
+fn rich_text_input_html_append_byte(out: &byte, cap: usize, out_len: &usize, ch: byte) bool {
+    if out == null || cap == 0usize {
+        return false;
+    }
+    if out_len[0] + 1usize >= cap {
+        out[cap - 1usize] = 0u8;
+        return false;
+    }
+    out[out_len[0]] = ch;
+    out_len[0] = out_len[0] + 1usize;
+    out[out_len[0]] = 0u8;
+    return true;
+}
+
+fn rich_text_input_html_append_bytes(out: &byte, cap: usize, out_len: &usize, src: &const byte, src_len: usize) bool {
+    if src == null || src_len == 0usize {
+        return true;
+    }
+    var idx: usize = 0usize;
+    while idx < src_len {
+        if !rich_text_input_html_append_byte(out, cap, out_len, src[idx]) {
+            return false;
+        }
+        idx = idx + 1usize;
+    }
+    return true;
+}
+
+fn rich_text_input_html_append_cstr(out: &byte, cap: usize, out_len: &usize, text: &const byte) bool {
+    if text == null {
+        return true;
+    }
+    var len: usize = 0usize;
+    while text[len] != 0u8 {
+        len = len + 1usize;
+    }
+    return rich_text_input_html_append_bytes(out, cap, out_len, text, len);
+}
+
+fn rich_text_input_html_append_escaped(out: &byte, cap: usize, out_len: &usize, text: &const byte, text_len: usize) bool {
+    if text == null || text_len == 0usize {
+        return true;
+    }
+    var idx: usize = 0usize;
+    while idx < text_len {
+        const ch: byte = text[idx];
+        if ch == '&' as byte {
+            if !rich_text_input_html_append_cstr(out, cap, out_len, "&amp;" as &const byte) {
+                return false;
+            }
+        } else if ch == '<' as byte {
+            if !rich_text_input_html_append_cstr(out, cap, out_len, "&lt;" as &const byte) {
+                return false;
+            }
+        } else if ch == '>' as byte {
+            if !rich_text_input_html_append_cstr(out, cap, out_len, "&gt;" as &const byte) {
+                return false;
+            }
+        } else if ch == '"' as byte {
+            if !rich_text_input_html_append_cstr(out, cap, out_len, "&quot;" as &const byte) {
+                return false;
+            }
+        } else {
+            if !rich_text_input_html_append_byte(out, cap, out_len, ch) {
+                return false;
+            }
+        }
+        idx = idx + 1usize;
+    }
+    return true;
+}
+
+fn rich_text_input_html_append_marks_open(out: &byte, cap: usize, out_len: &usize, marks: RichInlineMarks, allow_inline_code: bool) bool {
+    if (marks.bits & RICH_MARK_BOLD) != 0u16 && !rich_text_input_html_append_cstr(out, cap, out_len, "<strong>" as &const byte) {
+        return false;
+    }
+    if (marks.bits & RICH_MARK_ITALIC) != 0u16 && !rich_text_input_html_append_cstr(out, cap, out_len, "<em>" as &const byte) {
+        return false;
+    }
+    if (marks.bits & RICH_MARK_UNDERLINE) != 0u16 && !rich_text_input_html_append_cstr(out, cap, out_len, "<u>" as &const byte) {
+        return false;
+    }
+    if (marks.bits & RICH_MARK_STRIKE) != 0u16 && !rich_text_input_html_append_cstr(out, cap, out_len, "<s>" as &const byte) {
+        return false;
+    }
+    if allow_inline_code
+        && (marks.bits & RICH_MARK_INLINE_CODE) != 0u16
+        && !rich_text_input_html_append_cstr(out, cap, out_len, "<code>" as &const byte) {
+        return false;
+    }
+    return true;
+}
+
+fn rich_text_input_html_append_marks_close(out: &byte, cap: usize, out_len: &usize, marks: RichInlineMarks, allow_inline_code: bool) bool {
+    if allow_inline_code
+        && (marks.bits & RICH_MARK_INLINE_CODE) != 0u16
+        && !rich_text_input_html_append_cstr(out, cap, out_len, "</code>" as &const byte) {
+        return false;
+    }
+    if (marks.bits & RICH_MARK_STRIKE) != 0u16 && !rich_text_input_html_append_cstr(out, cap, out_len, "</s>" as &const byte) {
+        return false;
+    }
+    if (marks.bits & RICH_MARK_UNDERLINE) != 0u16 && !rich_text_input_html_append_cstr(out, cap, out_len, "</u>" as &const byte) {
+        return false;
+    }
+    if (marks.bits & RICH_MARK_ITALIC) != 0u16 && !rich_text_input_html_append_cstr(out, cap, out_len, "</em>" as &const byte) {
+        return false;
+    }
+    if (marks.bits & RICH_MARK_BOLD) != 0u16 && !rich_text_input_html_append_cstr(out, cap, out_len, "</strong>" as &const byte) {
+        return false;
+    }
+    return true;
+}
+
+fn rich_text_input_html_block_empty(block: &RichBlock) bool {
+    if block == null {
+        return true;
+    }
+    var span_idx: u16 = 0u16;
+    while span_idx < block.span_count {
+        if block.spans[span_idx as usize].text_len > 0usize {
+            return false;
+        }
+        span_idx = span_idx + 1u16;
+    }
+    return true;
+}
+
+fn rich_text_input_html_append_block_content(out: &byte, cap: usize, out_len: &usize, block: &RichBlock, allow_inline_code: bool) bool {
+    if block == null {
+        return true;
+    }
+    if rich_text_input_html_block_empty(block) {
+        return rich_text_input_html_append_cstr(out, cap, out_len, "<br>" as &const byte);
+    }
+    var span_idx: u16 = 0u16;
+    while span_idx < block.span_count {
+        const span: &RichSpan = &block.spans[span_idx as usize];
+        if span.text_len > 0usize {
+            if !rich_text_input_html_append_marks_open(out, cap, out_len, span.marks, allow_inline_code) {
+                return false;
+            }
+            if !rich_text_input_html_append_escaped(out, cap, out_len, span.text_ptr as &const byte, span.text_len) {
+                return false;
+            }
+            if !rich_text_input_html_append_marks_close(out, cap, out_len, span.marks, allow_inline_code) {
+                return false;
+            }
+        }
+        span_idx = span_idx + 1u16;
+    }
+    return true;
+}
+
+export enum RichCommandKind {
+    InsertText,
+    InsertParagraphBreak,
+    Backspace,
+    DeleteForward,
+    MoveLeft,
+    MoveRight,
+    MoveUp,
+    MoveDown,
+    SelectAll,
+    ToggleBold,
+    ToggleItalic,
+    ToggleUnderline,
+    ToggleStrike,
+    ToggleInlineCode,
+    SetParagraph,
+    SetHeading1,
+    SetHeading2,
+    SetHeading3,
+    ToggleBulletList,
+    ToggleOrderedList,
+    ToggleQuote,
+    ToggleCodeBlock,
+    Undo,
+    Redo,
+    Copy,
+    Cut,
+    PastePlain,
+}
+
+export struct RichCommand {
+    kind: RichCommandKind,
+    text_ptr: &const byte,
+    text_len: usize,
+}
+
+export struct RichTextInput {
+    widget: Widget,
+    doc: RichDocument,
+    history: RichHistory,
+    layout: RichLayoutCache,
+    renderer: RichTextRenderer,
+    placeholder: &const byte,
+    placeholder_len: usize,
+    pending_marks: RichInlineMarks,
+    selection_range: RichRange,
+    readonly: bool,
+    scroll_y: i32,
+    pointer_selecting: bool,
+    drag_anchor: RichPos,
+    session_id: u32,
+    host_composing: bool,
+}
+
+RichTextInputRenderAdapter {
+    fn invoke(self: &Self, obj: &GuiObj, ctx: &RenderCtx, user_data: &void) void {
+        _ = self;
+        _ = obj;
+        const input: &RichTextInput = user_data as &RichTextInput;
+        if input != null {
+            input.render(ctx);
+        }
+    }
+}
+
+RichTextInputInputAdapter {
+    fn invoke(self: &Self, obj: &GuiObj, evt: &Event, user_data: &void) bool {
+        _ = self;
+        _ = obj;
+        const input: &RichTextInput = user_data as &RichTextInput;
+        if input == null {
+            return false;
+        }
+        return input.handle_event(evt);
+    }
+}
+
+RichTextInput {
+    fn new(placeholder: &const byte) RichTextInput {
+        var widget: Widget = widget_new("RichTextInput", WIDGET_TYPE_RICH_TEXT_INPUT, true, true);
+        widget.size(240, 120);
+        widget.base.style.set_color(StyleProp.BgColor, Color{ r: 255, g: 255, b: 255, a: 255 });
+        widget.base.style.set_color(StyleProp.BgHoverColor, Color{ r: 250, g: 252, b: 255, a: 255 });
+        widget.base.style.set_color(StyleProp.BgPressColor, Color{ r: 243, g: 247, b: 255, a: 255 });
+        widget.base.style.set_color(StyleProp.BgFocusColor, Color{ r: 247, g: 251, b: 255, a: 255 });
+        widget.base.style.set_color(StyleProp.FgColor, Color{ r: 15, g: 23, b: 42, a: 255 });
+        widget.base.style.set_color(StyleProp.BorderColor, Color{ r: 203, g: 213, b: 225, a: 255 });
+        widget.base.style.set_u32(StyleProp.BorderWidth, 1u32);
+        widget.base.style.set_u32(StyleProp.Radius, 10u32);
+        widget.base.style.set_u32(StyleProp.PaddingLeft, 10u32);
+        widget.base.style.set_u32(StyleProp.PaddingRight, 10u32);
+        widget.base.style.set_u32(StyleProp.PaddingTop, 8u32);
+        widget.base.style.set_u32(StyleProp.PaddingBottom, 8u32);
+        widget.base.style.set_u32(StyleProp.FontSize, 14u32);
+
+        var doc: RichDocument = rich_document_new();
+        _ = doc.append_block(RichBlockType.Paragraph, 0u8) catch {};
+        const zero: RichPos = rich_pos_zero();
+        return RichTextInput{
+            widget: widget,
+            doc: doc,
+            history: rich_history_new(),
+            layout: rich_layout_cache_new(),
+            renderer: rich_text_renderer_new(),
+            placeholder: placeholder,
+            placeholder_len: widget_text_len(placeholder),
+            pending_marks: rich_inline_marks_none(),
+            selection_range: rich_range_collapsed(zero),
+            readonly: false,
+            scroll_y: 0,
+            pointer_selecting: false,
+            drag_anchor: zero,
+            session_id: rich_text_input_next_session_id(),
+            host_composing: false,
+        };
+    }
+
+    fn dispose(self: &Self) void {
+        self.history.dispose();
+        self.layout.dispose();
+        self.doc.dispose();
+    }
+
+    fn obj(self: &Self) &GuiObj {
+        return widget_bind_callbacks(&self.widget.base, &RICH_TEXT_INPUT_RENDER_ADAPTER, &RICH_TEXT_INPUT_INPUT_ADAPTER, self as &void);
+    }
+
+    fn on_change(self: &Self, callback: &IWidgetValueCallback, user_data: &void) &RichTextInput {
+        self.widget.on_value_change(callback, user_data);
+        return self;
+    }
+
+    fn selection(self: &Self) RichRange {
+        return self.selection_range;
+    }
+
+    fn current_plain_text_len(self: &Self) i32 {
+        return self.doc.plain_text_len() as i32;
+    }
+
+    fn doc_end_pos(self: &Self) RichPos {
+        const max_offset: u32 = self.doc.max_cursor_offset();
+        return self.doc.linear_offset_to_pos(max_offset) catch {
+            return rich_pos_zero();
+        };
+    }
+
+    fn caret_offset(self: &Self) u32 {
+        return self.doc.pos_to_linear_offset(self.selection_range.focus) catch {
+            return 0u32;
+        };
+    }
+
+    fn copy_selection_plain_text(self: &Self, out: &byte, cap: usize) usize {
+        if out == null || cap == 0usize || rich_range_is_collapsed(self.selection_range) {
+            return 0usize;
+        }
+        const normalized: RichRange = rich_range_normalized(self.selection_range);
+        const start_offset: u32 = self.doc.pos_to_linear_offset(normalized.anchor) catch {
+            return 0usize;
+        };
+        const end_offset: u32 = self.doc.pos_to_linear_offset(normalized.focus) catch {
+            return 0usize;
+        };
+        if end_offset <= start_offset {
+            return 0usize;
+        }
+
+        var written: usize = 0usize;
+        var linear_offset: u32 = 0u32;
+        var block_idx: u32 = 0u32;
+        while block_idx < self.doc.block_count && written + 1usize < cap {
+            const block: &RichBlock = &self.doc.blocks[block_idx as usize];
+            var span_idx: u16 = 0u16;
+            while span_idx < block.span_count && written + 1usize < cap {
+                const span: &RichSpan = &block.spans[span_idx as usize];
+                var byte_idx: usize = 0usize;
+                while byte_idx < span.text_len && written + 1usize < cap {
+                    const next_byte_idx: usize = rich_utf8_next_index(span.text_ptr as &const byte, span.text_len, byte_idx);
+                    if linear_offset >= start_offset && linear_offset < end_offset {
+                        var copy_idx: usize = byte_idx;
+                        while copy_idx < next_byte_idx && written + 1usize < cap {
+                            out[written] = span.text_ptr[copy_idx];
+                            written = written + 1usize;
+                            copy_idx = copy_idx + 1usize;
+                        }
+                    }
+                    linear_offset = linear_offset + 1u32;
+                    byte_idx = next_byte_idx;
+                }
+                span_idx = span_idx + 1u16;
+            }
+            if block_idx + 1u32 < self.doc.block_count {
+                if linear_offset >= start_offset && linear_offset < end_offset && written + 1usize < cap {
+                    out[written] = '\n';
+                    written = written + 1usize;
+                }
+                linear_offset = linear_offset + 1u32;
+            }
+            block_idx = block_idx + 1u32;
+        }
+        out[written] = 0u8;
+        return written;
+    }
+
+    fn update_host_selection_text(self: &Self) void {
+        var scratch: [byte: 4096] = [];
+        const copied: usize = self.copy_selection_plain_text(&scratch[0], RICH_TEXT_HOST_TEXT_BYTES as usize);
+        rich_text_host_set_selection_text(self.session_id, &scratch[0], copied);
+    }
+
+    fn current_caret_rect(self: &Self) Rect {
+        _ = self.ensure_layout() catch {
+            return RECT_ZERO;
+        };
+        if self.layout.line_count == 0u32 {
+            return RECT_ZERO;
+        }
+        const inner: Rect = widget_inner_rect(&self.widget);
+        const font: &Font = widget_font(&self.widget.base.style);
+        const line_index: u32 = self.layout.line_index_for_pos(self.selection_range.focus) catch {
+            return RECT_ZERO;
+        };
+        const line: RichVisualLine = self.layout.lines[line_index as usize];
+        var caret_x: i16 = line.x;
+        if self.selection_range.focus.block_index == line.block_index
+            && rich_pos_compare(self.selection_range.focus, line.start) >= 0
+            && rich_pos_compare(self.selection_range.focus, line.end) <= 0 {
+            caret_x = self.layout.line_x_for_pos(&self.doc, font, line_index, self.selection_range.focus) catch {
+                line.x;
+            };
+        }
+        return Rect{
+            x: inner.x + caret_x,
+            y: rich_text_input_clamp_i16(inner.y as i32 + line.y as i32 - self.scroll_y),
+            w: 1u16,
+            h: line.h,
+        };
+    }
+
+    fn sync_host_state(self: &Self) void {
+        if self.widget.state == WidgetState.Focused {
+            rich_text_host_activate(self.session_id, &self.widget.base);
+            rich_text_host_set_caret_rect(self.session_id, self.current_caret_rect());
+            self.update_host_selection_text();
+            return;
+        }
+        rich_text_host_deactivate(self.session_id);
+    }
+
+    fn drain_host_commands(self: &Self) void {
+        var cmd: RichTextHostCommand = RichTextHostCommand{
+            kind: 0u8,
+            session_id: 0u32,
+            text_len: 0u16,
+            text_bytes: [],
+        };
+        while rich_text_host_poll_for_session(self.session_id, &cmd) {
+            if cmd.kind == RICH_TEXT_HOST_CMD_INSERT_TEXT || cmd.kind == RICH_TEXT_HOST_CMD_PASTE_TEXT {
+                var merge_kind: RichHistoryMergeKind = RichHistoryMergeKind.None;
+                if cmd.kind == RICH_TEXT_HOST_CMD_INSERT_TEXT {
+                    merge_kind = RichHistoryMergeKind.InsertText;
+                }
+                _ = self.insert_text_bytes(&cmd.text_bytes[0], cmd.text_len as usize, 0u32, merge_kind);
+            } else if cmd.kind == RICH_TEXT_HOST_CMD_COMPOSITION_START {
+                self.host_composing = true;
+            } else if cmd.kind == RICH_TEXT_HOST_CMD_COMPOSITION_UPDATE {
+                self.host_composing = true;
+            } else if cmd.kind == RICH_TEXT_HOST_CMD_COMPOSITION_END {
+                self.host_composing = false;
+                if cmd.text_len > 0u16 {
+                    _ = self.insert_text_bytes(&cmd.text_bytes[0], cmd.text_len as usize, 0u32, RichHistoryMergeKind.None);
+                }
+            } else if cmd.kind == RICH_TEXT_HOST_CMD_COPY {
+                self.update_host_selection_text();
+            } else if cmd.kind == RICH_TEXT_HOST_CMD_CUT {
+                self.update_host_selection_text();
+                _ = self.delete_selected_range(0u32);
+            }
+            cmd = RichTextHostCommand{
+                kind: 0u8,
+                session_id: 0u32,
+                text_len: 0u16,
+                text_bytes: [],
+            };
+        }
+    }
+
+    fn ensure_layout(self: &Self) !void {
+        const inner: Rect = widget_inner_rect(&self.widget);
+        const font: &Font = widget_font(&self.widget.base.style);
+        var max_width: u16 = inner.w;
+        if max_width == 0u16 {
+            max_width = 1u16;
+        }
+        try self.layout.relayout(&self.doc, font, max_width, 0u32);
+        self.clamp_scroll();
+    }
+
+    fn clamp_scroll(self: &Self) void {
+        const inner: Rect = widget_inner_rect(&self.widget);
+        var max_scroll: i32 = self.layout.total_height as i32 - inner.h as i32;
+        if max_scroll < 0 {
+            max_scroll = 0;
+        }
+        if self.scroll_y < 0 {
+            self.scroll_y = 0;
+        } else if self.scroll_y > max_scroll {
+            self.scroll_y = max_scroll;
+        }
+    }
+
+    fn scroll_selection_into_view(self: &Self) void {
+        _ = self.ensure_layout() catch {
+            return;
+        };
+        if self.layout.line_count == 0u32 {
+            self.scroll_y = 0;
+            return;
+        }
+        const inner: Rect = widget_inner_rect(&self.widget);
+        const line_index: u32 = self.layout.line_index_for_pos(self.selection_range.focus) catch {
+            return;
+        };
+        const line: RichVisualLine = self.layout.lines[line_index as usize];
+        const line_top: i32 = line.y as i32;
+        const line_bottom: i32 = line.y as i32 + line.h as i32;
+        if line_top < self.scroll_y {
+            self.scroll_y = line_top;
+        } else if line_bottom > self.scroll_y + inner.h as i32 {
+            self.scroll_y = line_bottom - inner.h as i32;
+        }
+        self.clamp_scroll();
+    }
+
+    fn local_point_from_screen(self: &Self, point: Point) Point {
+        const inner: Rect = widget_inner_rect(&self.widget);
+        return Point{
+            x: rich_text_input_clamp_i16(point.x as i32 - inner.x as i32),
+            y: rich_text_input_clamp_i16(point.y as i32 - inner.y as i32 + self.scroll_y),
+        };
+    }
+
+    fn pos_from_point(self: &Self, point: Point) RichPos {
+        _ = self.ensure_layout() catch {
+            return rich_pos_zero();
+        };
+        if self.layout.line_count == 0u32 {
+            return self.doc_end_pos();
+        }
+        const font: &Font = widget_font(&self.widget.base.style);
+        return self.layout.point_to_pos(&self.doc, font, self.local_point_from_screen(point)) catch {
+            return self.doc_end_pos();
+        };
+    }
+
+    fn emit_change(self: &Self) void {
+        self.widget.emit_value_change(self.current_plain_text_len());
+    }
+
+    fn sync_after_document_replace(self: &Self, caret: RichPos, emit_change: bool) void {
+        self.pending_marks = rich_inline_marks_none();
+        self.selection_range = rich_range_collapsed(caret);
+        self.scroll_y = 0;
+        _ = self.ensure_layout() catch {};
+        self.scroll_selection_into_view();
+        if emit_change {
+            self.emit_change();
+        }
+        self.sync_host_state();
+        self.widget.base.invalidate();
+    }
+
+    fn set_plain_text(self: &Self, text: &const byte) !&RichTextInput {
+        var next: RichDocument = rich_document_new();
+        try next.set_plain_text(text);
+        self.doc.dispose();
+        self.doc = next;
+        self.history.clear();
+        self.sync_after_document_replace(self.doc_end_pos(), true);
+        return self;
+    }
+
+    fn plain_text(self: &Self, out: &byte, cap: usize) usize {
+        return self.doc.export_plain_text(out, cap);
+    }
+
+    fn set_delta(self: &Self, delta: &RichDelta) !&RichTextInput {
+        var next: RichDocument = rich_document_new();
+        try apply_delta(&next, delta);
+        self.doc.dispose();
+        self.doc = next;
+        self.history.clear();
+        self.sync_after_document_replace(self.doc_end_pos(), true);
+        return self;
+    }
+
+    fn export_delta(self: &Self, out: &RichDelta) !void {
+        try document_to_delta(&self.doc, out);
+    }
+
+    fn export_html(self: &Self, out: &byte, cap: usize) usize {
+        if out == null || cap == 0usize {
+            return 0usize;
+        }
+        out[0] = 0u8;
+        var out_len: usize = 0usize;
+        var list_open: bool = false;
+        var list_type: RichBlockType = RichBlockType.Paragraph;
+
+        var block_idx: u32 = 0u32;
+        while block_idx < self.doc.block_count {
+            const block: &RichBlock = &self.doc.blocks[block_idx as usize];
+            const is_list: bool = block.block_type == RichBlockType.BulletItem || block.block_type == RichBlockType.OrderedItem;
+            if is_list {
+                if !list_open || list_type != block.block_type {
+                    if list_open {
+                        if list_type == RichBlockType.BulletItem {
+                            _ = rich_text_input_html_append_cstr(out, cap, &out_len, "</ul>" as &const byte);
+                        } else {
+                            _ = rich_text_input_html_append_cstr(out, cap, &out_len, "</ol>" as &const byte);
+                        }
+                    }
+                    if block.block_type == RichBlockType.BulletItem {
+                        if !rich_text_input_html_append_cstr(out, cap, &out_len, "<ul>" as &const byte) {
+                            return out_len;
+                        }
+                    } else {
+                        if !rich_text_input_html_append_cstr(out, cap, &out_len, "<ol>" as &const byte) {
+                            return out_len;
+                        }
+                    }
+                    list_open = true;
+                    list_type = block.block_type;
+                }
+                if !rich_text_input_html_append_cstr(out, cap, &out_len, "<li>" as &const byte) {
+                    return out_len;
+                }
+                if !rich_text_input_html_append_block_content(out, cap, &out_len, block, true) {
+                    return out_len;
+                }
+                if !rich_text_input_html_append_cstr(out, cap, &out_len, "</li>" as &const byte) {
+                    return out_len;
+                }
+                block_idx = block_idx + 1u32;
+                continue;
+            }
+
+            if list_open {
+                if list_type == RichBlockType.BulletItem {
+                    _ = rich_text_input_html_append_cstr(out, cap, &out_len, "</ul>" as &const byte);
+                } else {
+                    _ = rich_text_input_html_append_cstr(out, cap, &out_len, "</ol>" as &const byte);
+                }
+                list_open = false;
+                list_type = RichBlockType.Paragraph;
+            }
+
+            if block.block_type == RichBlockType.Heading1 {
+                if !rich_text_input_html_append_cstr(out, cap, &out_len, "<h1>" as &const byte) {
+                    return out_len;
+                }
+                if !rich_text_input_html_append_block_content(out, cap, &out_len, block, true) {
+                    return out_len;
+                }
+                if !rich_text_input_html_append_cstr(out, cap, &out_len, "</h1>" as &const byte) {
+                    return out_len;
+                }
+            } else if block.block_type == RichBlockType.Heading2 {
+                if !rich_text_input_html_append_cstr(out, cap, &out_len, "<h2>" as &const byte) {
+                    return out_len;
+                }
+                if !rich_text_input_html_append_block_content(out, cap, &out_len, block, true) {
+                    return out_len;
+                }
+                if !rich_text_input_html_append_cstr(out, cap, &out_len, "</h2>" as &const byte) {
+                    return out_len;
+                }
+            } else if block.block_type == RichBlockType.Heading3 {
+                if !rich_text_input_html_append_cstr(out, cap, &out_len, "<h3>" as &const byte) {
+                    return out_len;
+                }
+                if !rich_text_input_html_append_block_content(out, cap, &out_len, block, true) {
+                    return out_len;
+                }
+                if !rich_text_input_html_append_cstr(out, cap, &out_len, "</h3>" as &const byte) {
+                    return out_len;
+                }
+            } else if block.block_type == RichBlockType.Quote {
+                if !rich_text_input_html_append_cstr(out, cap, &out_len, "<blockquote>" as &const byte) {
+                    return out_len;
+                }
+                if !rich_text_input_html_append_block_content(out, cap, &out_len, block, true) {
+                    return out_len;
+                }
+                if !rich_text_input_html_append_cstr(out, cap, &out_len, "</blockquote>" as &const byte) {
+                    return out_len;
+                }
+            } else if block.block_type == RichBlockType.CodeBlock {
+                if !rich_text_input_html_append_cstr(out, cap, &out_len, "<pre><code>" as &const byte) {
+                    return out_len;
+                }
+                if !rich_text_input_html_append_block_content(out, cap, &out_len, block, false) {
+                    return out_len;
+                }
+                if !rich_text_input_html_append_cstr(out, cap, &out_len, "</code></pre>" as &const byte) {
+                    return out_len;
+                }
+            } else {
+                if !rich_text_input_html_append_cstr(out, cap, &out_len, "<p>" as &const byte) {
+                    return out_len;
+                }
+                if !rich_text_input_html_append_block_content(out, cap, &out_len, block, true) {
+                    return out_len;
+                }
+                if !rich_text_input_html_append_cstr(out, cap, &out_len, "</p>" as &const byte) {
+                    return out_len;
+                }
+            }
+            block_idx = block_idx + 1u32;
+        }
+
+        if list_open {
+            if list_type == RichBlockType.BulletItem {
+                _ = rich_text_input_html_append_cstr(out, cap, &out_len, "</ul>" as &const byte);
+            } else {
+                _ = rich_text_input_html_append_cstr(out, cap, &out_len, "</ol>" as &const byte);
+            }
+        }
+        if out_len < cap {
+            out[out_len] = 0u8;
+        } else {
+            out[cap - 1usize] = 0u8;
+        }
+        return out_len;
+    }
+
+    fn set_readonly(self: &Self, readonly: bool) &RichTextInput {
+        self.readonly = readonly;
+        return self;
+    }
+
+    fn apply_block_type(self: &Self, block_type: RichBlockType, timestamp: u32) bool {
+        if self.readonly {
+            return false;
+        }
+        var before_doc: RichDocument = rich_text_input_clone_doc(&self.doc) catch {
+            return false;
+        };
+        defer before_doc.dispose();
+
+        const caret_before: u32 = self.caret_offset();
+        const next_range: RichRange = rich_set_block_type(&self.doc, self.selection_range, block_type, 0u8) catch {
+            return false;
+        };
+        self.selection_range = next_range;
+        const caret_after: u32 = self.doc.pos_to_linear_offset(next_range.focus) catch {
+            return caret_before;
+        };
+        _ = self.history.record(&before_doc, &self.doc, RichHistoryMergeKind.None, caret_before, caret_after, timestamp as u64) catch {};
+        _ = self.ensure_layout() catch {};
+        self.scroll_selection_into_view();
+        self.emit_change();
+        self.widget.base.invalidate();
+        return true;
+    }
+
+    fn toggle_block_type(self: &Self, target: RichBlockType, timestamp: u32) bool {
+        var next_type: RichBlockType = target;
+        if self.selection_range.focus.block_index < self.doc.block_count
+            && self.doc.blocks[self.selection_range.focus.block_index as usize].block_type == target {
+            next_type = RichBlockType.Paragraph;
+        }
+        return self.apply_block_type(next_type, timestamp);
+    }
+
+    fn toggle_inline_mark(self: &Self, mark_bit: u16, timestamp: u32) bool {
+        if self.readonly {
+            return false;
+        }
+        var before_doc: RichDocument = rich_text_input_clone_doc(&self.doc) catch {
+            return false;
+        };
+        defer before_doc.dispose();
+
+        const caret_before: u32 = self.caret_offset();
+        const result: RichInlineToggleResult = rich_toggle_inline_mark(&self.doc, self.selection_range, self.pending_marks, mark_bit) catch {
+            return false;
+        };
+        self.selection_range = result.range;
+        self.pending_marks = result.pending_marks;
+        const caret_after: u32 = self.doc.pos_to_linear_offset(self.selection_range.focus) catch {
+            return caret_before;
+        };
+        _ = self.history.record(&before_doc, &self.doc, RichHistoryMergeKind.None, caret_before, caret_after, timestamp as u64) catch {};
+        _ = self.ensure_layout() catch {};
+        self.scroll_selection_into_view();
+        self.emit_change();
+        self.widget.base.invalidate();
+        return true;
+    }
+
+    fn insert_text_bytes(self: &Self, text: &const byte, text_len: usize, timestamp: u32, merge_kind: RichHistoryMergeKind) bool {
+        if self.readonly || text == null || text_len == 0usize {
+            return false;
+        }
+
+        var before_doc: RichDocument = rich_text_input_clone_doc(&self.doc) catch {
+            return false;
+        };
+        defer before_doc.dispose();
+
+        const caret_before: u32 = self.caret_offset();
+        var caret: RichPos = self.selection_range.focus;
+        var working_range: RichRange = self.selection_range;
+        var cursor: usize = 0usize;
+        var inserted_any: bool = false;
+        while cursor < text_len {
+            const ch: byte = text[cursor];
+            if ch == '\r' as byte || ch == '\n' as byte {
+                caret = rich_insert_break(&self.doc, working_range) catch {
+                    return false;
+                };
+                working_range = rich_range_collapsed(caret);
+                inserted_any = true;
+                cursor = cursor + 1usize;
+                if ch == '\r' as byte && cursor < text_len && text[cursor] == '\n' as byte {
+                    cursor = cursor + 1usize;
+                }
+                continue;
+            }
+            if ch == '\t' as byte {
+                caret = rich_insert_text(&self.doc, working_range, "    " as &const byte, 4usize, self.pending_marks) catch {
+                    return false;
+                };
+                working_range = rich_range_collapsed(caret);
+                inserted_any = true;
+                cursor = cursor + 1usize;
+                continue;
+            }
+
+            const segment_start: usize = cursor;
+            while cursor < text_len
+                && text[cursor] != '\r' as byte
+                && text[cursor] != '\n' as byte
+                && text[cursor] != '\t' as byte {
+                cursor = cursor + 1usize;
+            }
+            const segment_len: usize = cursor - segment_start;
+            if segment_len > 0usize {
+                const segment_ptr: &const byte = @ptr_from_usize(@usize_from_ptr(text as &void) + segment_start) as &const byte;
+                caret = rich_insert_text(&self.doc, working_range, segment_ptr, segment_len, self.pending_marks) catch {
+                    return false;
+                };
+                working_range = rich_range_collapsed(caret);
+                inserted_any = true;
+            }
+        }
+
+        if !inserted_any {
+            return false;
+        }
+        self.selection_range = rich_range_collapsed(caret);
+        const caret_after: u32 = self.doc.pos_to_linear_offset(caret) catch {
+            return caret_before;
+        };
+        _ = self.history.record(&before_doc, &self.doc, merge_kind, caret_before, caret_after, timestamp as u64) catch {};
+        _ = self.ensure_layout() catch {};
+        self.scroll_selection_into_view();
+        self.emit_change();
+        self.widget.base.invalidate();
+        return true;
+    }
+
+    fn apply_backspace(self: &Self, timestamp: u32) bool {
+        if self.readonly {
+            return false;
+        }
+        var before_doc: RichDocument = rich_text_input_clone_doc(&self.doc) catch {
+            return false;
+        };
+        defer before_doc.dispose();
+
+        const caret_before: u32 = self.caret_offset();
+        const caret: RichPos = rich_backspace(&self.doc, self.selection_range) catch {
+            return false;
+        };
+        self.selection_range = rich_range_collapsed(caret);
+        const caret_after: u32 = self.doc.pos_to_linear_offset(caret) catch {
+            return caret_before;
+        };
+        _ = self.history.record(&before_doc, &self.doc, RichHistoryMergeKind.None, caret_before, caret_after, timestamp as u64) catch {};
+        _ = self.ensure_layout() catch {};
+        self.scroll_selection_into_view();
+        self.emit_change();
+        self.widget.base.invalidate();
+        return true;
+    }
+
+    fn apply_delete_forward(self: &Self, timestamp: u32) bool {
+        if self.readonly {
+            return false;
+        }
+        var before_doc: RichDocument = rich_text_input_clone_doc(&self.doc) catch {
+            return false;
+        };
+        defer before_doc.dispose();
+
+        const caret_before: u32 = self.caret_offset();
+        const caret: RichPos = rich_delete_forward(&self.doc, self.selection_range) catch {
+            return false;
+        };
+        self.selection_range = rich_range_collapsed(caret);
+        const caret_after: u32 = self.doc.pos_to_linear_offset(caret) catch {
+            return caret_before;
+        };
+        _ = self.history.record(&before_doc, &self.doc, RichHistoryMergeKind.None, caret_before, caret_after, timestamp as u64) catch {};
+        _ = self.ensure_layout() catch {};
+        self.scroll_selection_into_view();
+        self.emit_change();
+        self.widget.base.invalidate();
+        return true;
+    }
+
+    fn delete_selected_range(self: &Self, timestamp: u32) bool {
+        if self.readonly || rich_range_is_collapsed(self.selection_range) {
+            return false;
+        }
+        var before_doc: RichDocument = rich_text_input_clone_doc(&self.doc) catch {
+            return false;
+        };
+        defer before_doc.dispose();
+
+        const caret_before: u32 = self.caret_offset();
+        const caret: RichPos = rich_delete_range(&self.doc, self.selection_range) catch {
+            return false;
+        };
+        self.selection_range = rich_range_collapsed(caret);
+        const caret_after: u32 = self.doc.pos_to_linear_offset(caret) catch {
+            return caret_before;
+        };
+        _ = self.history.record(&before_doc, &self.doc, RichHistoryMergeKind.None, caret_before, caret_after, timestamp as u64) catch {};
+        _ = self.ensure_layout() catch {};
+        self.scroll_selection_into_view();
+        self.emit_change();
+        self.sync_host_state();
+        self.widget.base.invalidate();
+        return true;
+    }
+
+    fn apply_insert_break(self: &Self, timestamp: u32) bool {
+        if self.readonly {
+            return false;
+        }
+        var before_doc: RichDocument = rich_text_input_clone_doc(&self.doc) catch {
+            return false;
+        };
+        defer before_doc.dispose();
+
+        const caret_before: u32 = self.caret_offset();
+        const caret: RichPos = rich_insert_break(&self.doc, self.selection_range) catch {
+            return false;
+        };
+        self.selection_range = rich_range_collapsed(caret);
+        const caret_after: u32 = self.doc.pos_to_linear_offset(caret) catch {
+            return caret_before;
+        };
+        _ = self.history.record(&before_doc, &self.doc, RichHistoryMergeKind.None, caret_before, caret_after, timestamp as u64) catch {};
+        _ = self.ensure_layout() catch {};
+        self.scroll_selection_into_view();
+        self.emit_change();
+        self.widget.base.invalidate();
+        return true;
+    }
+
+    fn collapse_to(self: &Self, pos: RichPos) bool {
+        self.selection_range = rich_range_collapsed(pos);
+        self.scroll_selection_into_view();
+        self.sync_host_state();
+        self.widget.base.invalidate();
+        return true;
+    }
+
+    fn exec(self: &Self, cmd: RichCommand) bool {
+        if cmd.kind == RichCommandKind.InsertText || cmd.kind == RichCommandKind.PastePlain {
+            var merge_kind: RichHistoryMergeKind = RichHistoryMergeKind.None;
+            if cmd.kind == RichCommandKind.InsertText {
+                merge_kind = RichHistoryMergeKind.InsertText;
+            }
+            return self.insert_text_bytes(cmd.text_ptr, cmd.text_len, 0u32, merge_kind);
+        }
+        if cmd.kind == RichCommandKind.InsertParagraphBreak {
+            return self.apply_insert_break(0u32);
+        }
+        if cmd.kind == RichCommandKind.Backspace {
+            return self.apply_backspace(0u32);
+        }
+        if cmd.kind == RichCommandKind.DeleteForward {
+            return self.apply_delete_forward(0u32);
+        }
+        if cmd.kind == RichCommandKind.MoveLeft {
+            const next_pos: RichPos = self.doc.move_left(self.selection_range.focus) catch {
+                self.selection_range.focus;
+            };
+            return self.collapse_to(next_pos);
+        }
+        if cmd.kind == RichCommandKind.MoveRight {
+            const next_pos: RichPos = self.doc.move_right(self.selection_range.focus) catch {
+                self.selection_range.focus;
+            };
+            return self.collapse_to(next_pos);
+        }
+        if cmd.kind == RichCommandKind.MoveUp {
+            const next_pos: RichPos = self.doc.move_up(self.selection_range.focus) catch {
+                self.selection_range.focus;
+            };
+            return self.collapse_to(next_pos);
+        }
+        if cmd.kind == RichCommandKind.MoveDown {
+            const next_pos: RichPos = self.doc.move_down(self.selection_range.focus) catch {
+                self.selection_range.focus;
+            };
+            return self.collapse_to(next_pos);
+        }
+        if cmd.kind == RichCommandKind.SelectAll {
+            self.selection_range = RichRange{
+                anchor: rich_pos_zero(),
+                focus: self.doc_end_pos(),
+            };
+            self.scroll_selection_into_view();
+            self.sync_host_state();
+            self.widget.base.invalidate();
+            return true;
+        }
+        if cmd.kind == RichCommandKind.ToggleBold {
+            return self.toggle_inline_mark(RICH_MARK_BOLD, 0u32);
+        }
+        if cmd.kind == RichCommandKind.ToggleItalic {
+            return self.toggle_inline_mark(RICH_MARK_ITALIC, 0u32);
+        }
+        if cmd.kind == RichCommandKind.ToggleUnderline {
+            return self.toggle_inline_mark(RICH_MARK_UNDERLINE, 0u32);
+        }
+        if cmd.kind == RichCommandKind.ToggleStrike {
+            return self.toggle_inline_mark(RICH_MARK_STRIKE, 0u32);
+        }
+        if cmd.kind == RichCommandKind.ToggleInlineCode {
+            return self.toggle_inline_mark(RICH_MARK_INLINE_CODE, 0u32);
+        }
+        if cmd.kind == RichCommandKind.SetParagraph {
+            return self.apply_block_type(RichBlockType.Paragraph, 0u32);
+        }
+        if cmd.kind == RichCommandKind.SetHeading1 {
+            return self.apply_block_type(RichBlockType.Heading1, 0u32);
+        }
+        if cmd.kind == RichCommandKind.SetHeading2 {
+            return self.apply_block_type(RichBlockType.Heading2, 0u32);
+        }
+        if cmd.kind == RichCommandKind.SetHeading3 {
+            return self.apply_block_type(RichBlockType.Heading3, 0u32);
+        }
+        if cmd.kind == RichCommandKind.ToggleBulletList {
+            return self.toggle_block_type(RichBlockType.BulletItem, 0u32);
+        }
+        if cmd.kind == RichCommandKind.ToggleOrderedList {
+            return self.toggle_block_type(RichBlockType.OrderedItem, 0u32);
+        }
+        if cmd.kind == RichCommandKind.ToggleQuote {
+            return self.toggle_block_type(RichBlockType.Quote, 0u32);
+        }
+        if cmd.kind == RichCommandKind.ToggleCodeBlock {
+            return self.toggle_block_type(RichBlockType.CodeBlock, 0u32);
+        }
+        if cmd.kind == RichCommandKind.Undo {
+            if !(self.history.undo(&self.doc) catch {
+                return false;
+            }) {
+                return false;
+            }
+            self.selection_range = rich_range_collapsed(self.doc_end_pos());
+            _ = self.ensure_layout() catch {};
+            self.scroll_selection_into_view();
+            self.emit_change();
+            self.sync_host_state();
+            self.widget.base.invalidate();
+            return true;
+        }
+        if cmd.kind == RichCommandKind.Redo {
+            if !(self.history.redo(&self.doc) catch {
+                return false;
+            }) {
+                return false;
+            }
+            self.selection_range = rich_range_collapsed(self.doc_end_pos());
+            _ = self.ensure_layout() catch {};
+            self.scroll_selection_into_view();
+            self.emit_change();
+            self.sync_host_state();
+            self.widget.base.invalidate();
+            return true;
+        }
+        return false;
+    }
+
+    fn handle_event(self: &Self, evt: &Event) bool {
+        self.drain_host_commands();
+        const base_handled: bool = self.widget.handle_input(evt);
+
+        if evt.event_type == EventType.Press {
+            self.pointer_selecting = true;
+            self.drag_anchor = self.pos_from_point(evt.point());
+            self.selection_range = rich_range_collapsed(self.drag_anchor);
+            self.sync_host_state();
+            self.widget.base.invalidate();
+            return true;
+        }
+        if evt.event_type == EventType.Release {
+            self.pointer_selecting = false;
+            if self.widget.state != WidgetState.Disabled {
+                self.widget.set_state(WidgetState.Focused);
+                self.scroll_selection_into_view();
+            }
+            self.sync_host_state();
+            return true;
+        }
+        if evt.event_type == EventType.Click {
+            if self.widget.state != WidgetState.Disabled {
+                self.widget.set_state(WidgetState.Focused);
+            }
+            self.selection_range = rich_range_collapsed(self.pos_from_point(evt.point()));
+            self.scroll_selection_into_view();
+            self.sync_host_state();
+            self.widget.base.invalidate();
+            return true;
+        }
+        if evt.event_type == EventType.DragStart {
+            return true;
+        }
+        if evt.event_type == EventType.Drag {
+            if !self.pointer_selecting {
+                return base_handled;
+            }
+            self.selection_range = RichRange{
+                anchor: self.drag_anchor,
+                focus: self.pos_from_point(evt.point()),
+            };
+            self.scroll_selection_into_view();
+            self.sync_host_state();
+            self.widget.base.invalidate();
+            return true;
+        }
+        if evt.event_type == EventType.DragEnd {
+            self.pointer_selecting = false;
+            self.scroll_selection_into_view();
+            self.sync_host_state();
+            return true;
+        }
+        if evt.event_type == EventType.FocusIn {
+            self.scroll_selection_into_view();
+            self.sync_host_state();
+            return true;
+        }
+        if evt.event_type == EventType.FocusOut {
+            self.pointer_selecting = false;
+            self.host_composing = false;
+            rich_text_host_deactivate(self.session_id);
+            self.widget.base.invalidate();
+            return true;
+        }
+        if evt.event_type == EventType.TextInput {
+            if self.widget.state != WidgetState.Focused {
+                return base_handled;
+            }
+            var inserted: [byte: 97] = [];
+            const inserted_len: usize = evt.copy_text_bytes(&inserted[0], 97usize);
+            return self.insert_text_bytes(&inserted[0], inserted_len, evt.timestamp, RichHistoryMergeKind.InsertText);
+        }
+        if evt.event_type == EventType.KeyUp {
+            return self.widget.state == WidgetState.Focused || base_handled;
+        }
+        if evt.event_type != EventType.KeyDown || self.widget.state != WidgetState.Focused {
+            return base_handled;
+        }
+
+        const key_code: u16 = evt.key_code();
+        if key_code == RICH_TEXT_INPUT_KEY_BACKSPACE {
+            return self.apply_backspace(evt.timestamp);
+        }
+        if key_code == RICH_TEXT_INPUT_KEY_DELETE {
+            return self.apply_delete_forward(evt.timestamp);
+        }
+        if key_code == RICH_TEXT_INPUT_KEY_LEFT {
+            const next_pos: RichPos = self.doc.move_left(self.selection_range.focus) catch {
+                self.selection_range.focus;
+            };
+            return self.collapse_to(next_pos);
+        }
+        if key_code == RICH_TEXT_INPUT_KEY_RIGHT {
+            const next_pos: RichPos = self.doc.move_right(self.selection_range.focus) catch {
+                self.selection_range.focus;
+            };
+            return self.collapse_to(next_pos);
+        }
+        if key_code == RICH_TEXT_INPUT_KEY_UP {
+            const next_pos: RichPos = self.doc.move_up(self.selection_range.focus) catch {
+                self.selection_range.focus;
+            };
+            return self.collapse_to(next_pos);
+        }
+        if key_code == RICH_TEXT_INPUT_KEY_DOWN {
+            const next_pos: RichPos = self.doc.move_down(self.selection_range.focus) catch {
+                self.selection_range.focus;
+            };
+            return self.collapse_to(next_pos);
+        }
+        if key_code == RICH_TEXT_INPUT_KEY_ENTER {
+            return self.apply_insert_break(evt.timestamp);
+        }
+        if rich_text_input_is_printable_ascii(key_code) {
+            var ascii: [byte: 2] = [(key_code as! byte).value, 0u8];
+            return self.insert_text_bytes(&ascii[0], 1usize, evt.timestamp, RichHistoryMergeKind.InsertText);
+        }
+        return base_handled;
+    }
+
+    fn render(self: &Self, ctx: &RenderCtx) void {
+        self.drain_host_commands();
+        const area: Rect = self.widget.base.screen_area();
+        const inner: Rect = widget_draw_surface(&self.widget, ctx);
+        const font: &Font = widget_font(&self.widget.base.style);
+        const base_color: Color = self.widget.base.style.get_color_or(StyleProp.FgColor, Color{ r: 15, g: 23, b: 42, a: 255 });
+        const bg: Color = self.widget.base.style.get_color_or(StyleProp.BgColor, WHITE);
+        const radius: u8 = (self.widget.base.style.get_u32_or(StyleProp.Radius, 0u32) as! u8).value;
+        const border_width: u8 = (self.widget.base.style.get_u32_or(StyleProp.BorderWidth, 1u32) as! u8).value;
+        const focus_border: Color = Color{ r: 37, g: 99, b: 235, a: 255 };
+        const selection_color: Color = Color{ r: 191, g: 219, b: 254, a: 160 };
+        const caret_color: Color = Color{ r: 37, g: 99, b: 235, a: 255 };
+
+        _ = self.ensure_layout() catch {};
+
+        const shifted_area: Rect = Rect{
+            x: inner.x,
+            y: rich_text_input_clamp_i16(inner.y as i32 - self.scroll_y),
+            w: inner.w,
+            h: rich_text_input_clamp_u16(self.layout.total_height as i32 + inner.h as i32 + self.scroll_y),
+        };
+
+        ctx.push_clip(inner);
+        if self.layout.line_count > 0u32 && (self.widget.state == WidgetState.Focused || self.pointer_selecting) {
+            _ = self.renderer.draw_selection(ctx, shifted_area, &self.doc, &self.layout, font, self.selection_range, &selection_color) catch {};
+        }
+        if self.doc.plain_text_len() == 0usize && self.placeholder_len > 0usize {
+            const placeholder_color: Color = rich_text_input_placeholder_color(bg, base_color);
+            self.renderer.draw_placeholder(ctx, shifted_area, self.placeholder, self.placeholder_len, font, &placeholder_color);
+        } else {
+            _ = self.renderer.draw_document(ctx, shifted_area, &self.doc, &self.layout, font, &base_color) catch {};
+        }
+        if self.layout.line_count > 0u32
+            && self.widget.state == WidgetState.Focused
+            && !self.readonly
+            && self.selection_range.anchor.block_index == self.selection_range.focus.block_index
+            && self.selection_range.anchor.span_index == self.selection_range.focus.span_index
+            && self.selection_range.anchor.utf8_offset == self.selection_range.focus.utf8_offset {
+            _ = self.renderer.draw_caret(ctx, shifted_area, &self.doc, &self.layout, font, self.selection_range.focus, &caret_color) catch {};
+        }
+        ctx.pop_clip();
+        self.sync_host_state();
+
+        if self.widget.state == WidgetState.Focused {
+            var focus_border_width: u8 = border_width;
+            if focus_border_width < 2u8 {
+                focus_border_width = 2u8;
+            }
+            ctx.draw_round_rect(area, radius, focus_border, focus_border_width);
+        } else if self.readonly {
+            ctx.draw_round_rect(area, radius, TRANSPARENT, 0u8);
+        }
+    }
+}

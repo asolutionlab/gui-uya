@@ -14,7 +14,6 @@ use render.ctx.RenderCtx;
 use render.font.Font;
 use render.font.draw_text;
 use render.font.text_width;
-use std.mem.allocator.g_allocator;
 
 fn rich_render_draw_line_text(
     ctx: &RenderCtx,
@@ -100,16 +99,19 @@ RichTextRenderer {
             return 0u32;
         }
 
-        const rect_bytes: usize = @size_of(Rect) as usize * rect_count as usize;
-        const rects: &Rect = (try g_allocator.alloc(rect_bytes)) as &Rect;
-        defer g_allocator.dealloc(rects as &byte);
-        _ = try layout.selection_rects(doc, font, range, rects, rect_count);
+        const rect_cap: u32 = 256u32;
+        var rects: [Rect: 256] = [];
+        var draw_count: u32 = rect_count;
+        if draw_count > rect_cap {
+            draw_count = rect_cap;
+        }
+        _ = try layout.selection_rects(doc, font, range, &rects[0], draw_count);
 
         ctx.push_clip(area);
         defer ctx.pop_clip();
 
         var rect_idx: u32 = 0u32;
-        while rect_idx < rect_count {
+        while rect_idx < draw_count {
             const local_rect: Rect = rects[rect_idx as usize];
             ctx.fill_rect(Rect{
                 x: area.x + local_rect.x,
@@ -119,7 +121,7 @@ RichTextRenderer {
             }, color[0]);
             rect_idx = rect_idx + 1u32;
         }
-        return rect_count;
+        return draw_count;
     }
 
     fn draw_caret(self: &Self, ctx: &RenderCtx, area: Rect, doc: &RichDocument, layout: &RichLayoutCache, font: &Font, caret: RichPos, color: &Color) !Rect {

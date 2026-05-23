@@ -2,7 +2,7 @@
 
 > 版本: v0.1.0  
 > 日期: 2026-05-23  
-> 状态: W3 已完成，W4 未开始
+> 状态: W4 已完成，W5 / W6 进行中
 
 > 说明: 本文是 `RichTextInput` 控件的实施路线图，目标是在 UyaGUI 现有 `Widget` / `RenderCtx` / `platform/*` 架构上落地一个参考 Quill 的轻量富文本输入框。本文强调分阶段实施、真实验收和风险前置，不把“未来可能有”的能力当作已完成项。
 
@@ -36,8 +36,8 @@
 | 选区与多行光标 | [x] W2 命令基线 | 已有 `RichRange` 与多段移动/编辑命令 |
 | 剪贴板抽象 | [ ] 缺失 | 尚无统一 clipboard bridge |
 | Web hidden textarea | [ ] 缺失 | 当前 Web 仅有 commit 文本输入 |
-| RichText widget API | [ ] 缺失 | 尚无控件对外接口 |
-| 富文本测试集 | [x] 初始基线 | 已有 document/delta/history/layout/render 单测 |
+| RichText widget API | [x] W4 MVP | 已有 `RichTextInput` 控件 API 与基础交互 |
+| 富文本测试集 | [x] 扩展基线 | 已有 document/delta/history/layout/render/widget 单测 |
 
 ## 关键决策
 
@@ -56,9 +56,9 @@
 | W1 | 文档树、Delta、normalize 基线 | 已完成 |
 | W2 | 选择区、编辑命令、历史记录 | 已完成 |
 | W3 | 布局与渲染 MVP | 已完成 |
-| W4 | `RichTextInput` 控件 API 与交互 MVP | 未开始 |
-| W5 | 纯文本粘贴、HTML/Delta 导出 | 未开始 |
-| W6 | Web hidden textarea、clipboard、IME | 未开始 |
+| W4 | `RichTextInput` 控件 API 与交互 MVP | 已完成 |
+| W5 | 纯文本粘贴、HTML/Delta 导出 | 进行中 |
+| W6 | Web hidden textarea、clipboard、IME | 进行中 |
 | W7 | SDL2/桌面增强与示例/测试闭环 | 未开始 |
 | W8 | 工具栏、扩展点、性能收尾 | 未开始 |
 
@@ -229,37 +229,37 @@
 
 ### TODO
 
-- [ ] 新增 `WIDGET_TYPE_RICH_TEXT_INPUT`
-- [ ] 新增 `gui/widget/rich_text_input.uya`
-- [ ] 提供 `new()`
-- [ ] 提供 `obj()`
-- [ ] 提供 `set_plain_text()`
-- [ ] 提供 `plain_text()`
-- [ ] 提供 `set_delta()`
-- [ ] 提供 `export_delta()`
-- [ ] 提供 `export_html()`
-- [ ] 提供 `set_readonly()`
-- [ ] 提供 `exec()`
-- [ ] 绑定 render/input callback
-- [ ] 处理 focus / blur
-- [ ] 处理鼠标点击定位
-- [ ] 处理拖拽选区
-- [ ] 处理滚动跟随光标
-- [ ] 更新 `gui/widget/base.uya`
-  - [ ] 新增 `WIDGET_TYPE_RICH_TEXT_INPUT`
-  - [ ] 更新 opaque culling 白名单
-- [ ] 更新手工 render/type dispatch 点
-  - [ ] `gui/widget/panel.uya`
-  - [ ] `gui/widget/page.uya`
-  - [ ] 其他手工 `type_tag` 分发点
+- [x] 新增 `WIDGET_TYPE_RICH_TEXT_INPUT`
+- [x] 新增 `gui/widget/rich_text_input.uya`
+- [x] 提供 `new()`
+- [x] 提供 `obj()`
+- [x] 提供 `set_plain_text()`
+- [x] 提供 `plain_text()`
+- [x] 提供 `set_delta()`
+- [x] 提供 `export_delta()`
+- [x] 提供 `export_html()`
+- [x] 提供 `set_readonly()`
+- [x] 提供 `exec()`
+- [x] 绑定 render/input callback
+- [x] 处理 focus / blur
+- [x] 处理鼠标点击定位
+- [x] 处理拖拽选区
+- [x] 处理滚动跟随光标
+- [x] 更新 `gui/widget/base.uya`
+  - [x] 新增 `WIDGET_TYPE_RICH_TEXT_INPUT`
+  - [x] 更新 opaque culling 白名单
+- [x] 更新手工 render/type dispatch 点
+  - [x] `gui/widget/panel.uya`
+  - [x] `gui/widget/page.uya`
+  - [x] 其他手工 `type_tag` 分发点
 
 ### 验收
 
-- [ ] 控件可加入现有 `Page` / `Panel`
-- [ ] 业务层可读写纯文本和 Delta
-- [ ] 焦点、点击、拖拽基本工作正常
-- [ ] 文本变更后能稳定触发 `on_change`
-- [ ] 现有容器中可正常渲染，不因遗漏 type switch 而失效
+- [x] 控件可加入现有 `Page` / `Panel`
+- [x] 业务层可读写纯文本和 Delta
+- [x] 焦点、点击、拖拽基本工作正常
+- [x] 文本变更后能稳定触发 `on_change`
+- [x] 现有容器中可正常渲染，不因遗漏 type switch 而失效
 
 ---
 
@@ -271,21 +271,21 @@
 
 ### TODO
 
-- [ ] 实现 HTML 导出
-- [ ] 受限 HTML 标签映射
+- [x] 实现 HTML 导出
+- [x] 受限 HTML 标签映射
 - [ ] HTML URL 白名单校验
-- [ ] 实现 plain text 粘贴
-- [ ] 粘贴前统一清洗换行和制表符
-- [ ] 首版仅保留文本，不保留外部 HTML 样式
-- [ ] 实现 `Ctrl/Cmd + V` 对应命令路径
-- [ ] 导出 snapshot delta
+- [x] 实现 plain text 粘贴
+- [x] 粘贴前统一清洗换行和制表符
+- [x] 首版仅保留文本，不保留外部 HTML 样式
+- [x] 实现 `Ctrl/Cmd + V` 对应命令路径
+- [x] 导出 snapshot delta
 
 ### 验收
 
-- [ ] 可以导出稳定 HTML
-- [ ] 粘贴富文本来源时不会带入危险标签
-- [ ] 多段纯文本粘贴后结构正确
-- [ ] 导出的 snapshot delta 为规范化格式，可直接做 golden 对比
+- [x] 可以导出稳定 HTML
+- [x] 粘贴富文本来源时不会带入危险标签
+- [x] 多段纯文本粘贴后结构正确
+- [x] 导出的 snapshot delta 为规范化格式，可直接做 golden 对比
 
 ---
 
@@ -298,30 +298,30 @@
 ### TODO
 
 - [ ] 在 `gui/platform/web/shell.html` 的 overlay 内创建隐藏 `textarea`
-- [ ] 焦点进入时同步激活隐藏输入层
+- [x] 焦点进入时同步激活隐藏输入层
 - [ ] 焦点离开时回收隐藏输入层
-- [ ] 同步 caret rect 到宿主
-- [ ] 监听 `beforeinput`
-- [ ] 监听 `input`
-- [ ] 监听 `compositionstart`
-- [ ] 监听 `compositionupdate`
-- [ ] 监听 `compositionend`
-- [ ] 监听 `paste`
-- [ ] 监听 `copy`
-- [ ] 监听 `cut`
-- [ ] 为富文本新增 `IRichTextHostBridge`
-- [ ] 明确输入分流
-  - [ ] 短文本 commit 可继续走现有 `TextInput` 路径
-  - [ ] paste / copy / cut / composition 不走当前 `WEB_EVT_TEXT_INPUT`
-  - [ ] 长文本通过 bridge 直调或 side buffer 进入编辑器
+- [x] 同步 caret rect 到宿主
+- [x] 监听 `beforeinput`
+- [x] 监听 `input`
+- [x] 监听 `compositionstart`
+- [x] 监听 `compositionupdate`
+- [x] 监听 `compositionend`
+- [x] 监听 `paste`
+- [x] 监听 `copy`
+- [x] 监听 `cut`
+- [x] 为富文本新增 `IRichTextHostBridge`
+- [x] 明确输入分流
+  - [x] 短文本 commit 可继续走现有 `TextInput` 路径
+  - [x] paste / copy / cut / composition 不走当前 `WEB_EVT_TEXT_INPUT`
+  - [x] 长文本通过 bridge 直调或 side buffer 进入编辑器
 - [ ] 验证移动端虚拟键盘是否能弹出
 
 ### 验收
 
 - [ ] 中文输入法基本可用
 - [ ] 复制/剪切/粘贴可在浏览器里正常工作
-- [ ] 超过 `96` 字节的粘贴内容不会因现有事件载荷上限而被截断
-- [ ] composition 生命周期不会被压扁成单次 `TextInput`
+- [x] 超过 `96` 字节的粘贴内容不会因现有事件载荷上限而被截断
+- [x] composition 生命周期不会被压扁成单次 `TextInput`
 - [ ] 失焦后不会残留错误输入状态
 - [ ] 不破坏现有 Web backend 基本输入链路
 

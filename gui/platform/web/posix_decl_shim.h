@@ -11,8 +11,8 @@
  * with Uya's own generated libc wrapper. Keep this shim intentionally
  * narrow so we only provide the declarations that are otherwise missing.
  */
-intptr_t write(int fd, const void *buf, size_t count);
-intptr_t read(int fd, void *buf, size_t count);
+int64_t write(int32_t fd, const char *buf, size_t count);
+int64_t read(int32_t fd, char *buf, size_t count);
 int close(int fd);
 int64_t lseek(int fd, int64_t offset, int whence);
 int access(const char *pathname, int mode);

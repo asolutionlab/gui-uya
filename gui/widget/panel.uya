@@ -15,6 +15,7 @@ use widget.base.WIDGET_TYPE_IMAGE;
 use widget.base.WIDGET_TYPE_LABEL;
 use widget.base.WIDGET_TYPE_LIST;
 use widget.base.WIDGET_TYPE_PANEL;
+use widget.base.WIDGET_TYPE_RICH_TEXT_INPUT;
 use widget.base.WIDGET_TYPE_SLIDER;
 use widget.base.WIDGET_TYPE_SWITCH;
 use widget.base.WIDGET_TYPE_PANEL;
@@ -29,6 +30,7 @@ use widget.grid_view.GridView;
 use widget.img.Image;
 use widget.lbl.Label;
 use widget.list.ListView;
+use widget.rich_text_input.RichTextInput;
 use widget.slider.Slider;
 use widget.switch.Switch;
 
@@ -103,6 +105,13 @@ fn panel_render_obj(obj: &GuiObj, ctx: &RenderCtx) void {
         const canvas: &Canvas = obj.user_data as &Canvas;
         if canvas != null {
             canvas.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_RICH_TEXT_INPUT {
+        const input: &RichTextInput = obj.user_data as &RichTextInput;
+        if input != null {
+            input.render(ctx);
         }
     }
 }
