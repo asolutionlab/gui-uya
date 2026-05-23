@@ -61,7 +61,9 @@ export fn group_comments(arena: &Arena, comments: &[Comment]) &[CommentGroup] {
     while i < comments.len {
         const prev: &Comment = &comments[i - 1];
         const curr: &Comment = &comments[i];
-        if curr.span.start.line > prev.span.end.line + 1 {
+        if curr.span.start.line > prev.span.end.line + 1 ||
+            prev.span.start.column != 1 ||
+            curr.span.start.column != 1 {
             groups[group_count] = CommentGroup {
                 comments: &comments[start],
                 count: i - start,
@@ -93,9 +95,18 @@ export fn attach_decl_comments(file: &FmtFile, groups: &[CommentGroup]) void {
         return;
     }
 
-    const last_comment_span: Span = groups[0].comments[groups[0].count - 1].span;
-    if span_before(last_comment_span, file.decls[0].span) {
-        file.decls[0].doc_comment_start = 0;
-        file.decls[0].doc_comment_count = 1;
+    var gi: usize = 0;
+    di = 0;
+    while gi < groups.len && di < file.decl_count {
+        const last_comment_span: Span = groups[gi].comments[groups[gi].count - 1].span;
+        while di < file.decl_count && !span_before(last_comment_span, file.decls[di].span) {
+            di = di + 1;
+        }
+        if di < file.decl_count {
+            file.decls[di].doc_comment_start = gi;
+            file.decls[di].doc_comment_count = 1;
+            gi = gi + 1;
+            di = di + 1;
+        }
     }
 }

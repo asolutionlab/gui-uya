@@ -13,9 +13,9 @@ fn byte_at(s: &[byte], i: usize) i32 {
 }
 
 fn test_format_returns_expected_prefix() !void {
-    var arena_buf: [byte: 32768] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 32768);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "fn add(a,b){return a+b;}" as &[byte];
     const out: &[byte] = try format(&a, src);
@@ -28,9 +28,9 @@ fn test_format_returns_expected_prefix() !void {
 }
 
 fn test_is_formatted_false_for_unformatted_input() !void {
-    var arena_buf: [byte: 32768] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 32768);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "fn add(a,b){return a+b;}" as &[byte];
     const ok: bool = try is_formatted(&a, src);
@@ -38,9 +38,9 @@ fn test_is_formatted_false_for_unformatted_input() !void {
 }
 
 fn test_is_formatted_true_for_formatted_input() !void {
-    var arena_buf: [byte: 32768] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 32768);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "fn add(a, b) {\n\treturn a + b;\n}" as &[byte];
     const ok: bool = try is_formatted(&a, src);

@@ -13,14 +13,14 @@ use std.fmt.tokenizer.TokenType;
 use std.fmt.tokenizer.tokenize;
 
 fn test_tokenize_simple_function() !void {
-    var arena_buf: [byte: 4096] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 4096);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "fn add(a, b) { return a+b; }" as &[byte];
     const tokens: &[Token] = try tokenize(&a, src);
 
-    try assert_eq_i32(tokens.len as i32, 13);
+    try assert_eq_i32(tokens.len as i32, 14);
     try assert_eq_i32(tokens[0].type as i32, TokenType.TOKEN_FN as i32);
     try assert_eq_i32(tokens[1].type as i32, TokenType.TOKEN_IDENT as i32);
     try assert_eq_i32(tokens[2].type as i32, TokenType.TOKEN_LPAREN as i32);
@@ -34,12 +34,13 @@ fn test_tokenize_simple_function() !void {
     try assert_eq_i32(tokens[10].type as i32, TokenType.TOKEN_PLUS as i32);
     try assert_eq_i32(tokens[11].type as i32, TokenType.TOKEN_IDENT as i32);
     try assert_eq_i32(tokens[12].type as i32, TokenType.TOKEN_SEMICOLON as i32);
+    try assert_eq_i32(tokens[13].type as i32, TokenType.TOKEN_RBRACE as i32);
 }
 
 fn test_tokenize_positions() !void {
-    var arena_buf: [byte: 4096] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 4096);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "fn x\nreturn 1;" as &[byte];
     const tokens: &[Token] = try tokenize(&a, src);

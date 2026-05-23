@@ -13,9 +13,9 @@ use std.fmt.comments.collect_comments;
 use std.fmt.comments.group_comments;
 
 fn test_group_adjacent_line_comments() !void {
-    var arena_buf: [byte: 8192] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 8192);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "// a\n// b\nfn x(){}" as &[byte];
     const tokens: &[Token] = try tokenize(&a, src);
@@ -28,9 +28,9 @@ fn test_group_adjacent_line_comments() !void {
 }
 
 fn test_group_separated_comments() !void {
-    var arena_buf: [byte: 8192] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 8192);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "// a\n\n// b\nfn x(){}" as &[byte];
     const tokens: &[Token] = try tokenize(&a, src);
@@ -44,9 +44,9 @@ fn test_group_separated_comments() !void {
 }
 
 fn test_group_block_and_line_comments() !void {
-    var arena_buf: [byte: 8192] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 8192);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "/* a */\n// b\nfn x(){}" as &[byte];
     const tokens: &[Token] = try tokenize(&a, src);

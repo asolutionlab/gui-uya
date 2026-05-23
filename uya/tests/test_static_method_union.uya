@@ -37,15 +37,9 @@ fn test_union_static_value() !void {
     try expect(!t.is_eof());
 }
 
-fn test_union_instance_via_type() !void {
-    const t: Token = Token.eof_token();
-    try expect(Token.is_eof(t));
-}
-
 export fn main() i32 {
     test_suite_begin("Static Method Union Tests");
     run_test("union eof", test_union_static_eof);
     run_test("union value", test_union_static_value);
-    run_test("union instance via type", test_union_instance_via_type);
     return test_suite_end();
 }

@@ -127,7 +127,7 @@ export fn main() i32 {
 
     const pid: i32 = fork();
     if pid == 0 {
-        var resp: HttpsResponse = https_get(&host[0], 9, srv.port, &"/"[0: 1]) catch {
+        var resp: HttpsResponse = https_get_insecure(&host[0], 9, srv.port, &"/"[0: 1]) catch {
             _exit(2);
             return 2;
         };
@@ -169,7 +169,7 @@ export fn main() i32 {
     https_server_set_rsa_identity(&srv2, &host[0], 9, &host[0], 9, &host[0], 9, &leaf, &key);
     const pid2: i32 = fork();
     if pid2 == 0 {
-        var resp2: HttpsResponse = https_get(&host[0], 9, srv2.port, &"/"[0: 1]) catch {
+        var resp2: HttpsResponse = https_get_insecure(&host[0], 9, srv2.port, &"/"[0: 1]) catch {
             _exit(5);
             return 5;
         };

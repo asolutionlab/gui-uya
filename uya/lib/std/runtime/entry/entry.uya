@@ -50,19 +50,23 @@ export fn set_process_stack_limit_bytes(limit_bytes: u64) void {
     std.cfg(std.target_os == .tos_linux, {
         std.cfg(std.target_arch == .ta_x86_64, {
             const SYS_setrlimit_x86_64: i64 = 160;
-            _ = @syscall(SYS_setrlimit_x86_64, ENTRY_RLIMIT_STACK as i64, &rlim as i64);
+            const setrlimit_result_x86_64: !i64 = @syscall(SYS_setrlimit_x86_64, ENTRY_RLIMIT_STACK as i64, &rlim as i64);
+            setrlimit_result_x86_64 catch { 0i64; };
         }, {
             std.cfg(std.target_arch == .ta_arm64, {
                 const SYS_setrlimit_arm64: i64 = 164;
-                _ = @syscall(SYS_setrlimit_arm64, ENTRY_RLIMIT_STACK as i64, &rlim as i64);
+                const setrlimit_result_arm64: !i64 = @syscall(SYS_setrlimit_arm64, ENTRY_RLIMIT_STACK as i64, &rlim as i64);
+                setrlimit_result_arm64 catch { 0i64; };
             }, {
                 std.cfg(std.target_arch == .ta_arm, {
                     const SYS_setrlimit_arm: i64 = 75;
-                    _ = @syscall(SYS_setrlimit_arm, ENTRY_RLIMIT_STACK as i64, &rlim as i64);
+                    const setrlimit_result_arm: !i64 = @syscall(SYS_setrlimit_arm, ENTRY_RLIMIT_STACK as i64, &rlim as i64);
+                    setrlimit_result_arm catch { 0i64; };
                 }, {
                     std.cfg(std.target_arch == .ta_riscv64, {
                         const SYS_setrlimit_riscv64: i64 = 164;
-                        _ = @syscall(SYS_setrlimit_riscv64, ENTRY_RLIMIT_STACK as i64, &rlim as i64);
+                        const setrlimit_result_riscv64: !i64 = @syscall(SYS_setrlimit_riscv64, ENTRY_RLIMIT_STACK as i64, &rlim as i64);
+                        setrlimit_result_riscv64 catch { 0i64; };
                     }, {})
                 })
             })

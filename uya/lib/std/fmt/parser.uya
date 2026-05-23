@@ -62,6 +62,16 @@ fn expect_token(p: &Parser, typ: TokenType) !&Token {
     return advance(p);
 }
 
+fn is_comment_token(typ: TokenType) bool {
+    return typ == TokenType.TOKEN_LINE_COMMENT || typ == TokenType.TOKEN_BLOCK_COMMENT;
+}
+
+fn skip_comments(p: &Parser) void {
+    while !is_at_end(p) && is_comment_token(current(p).type) {
+        _ = advance(p);
+    }
+}
+
 fn new_expr(arena: &Arena) &Expr {
     return arena_alloc(arena, @size_of(Expr) as usize) as &Expr;
 }
@@ -120,7 +130,10 @@ fn parse_postfix(p: &Parser) !&Expr {
     const expr: &Expr = try parse_primary(p);
     if !is_at_end(p) && current(p).type == TokenType.TOKEN_LPAREN {
         _ = advance(p);
-        var args: &Expr = arena_alloc(p.arena, @size_of(Expr) as usize * 16) as &Expr;
+        var args: &Expr = arena_alloc(p.arena, @size_of(Expr) as usize * (p.tokens.len + 1)) as &Expr;
+        if args == null {
+            return error.AllocOutOfMemory;
+        }
         var arg_count: usize = 0;
         if !match_token(p, TokenType.TOKEN_RPAREN) {
             while true {
@@ -178,6 +191,7 @@ fn parse_expr(p: &Parser) !&Expr {
 }
 
 fn parse_stmt(p: &Parser) !&Stmt {
+    skip_comments(p);
     if current(p).type == TokenType.TOKEN_RETURN {
         const ret_tok: &Token = advance(p);
         const value: &Expr = try parse_expr(p);
@@ -213,12 +227,17 @@ fn parse_stmt(p: &Parser) !&Stmt {
 
 fn parse_block(p: &Parser) !BlockStmt {
     const lb: &Token = try expect_token(p, TokenType.TOKEN_LBRACE);
-    var stmts: &Stmt = arena_alloc(p.arena, @size_of(Stmt) as usize * 32) as &Stmt;
+    var stmts: &Stmt = arena_alloc(p.arena, @size_of(Stmt) as usize * (p.tokens.len + 1)) as &Stmt;
+    if stmts == null {
+        return error.AllocOutOfMemory;
+    }
     var stmt_count: usize = 0;
+    skip_comments(p);
     while !is_at_end(p) && current(p).type != TokenType.TOKEN_RBRACE {
         const stmt: &Stmt = try parse_stmt(p);
         stmts[stmt_count] = *stmt;
         stmt_count = stmt_count + 1;
+        skip_comments(p);
     }
     const rb: &Token = try expect_token(p, TokenType.TOKEN_RBRACE);
     return BlockStmt {
@@ -233,7 +252,10 @@ fn parse_fn_decl_impl(p: &Parser) !Decl {
     const name_tok: &Token = try expect_token(p, TokenType.TOKEN_IDENT);
     _ = try expect_token(p, TokenType.TOKEN_LPAREN);
 
-    var params: &Param = arena_alloc(p.arena, @size_of(Param) as usize * 16) as &Param;
+    var params: &Param = arena_alloc(p.arena, @size_of(Param) as usize * (p.tokens.len + 1)) as &Param;
+    if params == null {
+        return error.AllocOutOfMemory;
+    }
     var param_count: usize = 0;
     if !match_token(p, TokenType.TOKEN_RPAREN) {
         while true {
@@ -269,13 +291,21 @@ export fn parse_file(arena: &Arena, tokens: &[Token]) !&FmtFile {
         tokens: tokens,
         pos: 0,
     };
-    var decls: &Decl = arena_alloc(arena, @size_of(Decl) as usize * 16) as &Decl;
+    var decls: &Decl = arena_alloc(arena, @size_of(Decl) as usize * (tokens.len + 1)) as &Decl;
+    if decls == null {
+        return error.AllocOutOfMemory;
+    }
     var decl_count: usize = 0;
+    skip_comments(&p);
     while !is_at_end(&p) {
         decls[decl_count] = try parse_fn_decl_impl(&p);
         decl_count = decl_count + 1;
+        skip_comments(&p);
     }
     const file: &FmtFile = arena_alloc(arena, @size_of(FmtFile) as usize) as &FmtFile;
+    if file == null {
+        return error.AllocOutOfMemory;
+    }
     file.decls = decls;
     file.decl_count = decl_count;
     if decl_count > 0 {

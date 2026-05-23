@@ -51,14 +51,14 @@ fn slices_equal(a: &[byte], b: &[byte]) bool {
 }
 
 fn test_tokenize_line_comment() !void {
-    var arena_buf: [byte: 8192] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 8192);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "// add\nfn add(a,b){return a+b;}" as &[byte];
     const tokens: &[Token] = try tokenize(&a, src);
 
-    try assert_eq_i32(tokens.len as i32, 13);
+    try assert_eq_i32(tokens.len as i32, 15);
     try assert_eq_i32(tokens[0].type as i32, TokenType.TOKEN_LINE_COMMENT as i32);
     try assert_eq_i32(tokens[0].lexeme.len as i32, 6);
     try assert_eq_i32(tokens[0].lexeme.ptr[0] as i32, '/' as i32);
@@ -67,9 +67,9 @@ fn test_tokenize_line_comment() !void {
 }
 
 fn test_tokenize_block_comment() !void {
-    var arena_buf: [byte: 8192] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 8192);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "/* add */fn add(a,b){return a+b;}" as &[byte];
     const tokens: &[Token] = try tokenize(&a, src);
@@ -82,9 +82,9 @@ fn test_tokenize_block_comment() !void {
 }
 
 fn test_format_preserves_doc_comment() !void {
-    var arena_buf: [byte: 32768] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 32768);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "// add returns sum\nfn add(a,b){return a+b;}" as &[byte];
     const out: &[byte] = try format(&a, src);
@@ -95,9 +95,9 @@ fn test_format_preserves_doc_comment() !void {
 }
 
 fn test_format_preserves_trailing_comment() !void {
-    var arena_buf: [byte: 32768] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 32768);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "fn add(a,b){return a+b; // sum\n}" as &[byte];
     const out: &[byte] = try format(&a, src);

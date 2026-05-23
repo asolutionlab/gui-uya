@@ -16,9 +16,9 @@ use std.fmt.tokenizer.tokenize;
 use std.fmt.parser.parse_file;
 
 fn test_parse_function_decl() !void {
-    var arena_buf: [byte: 8192] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 8192);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "fn add(a, b) { return a + b; }" as &[byte];
     var tokens: &[Token] = try tokenize(&a, src);
@@ -31,9 +31,9 @@ fn test_parse_function_decl() !void {
 }
 
 fn test_parse_return_binary_precedence() !void {
-    var arena_buf: [byte: 8192] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 8192);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "fn main() { return 1 + 2 * 3; }" as &[byte];
     var tokens: &[Token] = try tokenize(&a, src);
@@ -47,9 +47,9 @@ fn test_parse_return_binary_precedence() !void {
 }
 
 fn test_parse_call_expr_stmt() !void {
-    var arena_buf: [byte: 8192] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 8192);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "fn main() { foo(x, 1); }" as &[byte];
     var tokens: &[Token] = try tokenize(&a, src);
@@ -62,9 +62,9 @@ fn test_parse_call_expr_stmt() !void {
 }
 
 fn test_parse_assign_stmt() !void {
-    var arena_buf: [byte: 8192] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 8192);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "fn main() { x = 1 + 2; }" as &[byte];
     var tokens: &[Token] = try tokenize(&a, src);

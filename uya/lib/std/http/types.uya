@@ -99,6 +99,7 @@ fn method_from_str(s: &const byte, len: usize) Method {
 // ============================================================
 
 export enum Status {
+    SwitchingProtocols = 101,
     OK = 200,
     Created = 201,
     NoContent = 204,

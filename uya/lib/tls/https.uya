@@ -975,13 +975,41 @@ fn https_get_internal(
     
     // 配置证书验证
     ssl_set_insecure_skip_verify(&ctx, !verify);
-    
-    // TODO: 加载系统根证书（生产环境应该实现）
-    // 当前实现：如果启用验证但没有根证书，会记录警告但仍尝试连接
-    if verify {
-        https_debug(&"[HTTPS] Certificate verification enabled (trust store TBD)\n"[0: 55]);
+    ssl_set_skip_hostname_verify(&ctx, !config.verify_hostname);
+
+    var system_trust_store: TrustStore = TrustStore{};
+    var active_trust_store: &TrustStore = config.trust_store;
+    if verify && active_trust_store == null as &TrustStore {
+        const loaded: bool = trust_store_load_system(&system_trust_store);
+        if !loaded {
+            _ = sys_close(fd) catch {};
+            return error.TlsCertificateVerificationFailed;
+        }
+        active_trust_store = &system_trust_store;
     }
-    
+    if verify && active_trust_store != null as &TrustStore {
+        ssl_set_peer_chain(
+            &ctx,
+            null as &const Cert,
+            null as &const Cert,
+            0,
+            trust_store_get_certs(active_trust_store),
+            trust_store_get_count(active_trust_store),
+            KU_DIGITAL_SIGNATURE,
+        );
+        if !config.verify_hostname && trust_store_get_count(active_trust_store) == 1usize {
+            ssl_set_peer_chain(
+                &ctx,
+                trust_store_get_certs(active_trust_store),
+                null as &const Cert,
+                0usize,
+                trust_store_get_certs(active_trust_store),
+                trust_store_get_count(active_trust_store),
+                KU_DIGITAL_SIGNATURE,
+            );
+        }
+    }
+
     // SNI 和证书校验基于原始 hostname
     ssl_set_hostname(&ctx, host, host_len);
     ssl_set_peer_identity(&ctx, host, host_len, host, host_len);

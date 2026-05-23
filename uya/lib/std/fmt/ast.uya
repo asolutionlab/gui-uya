@@ -97,3 +97,8 @@ export struct FmtFile {
     decl_count: usize,
     span: Span,
 }
+
+/// FmtFile 的兼容别名。
+/// 参数：无。
+/// 返回值：无。
+export type File = FmtFile;

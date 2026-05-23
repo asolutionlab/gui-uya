@@ -57,9 +57,9 @@ fn index_of(haystack: &[byte], needle: &[byte]) i32 {
 }
 
 fn test_sort_use_lines_std_first() !void {
-    var arena_buf: [byte: 16384] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 16384);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "use tls.https;\nuse std.runtime.entry;\nuse libc.syscall;\n" as &[byte];
     const out: &[byte] = try sort_use_lines(&a, src);
@@ -68,9 +68,9 @@ fn test_sort_use_lines_std_first() !void {
 }
 
 fn test_sort_use_lines_alpha_within_group() !void {
-    var arena_buf: [byte: 16384] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 16384);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "use std.testing.run_test;\nuse std.runtime.entry;\nuse std.mem.arena;\n" as &[byte];
     const out: &[byte] = try sort_use_lines(&a, src);
@@ -79,9 +79,9 @@ fn test_sort_use_lines_alpha_within_group() !void {
 }
 
 fn test_sort_use_lines_dedup() !void {
-    var arena_buf: [byte: 16384] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 16384);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "use std.runtime.entry;\nuse std.runtime.entry;\nuse tls.https;\n" as &[byte];
     const out: &[byte] = try sort_use_lines(&a, src);
@@ -105,9 +105,9 @@ fn slices_equal(a: &[byte], b: &[byte]) bool {
 }
 
 fn test_sort_use_lines_idempotent() !void {
-    var arena_buf: [byte: 32768] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 32768);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "use tls.https;\nuse std.runtime.entry;\nuse libc.syscall;\n" as &[byte];
     const out1: &[byte] = try sort_use_lines(&a, src);

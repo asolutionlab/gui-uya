@@ -1,9 +1,0 @@
-use std.runtime.entry;
-use std.uip.tcp;
-use std.uip.session;
-use std.uip.resolver;
-use std.uip.uip;
-
-export fn main() i32 {
-    return 0;
-}

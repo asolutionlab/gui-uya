@@ -9,6 +9,7 @@ use std.fmt.ast.StmtKind;
 use std.fmt.ast.Expr;
 use std.fmt.ast.ExprKind;
 use std.fmt.comments.CommentGroup;
+use std.fmt.positions.span_after;
 use std.fmt.formatter.Formatter;
 use std.fmt.formatter.formatter_init;
 use std.fmt.formatter.formatter_write;
@@ -46,6 +47,32 @@ fn print_comment_group(p: &Printer, group: &CommentGroup) !void {
         try formatter_write(p.f, group.comments[i].text);
         try formatter_newline(p.f);
         i = i + 1;
+    }
+}
+
+fn find_trailing_comment_group(p: &Printer, stmt: &Stmt) i32 {
+    var i: usize = 0;
+    while i < p.comment_groups.len {
+        const group: &CommentGroup = &p.comment_groups[i];
+        if group.count > 0 &&
+            group.comments[0].span.start.line == stmt.span.end.line &&
+            span_after(group.comments[0].span, stmt.span) {
+            return i as i32;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn print_stmt_with_trailing_comment(p: &Printer, stmt: &Stmt) !void {
+    try print_stmt(p, stmt);
+    const group_index: i32 = find_trailing_comment_group(p, stmt);
+    if group_index >= 0 {
+        try write_space(p);
+        try print_comment_group(p, &p.comment_groups[group_index as usize]);
+        if p.f.pos > 0 && p.f.buf[p.f.pos - 1] == '\n' as byte {
+            p.f.pos = p.f.pos - 1;
+        }
     }
 }
 
@@ -114,12 +141,12 @@ fn print_stmt(p: &Printer, stmt: &Stmt) !void {
 
 fn print_block(p: &Printer, block: &BlockStmt) !void {
     try formatter_write_byte(p.f, '{' as byte);
-    try formatter_newline(p.f);
     formatter_indent(p.f);
+    try formatter_newline(p.f);
 
     var i: usize = 0;
     while i < block.stmt_count {
-        try print_stmt(p, &block.stmts[i]);
+        try print_stmt_with_trailing_comment(p, &block.stmts[i]);
         try formatter_newline(p.f);
         i = i + 1;
     }
@@ -161,6 +188,9 @@ fn print_decl(p: &Printer, decl: &Decl) !void {
 
 export fn print_file_to_buffer(arena: &Arena, file: &FmtFile, comment_groups: &[CommentGroup]) !&[byte] {
     const buf: &byte = arena_alloc(arena, 4096);
+    if buf == null {
+        return error.AllocOutOfMemory;
+    }
     var f: Formatter = Formatter {
         buf: buf,
         cap: 0,

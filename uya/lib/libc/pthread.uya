@@ -34,12 +34,11 @@ export struct pthread_key_t {
     destructor: &void,
 }
 
-export extern "libc" fn pthread_once(once_control: &pthread_once_t, init_routine: &void) i32 {
+export extern "libc" fn pthread_once(once_control: &pthread_once_t, init_routine: &void) void {
     _ = init_routine;
     if once_control != null {
         once_control.state = 2;
     }
-    return 0;
 }
 
 export extern "libc" fn pthread_key_create(key: &pthread_key_t, destructor: &void) i32 {
@@ -50,8 +49,16 @@ export extern "libc" fn pthread_key_create(key: &pthread_key_t, destructor: &voi
     return 0;
 }
 
-export extern "libc" fn pthread_getspecific(key: pthread_key_t) &void;
-export extern "libc" fn pthread_setspecific(key: pthread_key_t, value: &void) i32;
+export extern "libc" fn pthread_getspecific(key: pthread_key_t) &void {
+    _ = key;
+    return null;
+}
+
+export extern "libc" fn pthread_setspecific(key: pthread_key_t, value: &void) i32 {
+    _ = key;
+    _ = value;
+    return 0;
+}
 }, {
 
 // 前向声明：使用 libc.stdlib 的 malloc/free（sys_* 由 use libc 导入）
@@ -101,7 +108,10 @@ fn _pthread_call_start(start_fn: &void, start_arg: &void) &void {
             @asm {
                 "mov x16, %1\n\tmov x0, %2\n\tblr x16\n\tmov %0, x0"
                 (start_fn, start_arg, -> r);
-            } clobbers = ["x16", "x17", "memory"];
+            } clobbers = [
+                "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7",
+                "x8", "x9", "x10", "x16", "x17", "x30", "cc", "memory"
+            ];
         }, {
             std.cfg(std.target_arch == .ta_arm, {
                 @asm {
@@ -688,30 +698,33 @@ export extern "libc" fn pthread_detach(thread: &pthread_t) i32 {
 }
 
 // pthread_once - 一次性初始化 (NPTL-lite futex-based)
-export extern "libc" fn pthread_once(once_control: &pthread_once_t, init_routine: &void) i32 {
+export extern "libc" fn pthread_once(once_control: &pthread_once_t, init_routine: &void) void {
     if once_control == null || init_routine == null {
-        return 22;
+        return;
     }
 
     // Fast path: already done
     if once_control.state == 2 {
-        return 0;
+        return;
     }
 
     // Try to acquire init lock
     var expected: i32 = 0;
     if __atomic_compare_exchange_n((&once_control.state) as &i32, &expected, 1, 0, PTHREAD_ATOMIC_SEQ_CST, PTHREAD_ATOMIC_SEQ_CST) != 0 {
-        _pthread_call_start(init_routine, null);
+        std.cfg(std.target_os == .tos_macos, {
+            _pthread_call_start(init_routine, null);
+        }, {
+            _pthread_call_start(init_routine, null);
+            sys_futex((&once_control.state) as &i32, FUTEX_WAKE, 2147483647, null);
+        })
         once_control.state = 2;
-        sys_futex((&once_control.state) as &i32, FUTEX_WAKE, 2147483647, null);
-        return 0;
+        return;
     }
 
     // Another thread is initializing; wait on futex
     while once_control.state != 2 {
         sys_futex((&once_control.state) as &i32, FUTEX_WAIT, 1, null);
     }
-    return 0;
 }
 
 // pthread_exit - 保存 retval 到线程描述符，运行 destructor，然后 sys_exit
@@ -1245,11 +1258,15 @@ export extern "libc" fn pthread_cond_broadcast(cond: &pthread_cond_t) i32 {
 // - 使用 SYS_sched_yield 系统调用
 // - 提示调度器切换到其他线程
 export extern "libc" fn pthread_yield() i32 {
-    const ret: !i64 = @syscall(SYS_sched_yield, 0, 0, 0, 0, 0, 0);
-    _ = ret catch {
-        return 1;
-    };
-    return 0;
+    std.cfg(std.target_os == .tos_macos, {
+        return 0;
+    }, {
+        const ret: !i64 = @syscall(SYS_sched_yield, 0, 0, 0, 0, 0, 0);
+        _ = ret catch {
+            return 1;
+        };
+        return 0;
+    })
 }
 
 // ============================================================

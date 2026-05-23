@@ -1,4 +1,4 @@
-# Uya 语言规范 0.49.48（完整版 · 2026-04-26）
+# Uya 语言规范 0.49.50（完整版 · 2026-05-19）
 
 > 零GC · 默认高级安全 · 单页纸可读完  
 > 无lifetime符号 · 无隐式控制 · 编译期证明（本函数内）
@@ -54,6 +54,18 @@
 
 ## 规范变更
 
+### 0.49.50（2026-05-14）
+
+- **新增错误名内置函数**：`@error_name(err)` 返回语言级错误名字符串，结果不带 `error.` 前缀；当错误值不是当前编译单元收集到的命名错误（例如 `@syscall` errno）时，统一回退为 `"UnknownError"`。
+- **错误打印建议更新**：错误值本身仍不能直接按 `error` 类型打印；若需要日志文本，可用 `@error_name(err)`，若需要系统 errno 描述，请继续配合 `@error_id(err)` 与 `libc.strerror(...)`。
+- **回归测试**：新增 `tests/test_error_name_builtin.uya`。
+
+### 0.49.49（2026-05-12）
+
+- **`drop` 手动调用禁令落地**：`drop` 仍只能定义为 `fn drop(self: T) void`，但现在进一步明确为**仅供编译器在离开作用域时自动插入**；用户代码中的 `drop(x)`、`T.drop(x)`、`x.drop()` 都应在类型检查阶段报错。
+- **联合体 drop 递归清理补齐**：联合体自定义 `drop` 在执行用户函数体前，会先对**当前活跃变体**自动执行递归 `drop`；无需、也不允许在用户体内手动调用内层 `drop`。
+- **回归测试**：新增 `tests/error_drop_manual_call.uya`、`tests/error_drop_manual_type_call.uya`、`tests/test_union_drop_auto_variant.uya`。
+
 ### 0.49.48（2026-04-26）
 
 - **对象方法无限制链式调用**：统一后缀表达式链后，成员访问、下标、切片与调用可在同一对象表达式后无限继续组合。以下形式都合法并可继续接下一段链：
@@ -68,7 +80,7 @@
 
 - **标准库 `std.sql`**：新增 `lib/std/sql/`。首版提供参考 Go `database/sql` 的数据库通用抽象：`Value`、`NamedArg`、`ColumnInfo`、`Driver`、`Conn`、`Stmt`、`Rows`、`Tx`、`Result`、高层 `DB` / `Row` 包装与 `db_open`。为兼容当前 C99 backend，接口方法优先采用普通返回值与 `out` 参数的稳定组合。
 - **测试**：新增 `tests/test_std_sql.uya`，覆盖 fake driver 的 open / ping / prepare / exec / query / query_row / tx 主链路。
-- **标准库 `std.crypto`**：新增 `lib/std/crypto/blake2b.uya` 与 `lib/std/crypto/blake2s.uya`。接口分别为 `blake2b_digest(data, digest_out)` 与 `blake2s_digest(data, digest_out)`；均为纯 Uya 一次性摘要实现，分别输出 64 / 32 字节。
+- **标准库 `std.crypto`**：新增 `lib/std/crypto/blake2b.uya`、`lib/std/crypto/blake2s.uya` 与 `lib/std/crypto/blake3.uya`。接口分别为 `blake2b_digest(data, digest_out)`、`blake2s_digest(data, digest_out)` 与 `blake3_digest(data, digest_out)`；均为纯 Uya 一次性摘要实现，分别输出 64 / 32 / 32 字节。
 - **标准库 `std.crypto`**：新增 `lib/std/crypto/md5.uya` 与 `lib/std/crypto/crc32.uya`。接口分别为 `md5_digest(data, digest_out)` 与 `crc32_compute(data)`；MD5 为 RFC 1321 一次性摘要实现，CRC-32 使用 IEEE/ZIP 反射多项式 `0xEDB88320`。
 - **内核复用**：`lib/kernel/update.uya` 的元数据 CRC32 计算改为直接复用 `std.crypto.crc32`，避免同一算法在标准库和内核层重复维护。
 - **测试**：新增 `tests/test_crypto_md5.uya` 与 `tests/test_crypto_crc32.uya`，并保留 `tests/test_kernel_update.uya` 对 CRC32 集成路径的回归覆盖。
@@ -665,7 +677,7 @@ Uya的"坚如磐石"设计哲学带来以下不可动摇的收益：
   defer errdefer try catch error null interface atomic union
   export use
   ```
-- **内置函数**：所有内置函数均以 `@` 开头，无需导入。包括：`@size_of(T)`、`@align_of(T)`、`@len(a)`（数组长度）、`@max`、`@min`（整数类型极值，类型由上下文推断）、`@error_id(err)`（提取错误值的数值 ID）、`@embed("file")`（编译期嵌入单文件）、`@embed_dir("dir")`（编译期嵌入目录）。另外，`@c_import("path", cflags?, ldflags?);` 是顶层构建指令，用于把外部 C 源纳入当前构建图。
+- **内置函数**：所有内置函数均以 `@` 开头，无需导入。包括：`@size_of(T)`、`@align_of(T)`、`@len(a)`（数组长度）、`@max`、`@min`（整数类型极值，类型由上下文推断）、`@error_id(err)`（提取错误值的数值 ID）、`@error_name(err)`（提取语言级错误名字符串）、`@embed("file")`（编译期嵌入单文件）、`@embed_dir("dir")`（编译期嵌入目录）。另外，`@c_import("path", cflags?, ldflags?);` 是顶层构建指令，用于把外部 C 源纳入当前构建图。
 - 标识符 `[A-Za-z_][A-Za-z0-9_]*`，区分大小写。
 - 数值字面量：
   - 整数字面量：
@@ -2302,7 +2314,7 @@ fn move_example() void {
 
 ### 4.5.10 drop 机制
 
-联合体支持 `drop` 函数，仅对当前活跃变体调用清理。drop 只能在联合体内部或方法块中定义：
+联合体支持 `drop` 函数。对联合体值离开作用域时，编译器会先对**当前活跃变体**执行递归清理，再执行联合体自身的 `drop` 函数体。`drop` 只能在联合体内部或方法块中定义，且**不能手动调用**：
 
 ```uya
 union FileOrBuffer {
@@ -2312,15 +2324,8 @@ union FileOrBuffer {
 
 FileOrBuffer {
     fn drop(self: FileOrBuffer) void {
-        match self {
-            .file(f) => {
-                // 调用 File 的 drop
-                drop(f);
-            },
-            .buffer(_) => {
-                // 缓冲区无需清理
-            }
-        }
+        // `self.file` 为活跃变体时，其 `drop` 会在此函数体之前由编译器自动执行。
+        // `.buffer` 变体无额外清理需求时，这里可以留空或只写统计/日志逻辑。
     }
 }
 ```
@@ -2886,9 +2891,10 @@ bin/uya --c99 app.uya …   # 推荐：由驱动自动加入 entry.uya
   - 兼容旧写法：`if err == error.FileNotFound { ... }`
   - 运行时错误同样如此：`if err == error.SomeRuntimeError { ... }`
   - catch 块中可以判断错误类型并做不同处理
-  - 错误类型不能直接打印，需要通过模式匹配处理
+  - 错误值本身不能直接按 `error` 类型打印；若需要名字字符串，可用 `@error_name(err)` 获取不带 `error.` 前缀的名称
   - 也可显式比较错误 ID：`if @error_id(err) == @error_id(error.PredefinedError) || @error_id(err) == @error_id(error.RuntimeError) { ... }`
   - 可通过 `@error_id(err)` 读取错误值的数值 ID；对 `@syscall` 失败路径，该 ID 等于底层 errno 值
+  - `@error_name(err)` 仅保证语言级命名错误返回稳定名称；未知或 `@syscall` 错误统一回退为 `"UnknownError"`
   
 **错误处理设计哲学**：
 - **编译期检查**：错误处理是编译期检查，编译器在当前函数内验证错误处理
@@ -4115,7 +4121,8 @@ Uya 提供两种类型转换语法：
    - 允许用户为自定义类型定义清理逻辑，实现真正的 RAII 模式（文件自动关闭、内存自动释放等）。
    - 每个类型只能有一个 drop 函数。
    - 参数必须是 `self: T`（按值传递），返回类型必须是 `void`。
-   - 递归调用：结构体的 drop 会先调用字段的 drop，再调用自身的 drop。
+   - **禁止手动调用**：`drop(x)`、`T.drop(x)`、`x.drop()` 均为编译错误；`drop` 只由编译器在离开作用域时自动插入。
+   - 递归调用：结构体会先自动 drop 字段；联合体会先自动 drop 当前活跃变体；然后再执行用户编写的 `drop` 函数体。
 
 **drop 使用示例**：
 
@@ -4130,7 +4137,7 @@ Uya 提供两种类型转换语法：
 [examples/example_basic.uya](./examples/example_basic.uya)
 
 **重要说明**：
-- `drop` 是**自动调用**的，无需手动调用
+- `drop` 是**自动调用**的；手写 `drop(x)`、`T.drop(x)`、`x.drop()` 都会报编译错误
 - 对于基本类型（`i32`, `f64`, `bool` 等），`drop` 是空函数，无运行时开销
 - 用户可以为自定义类型定义 `drop` 函数，实现 RAII 模式
 - 编译器自动插入 drop 调用，确保资源正确释放
@@ -4629,7 +4636,7 @@ fn caller() void {
 
 ## 16 标准库
 
-所有内置函数均以 `@` 开头，编译期展开，无需导入或声明。
+所有内置函数均以 `@` 开头，由编译器识别，无需导入或声明；其中部分为编译期展开，部分为零成本运行时访问或运行时 helper。
 
 | 内置函数 | 签名 | 说明 |
 |----------|------|------|
@@ -4637,6 +4644,7 @@ fn caller() void {
 | `@size_of` | `fn @size_of(T) i32` | 返回类型 `T` 的字节大小（编译期常量） |
 | `@align_of` | `fn @align_of(T) i32` | 返回类型 `T` 的对齐字节数（编译期常量） |
 | `@error_id` | `fn @error_id(err: error) u32` | 提取错误值的数值 ID；可用于显式错误比较或检查 `@syscall` 返回的 errno |
+| `@error_name` | `fn @error_name(err: error) *byte` | 提取语言级错误名字符串；未知或 `@syscall` 错误回退为 `"UnknownError"` |
 | `@max` | 上下文推断 | 整数类型最大值（编译期常量） |
 | `@min` | 上下文推断 | 整数类型最小值（编译期常量） |
 | `@va_start` | `@va_start(&ap, last)` | 可变参数函数内初始化 va_list（编译时展开为 C 宏） |
@@ -4673,6 +4681,7 @@ fn caller() void {
 | `std.sql` | `types` / `driver` / `db` | 数据库通用抽象；面向 SQLite / MySQL 等驱动适配 |
 | `std.crypto.blake2b` | `blake2b_digest(data, digest_out)` | BLAKE2b 一次性摘要，输出 64 字节 |
 | `std.crypto.blake2s` | `blake2s_digest(data, digest_out)` | BLAKE2s 一次性摘要，输出 32 字节 |
+| `std.crypto.blake3` | `blake3_digest(data, digest_out)` | BLAKE3 一次性摘要，输出 32 字节 |
 | `std.crypto.sha256` | `sha256_digest(data, digest_out)` | SHA-256 一次性摘要，输出 32 字节 |
 | `std.crypto.hmac_sha256` | `hmac_sha256(key, msg, mac_out)` | HMAC-SHA256，一次性 MAC，输出 32 字节 |
 | `std.crypto.md5` | `md5_digest(data, digest_out)` | MD5 一次性摘要，输出 16 字节 |
@@ -4862,6 +4871,8 @@ fn caller() void {
      - **`@vector.store(ptr, v)`**（**0.49.34**）：**`v`** 为 **`@vector(T, N)`**，**`ptr`** 为 **`&T`** 且 **`T`** 与 **`v`** 的元素类型一致（**`byte`/`u8`** 规则同 **`load`**）；按向量大小将 **`v`** 写入 **`ptr`**；**`void`**；**不检查**可写范围长度（调用方责任同 **`memcpy`**）。
      - **`@vector.select(m, a, b)`**（**0.49.35**）：**`m`** 为 **`@mask(N)`**，**`a`**、**`b`** 为相同 **`@vector(T, N)`** 且 **`N`** 与 **`m`** 一致；通道 **`i`** 上 **`m`** 为真取 **`a[i]`**，否则取 **`b[i]`**；结果为 **`@vector(T, N)`**；目标类型上下文同 **`@vector.splat`** / **`load`**
      - **`@vector.reduce_add(v)`**（**0.49.36**）：**`v`** 为 **`@vector(T, N)`**，**`T`** 为 **`i8`…`u64` 或 `f32`/`f64`**；结果为标量 **`T`**，等于各通道之和（**`+`** 语义同标量）
+     - **`@vector.reduce_mul(v)`**（**0.49.38**）：**`v`** 为 **`@vector(T, N)`**，**`T`** 为 **`i8`…`u64` 或 `f32`/`f64`**；结果为标量 **`T`**，等于各通道之积（**`*`** 语义同标量）
+     - **`@vector.reduce_min(v)`** / **`@vector.reduce_max(v)`**（**0.49.39**）：**`v`** 为 **`@vector(T, N)`**，**`T`** 为 **`i8`…`u64` 或 `f32`/`f64`**；结果为标量 **`T`**，分别等于各通道最小值 / 最大值
      - `@vector.any(m)`：参数 `m` 必须是 `@mask(N)`，只要任一通道为 true 则返回 `bool true`
      - `@vector.all(m)`：参数 `m` 必须是 `@mask(N)`，仅当所有通道为 true 时返回 `bool true`
    - **示例**：
@@ -4877,12 +4888,12 @@ fn caller() void {
    - **第一阶段纳入范围**：
      - `@vector(T, N)`、`@mask(N)`
      - 基本算术、整数位运算、比较、掩码逻辑运算
-     - `@vector.splat`、**`@vector.load`**、**`@vector.store`**、**`@vector.select`**、**`@vector.reduce_add`**、`@vector.any`、`@vector.all`
+     - `@vector.splat`、**`@vector.load`**、**`@vector.store`**、**`@vector.select`**、**`@vector.reduce_add`**、**`@vector.reduce_mul`**、**`@vector.reduce_min`**、**`@vector.reduce_max`**、`@vector.any`、`@vector.all`
      - 语义正确的标量回退 lowering
      - **C99 快路径**（阶段 4 起）：**x86_64 + SSE2**（`UYA_HAVE_SIMD_X86_SSE`）或 **ARM/AArch64 + NEON**（`UYA_HAVE_SIMD_ARM_NEON`，`<arm_neon.h>`）下，对 **`i32`/`u32`/`f32`**：**2 通道**走 **`*_i32x2` / `*_u32x2` / `*_f32x2`** 等（0.49.29，低 **64 位** 或 NEON **2 宽**）；**4 通道**走 **`*_x4`**（**`i32` 向量 `/` `%`**：`uya_simd_sse_div_i32x4`、`uya_simd_sse_rem_i32x4`，0.49.22–0.49.23；**`u32` 向量 `* / %`**：`uya_simd_sse_mul_u32x4`、`uya_simd_sse_div_u32x4`、`uya_simd_sse_rem_u32x4`，0.49.20–0.49.23；**`i32`/`u32` 向量 `<<` `>>`**：`uya_simd_sse_shl_i32x4`、`uya_simd_sse_shr_i32x4`、`uya_simd_sse_shl_u32x4`、`uya_simd_sse_shr_u32x4`，0.49.24）；**`f64` 向量 `+` / `-` / `* /` / 一元 `-`**：`uya_simd_sse_add_f64x2`、`uya_simd_sse_sub_f64x2`、`uya_simd_sse_mul_f64x2`、`uya_simd_sse_div_f64x2`、`uya_simd_sse_neg_f64x2`，0.49.25–0.49.28，支持 **2×/4×** 通道；**`i16` 向量 `+` / `-` / `*` 与六种比较、一元 `-`、`splat`**：`uya_simd_sse_add_i16x4`/`x8`、`sub_*`、`mul_*`、`eq`/`ne`/`lt`/`gt`/`le`/`ge` 的 **`_i16x4_mask` / `_i16x8_mask`**、`neg_i16x4`/`x8`、`splat_i16x4`/`x8`，0.49.26–0.49.28，**4×** 为 **64 位** SIMD 块、**8×** 为 **128 位**；**`u16` 向量 `+` / `-` / `*` 与六种比较、`splat`**：`add`/`sub`/`mul`/`eq`/`ne`/`lt`/`gt`/`le`/`ge` 的 **`_u16x4` / `_u16x8`** 与 **`splat_u16x4`/`x8`**，0.49.28）；**`i8`/`u8` 向量**（**2/4/8/16/32/64** 通道）算术·位运算·六种比较·**`splat`**·一元 `-`：**`*_i8x16`/`x8`/`x4`/`x2`**、**`*_u8x*`**（0.49.30）；**`i64`/`u64` 向量**与 **掩码**、**`splat`**、一元 `-`：**`*_i64x2`**、**`*_u64x2`** 按 **2 通道** 分块（0.49.30）；**8 / 16 / 32 / 64 通道**（`i32`/`u32`/`f32`）为 **2 / 4 / 8 / 16 次** 4 通道调用（连续 `lanes` 块）。否则为该名提供逐通道标量体。表达式内**不**使用预处理器分支（见规范变更 0.49.10、0.49.16、0.49.17、0.49.18、0.49.19、0.49.20、0.49.21、0.49.22、0.49.23、0.49.24、0.49.25、0.49.26、0.49.27、0.49.28、**0.49.29**、**0.49.30**）。
    - **第一阶段暂缓**：
      - 标量广播语法糖，如 `vec + 1`
-     - **`shuffle` / 其它 `reduce_*`**（**`@vector.reduce_add`** 已于 **0.49.36** 纳入；**`@vector.load` / `@vector.store` / `@vector.select`** 已分别于 **0.49.33** / **0.49.34** / **0.49.35** 纳入，见规范变更）
+     - **`shuffle`**（**`@vector.load` / `@vector.store` / `@vector.select`** 已分别于 **0.49.33** / **0.49.34** / **0.49.35** 纳入；**`@vector.reduce_add` / `@vector.reduce_mul` / `@vector.reduce_min` / `@vector.reduce_max`** 已分别于 **0.49.36** / **0.49.38** / **0.49.39** / **0.49.39** 纳入，见规范变更）
      - `widen/truncate/bitcast/convert`
      - 自动向量化
      - 新的目标特性查询内建
@@ -6536,7 +6547,10 @@ mc vector_type(T: type, name: ident) type {
                     // 如果T有drop，需要调用每个元素的drop
                     if ${info.has_drop} {
                         for 0..self.len |i| {
-                            self.data[i].drop();
+                            {
+                                const elem: T = self.data[i];
+                                _ = elem;
+                            }
                         }
                     }
                     @free(self.data);
@@ -7243,7 +7257,7 @@ bin/uya build main.uya -o main.c --c99 -e
 
 ### C.5 限制与注意
 
-- **`@syscall`（C99 后端）**：已支持生成 **Linux x86_64**、**Linux AArch64**、**Linux ARM32（EABI）**、**macOS x86_64** 与 **macOS arm64** 的 hosted 路径；Darwin 目标当前仍以 hosted bring-up 为主，不等同于 `--nostdlib` 已完成。
+- **`@syscall`（C99 后端）**：已支持生成 **Linux x86_64**、**Linux AArch64**、**Linux ARM32（EABI）**、**macOS x86_64** 与 **macOS arm64** 的 hosted 路径；Darwin 目标当前仍以 hosted bring-up 为主，不等同于 `--nostdlib` 已完成。**`unknown` / Web target** 当前不发射原生 `@syscall` 内联汇编，而是由 `libc.sys_*` 在 `std.target_os == .tos_unknown` 下通过宿主 bridge 提供受限运行时能力；当前最小闭环验证见 `tests/verify_emcc_unknown_runtime.sh`（`make tests-emcc`，需 `emcc` 与 `node`）。
 - **`--nostdlib` / 静态零依赖路径**：当前实现与测试主线以 **Linux x86_64** 为主；其他目标的 `_start`、链接与 syscall 封装可能未完备，见 [UYA_BUILD_RUN.md](./UYA_BUILD_RUN.md) 与平台相关 todo 文档。
 - **Darwin 真机验证**：Linux 上通过 `zig cc` 交叉产出 Mach-O 二进制，说明构建链已成立；但 `getcwd`、`stat/readdir`、`pthread`、`std.async` 等行为仍需在 macOS 真机上继续 smoke 与收口。
 - **内联汇编 `@asm`**：指令与约束与目标 ISA 相关；交叉编译时需确保仅启用当前 **TARGET** 支持的指令，或使用 `@asm_target()` 等机制区分平台（见 [asm_api_reference.md](./asm_api_reference.md) 等）。

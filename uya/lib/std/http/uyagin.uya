@@ -225,6 +225,7 @@ export struct GinContext {
     request: &Request,
     wrote: bool,
     aborted: bool,
+    hijacked: bool,
     persist: bool,
     allocator: &IAllocator,
     request_arena: &RequestArena,
@@ -884,6 +885,31 @@ fn uyagin_context_aborted(ctx: &GinContext) bool {
     return ctx.aborted;
 }
 
+fn uyagin_context_is_hijacked(ctx: &GinContext) bool {
+    if ctx == null {
+        return false;
+    }
+    return ctx.hijacked;
+}
+
+/// 将当前 HTTP 请求上下文标记为“连接已接管”。
+/// 参数说明：`ctx` 为当前请求上下文；调用方需保证底层连接所有权已经转移到新对象。
+/// 返回值说明：成功时将阻止后续普通 HTTP 响应路径继续写回。
+export fn uyagin_context_mark_hijacked(ctx: &GinContext) !void {
+    if ctx == null || ctx.request == null || ctx.fd < 0 {
+        return error.InvalidRequest;
+    }
+    if ctx.hijacked {
+        return error.InvalidRequest;
+    }
+    ctx.hijacked = true;
+    ctx.wrote = true;
+    ctx.aborted = true;
+    ctx.persist = false;
+    ctx.response_status = Status.SwitchingProtocols;
+    ctx.fd = -1;
+}
+
 fn uyagin_find_form_kv(body: &[byte], name: &[const byte]) !&[const byte] {
     var pos: usize = 0;
     while pos <= body.len {
@@ -1405,7 +1431,7 @@ fn uyagin_chain_should_stop(ctx: &GinContext) bool {
     if ctx == null {
         return true;
     }
-    return ctx.aborted || ctx.wrote;
+    return ctx.aborted || ctx.wrote || ctx.hijacked;
 }
 
 export @async_fn fn uyagin_run_chain(engine: &Engine, ctx: &GinContext, route: &GinRoute) Future<!i32> {
@@ -1852,6 +1878,9 @@ fn uyagin_engine_run_shards(engine: &Engine, listener: &GinListener, opts: &Engi
     }
 
     var worker_count: i32 = shard_count - 1;
+    std.cfg(std.target_os == .tos_macos, {
+        worker_count = 0;
+    }, {})
     if worker_count > 31 {
         worker_count = 31;
         shard_count = 32;
@@ -1922,6 +1951,16 @@ fn uyagin_engine_run_shards(engine: &Engine, listener: &GinListener, opts: &Engi
     return total;
 }
 
+std.cfg(std.target_os == .tos_macos, {
+fn uyagin_engine_run(engine: &Engine, srv: &HttpServer, loop: EventLoop, scheduler: &Scheduler, opts: &EngineRunOptions, controller: &EngineRunController) !i32 {
+    _ = loop;
+    _ = scheduler;
+    if engine == null || srv == null || srv.listen_fd < 0 || opts == null {
+        return error.InvalidRequest;
+    }
+    return uyagin_run_simple_blocking(engine, srv, opts, controller);
+}
+}, {
 fn uyagin_engine_run(engine: &Engine, srv: &HttpServer, loop: EventLoop, scheduler: &Scheduler, opts: &EngineRunOptions, controller: &EngineRunController) !i32 {
     if engine == null || srv == null || srv.listen_fd < 0 || opts == null || scheduler == null {
         return error.InvalidRequest;
@@ -2127,6 +2166,37 @@ fn uyagin_engine_run(engine: &Engine, srv: &HttpServer, loop: EventLoop, schedul
     }
     return served_total;
 }
+})
+
+fn uyagin_run_simple_blocking(engine: &Engine, srv: &HttpServer, opts: &EngineRunOptions, controller: &EngineRunController) !i32 {
+    if engine == null || srv == null || srv.listen_fd < 0 || opts == null {
+        return error.InvalidRequest;
+    }
+    const options: EngineRunOptions = uyagin_run_options_normalize(*opts);
+    var scheduler: Scheduler = Scheduler{};
+    scheduler_init(&scheduler);
+    var served_total: i32 = 0;
+    while true {
+        if controller != null && controller.stop_requested != 0 {
+            break;
+        }
+        const fd: i32 = try sys_accept(srv.listen_fd, null, null);
+        uyagin_note_connection_open(engine);
+        var served: i32 = 0;
+        const served_result: !i32 = scheduler_run<!i32>(&scheduler, uyagin_serve_conn(engine, fd, &scheduler));
+        served = served_result catch {
+            uyagin_note_connection_close(engine);
+            continue;
+            0;
+        };
+        uyagin_note_connection_close(engine);
+        served_total = served_total + served;
+        if options.mode == UyaginMode.Debug {
+            break;
+        }
+    }
+    return served_total;
+}
 
 export fn uyagin_context_new_with_request_arena(fd: i32, req: &Request, persist: bool, allocator: &IAllocator, request_arena: &RequestArena) GinContext {
     return GinContext{
@@ -2134,6 +2204,7 @@ export fn uyagin_context_new_with_request_arena(fd: i32, req: &Request, persist:
         request: req,
         wrote: false,
         aborted: false,
+        hijacked: false,
         persist: persist,
         allocator: allocator,
         request_arena: request_arena,
@@ -2782,6 +2853,9 @@ fn uyagin_emit_access_log(engine: &Engine, ctx: &GinContext, status: Status, lat
 }
 
 fn uyagin_append_status_fast(out: &byte, cap: usize, pos: usize, status: Status) usize {
+    if status == Status.SwitchingProtocols {
+        return uyagin_append_slice_fast(out, cap, pos, "HTTP/1.1 101 Switching Protocols\r\n");
+    }
     if status == Status.OK {
         return uyagin_append_slice_fast(out, cap, pos, "HTTP/1.1 200 OK\r\n");
     }
@@ -3318,9 +3392,12 @@ export @async_fn fn uyagin_accept_async(srv: &HttpServer) Future<!i32> {
     if engine == null || fd < 0 || scheduler == null || conn_state == null {
         return error.InvalidRequest;
     }
+    var owned_fd: i32 = fd;
     const run_options: EngineRunOptions = uyagin_run_options_normalize(engine.run_options);
     defer {
-        _ = sys_close(fd) catch {};
+        if owned_fd >= 0 {
+            _ = sys_close(owned_fd) catch {};
+        }
     }
 
     while true {
@@ -3356,6 +3433,10 @@ export @async_fn fn uyagin_accept_async(srv: &HttpServer) Future<!i32> {
             const handled: i32 = try @await handle_future;
             _ = handled;
             conn_state.served = conn_state.served + 1;
+            if uyagin_context_is_hijacked(&conn_state.ctx) {
+                owned_fd = -1;
+                break;
+            }
             aborted = uyagin_context_aborted(&conn_state.ctx);
             if !conn_state.parse_result.request.http11 {
                 session_keep_alive = true;

@@ -31,9 +31,9 @@ fn index_of(haystack: &[byte], needle: &[byte]) i32 {
 }
 
 fn test_simplify_return_paren_ident() !void {
-    var arena_buf: [byte: 16384] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 16384);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "return (x);\n" as &[byte];
     const out: &[byte] = try simplify_text(&a, src);
@@ -41,9 +41,9 @@ fn test_simplify_return_paren_ident() !void {
 }
 
 fn test_simplify_return_paren_number() !void {
-    var arena_buf: [byte: 16384] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 16384);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "return (1);\n" as &[byte];
     const out: &[byte] = try simplify_text(&a, src);
@@ -51,9 +51,9 @@ fn test_simplify_return_paren_number() !void {
 }
 
 fn test_simplify_idempotent() !void {
-    var arena_buf: [byte: 32768] = [];
+    var arena_buf: [byte: 65536] = [];
     var a: Arena = undefined;
-    arena_init(&a, &arena_buf[0], 32768);
+    arena_init(&a, &arena_buf[0], 65536);
 
     const src: &[byte] = "return (x);\n" as &[byte];
     const out1: &[byte] = try simplify_text(&a, src);

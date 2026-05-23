@@ -86,9 +86,13 @@ fn empty_slice(arena: &Arena) &[byte] {
     return p[0:0];
 }
 
-fn write_token(out: &Token, index: usize, arena: &Arena, typ: TokenType, start_offset: usize, start_line: usize, start_column: usize, end_offset: usize, end_line: usize, end_column: usize) void {
+fn write_token(out: &Token, index: usize, arena: &Arena, src: &byte, typ: TokenType, start_offset: usize, start_line: usize, start_column: usize, end_offset: usize, end_line: usize, end_column: usize) void {
     out[index].type = typ;
-    out[index].lexeme = empty_slice(arena);
+    if end_offset > start_offset {
+        out[index].lexeme = src[start_offset:end_offset - start_offset];
+    } else {
+        out[index].lexeme = empty_slice(arena);
+    }
     out[index].span = span_init(
         position_init(start_offset, start_line, start_column),
         position_init(end_offset, end_line, end_column)
@@ -104,7 +108,11 @@ export fn tokenize_ptr_len(arena: &Arena, ptr: &byte, len: usize) !&[Token] {
         column: 1,
     };
 
-    var out: &Token = arena_alloc(arena, @size_of(Token) as usize * 256) as &Token;
+    const token_cap: usize = len + 1;
+    var out: &Token = arena_alloc(arena, @size_of(Token) as usize * token_cap) as &Token;
+    if out == null {
+        return error.AllocOutOfMemory;
+    }
     var count: usize = 0;
 
     while s.pos < s.len {
@@ -125,7 +133,7 @@ export fn tokenize_ptr_len(arena: &Arena, ptr: &byte, len: usize) !&[Token] {
                 s.pos = s.pos + 1;
                 s.column = s.column + 1;
             }
-            write_token(out, count, arena, token_type_for_ident_bytes(s.ptr, start_offset, s.pos), start_offset, start_line, start_column, s.pos, s.line, s.column);
+            write_token(out, count, arena, s.ptr, token_type_for_ident_bytes(s.ptr, start_offset, s.pos), start_offset, start_line, start_column, s.pos, s.line, s.column);
             count = count + 1;
             continue;
         }
@@ -137,7 +145,7 @@ export fn tokenize_ptr_len(arena: &Arena, ptr: &byte, len: usize) !&[Token] {
                 s.pos = s.pos + 1;
                 s.column = s.column + 1;
             }
-            write_token(out, count, arena, TokenType.TOKEN_NUMBER, start_offset, start_line, start_column, s.pos, s.line, s.column);
+            write_token(out, count, arena, s.ptr, TokenType.TOKEN_NUMBER, start_offset, start_line, start_column, s.pos, s.line, s.column);
             count = count + 1;
             continue;
         }
@@ -149,7 +157,7 @@ export fn tokenize_ptr_len(arena: &Arena, ptr: &byte, len: usize) !&[Token] {
                 s.pos = s.pos + 1;
                 s.column = s.column + 1;
             }
-            write_token(out, count, arena, TokenType.TOKEN_LINE_COMMENT, start_offset, start_line, start_column, s.pos, s.line, s.column);
+            write_token(out, count, arena, s.ptr, TokenType.TOKEN_LINE_COMMENT, start_offset, start_line, start_column, s.pos, s.line, s.column);
             count = count + 1;
             continue;
         }
@@ -172,7 +180,7 @@ export fn tokenize_ptr_len(arena: &Arena, ptr: &byte, len: usize) !&[Token] {
                     s.column = s.column + 1;
                 }
             }
-            write_token(out, count, arena, TokenType.TOKEN_BLOCK_COMMENT, start_offset, start_line, start_column, s.pos, s.line, s.column);
+            write_token(out, count, arena, s.ptr, TokenType.TOKEN_BLOCK_COMMENT, start_offset, start_line, start_column, s.pos, s.line, s.column);
             count = count + 1;
             continue;
         }
@@ -206,7 +214,7 @@ export fn tokenize_ptr_len(arena: &Arena, ptr: &byte, len: usize) !&[Token] {
 
         s.pos = s.pos + 1;
         s.column = s.column + 1;
-        write_token(out, count, arena, typ, start_offset, start_line, start_column, s.pos, s.line, s.column);
+        write_token(out, count, arena, s.ptr, typ, start_offset, start_line, start_column, s.pos, s.line, s.column);
         count = count + 1;
     }
 

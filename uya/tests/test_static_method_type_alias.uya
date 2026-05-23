@@ -20,7 +20,7 @@ struct Factory {
 type Maker = Factory;
 
 fn test_alias_static_method() !void {
-    const f: Maker = Maker.new();
+    var f: Maker = Maker.new();
     try assert_eq_i32(f.get(), 5);
 }
 

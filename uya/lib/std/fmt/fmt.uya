@@ -41,6 +41,27 @@ fn empty_byte_slice(arena: &Arena) &[byte] {
     return p[0:0];
 }
 
+fn is_ident_byte(c: byte) bool {
+    return (c >= 'a' as byte && c <= 'z' as byte) ||
+        (c >= 'A' as byte && c <= 'Z' as byte) ||
+        (c >= '0' as byte && c <= '9' as byte) ||
+        c == '_' as byte;
+}
+
+fn source_has_fn_decl(source: &[byte]) bool {
+    var i: usize = 0;
+    while i + 1 < source.len {
+        if source.ptr[i] == 'f' as byte &&
+            source.ptr[i + 1] == 'n' as byte &&
+            (i == 0 || !is_ident_byte(source.ptr[i - 1])) &&
+            (i + 2 >= source.len || !is_ident_byte(source.ptr[i + 2])) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 export fn format_ptr_len(arena: &Arena, ptr: &byte, len: usize) !&[byte] {
     const src: &[byte] = ptr[0:len];
     return format(arena, src);
@@ -70,6 +91,9 @@ export fn format_with_options(arena: &Arena, source: &[byte], opts: FormatOption
     }
     if opts.simplify {
         current = try simplify_text(arena, current);
+    }
+    if !source_has_fn_decl(current) {
+        return current;
     }
 
     const tokens: &[Token] = try tokenize(arena, current);
