@@ -463,3 +463,80 @@ test "rich toolbar dirty render updates active button in same frame" {
     try assert_eq_i32(dirty_result.present_mode as i32, RenderPresentMode.Dirty as i32);
     try assert_eq_bool(ctx_pixel(&ctx, 12, 11) == Color{ r: 37, g: 99, b: 235, a: 255 }, true);
 }
+
+test "rich toolbar hover move keeps active button state" {
+    gui_obj_reset_registry();
+
+    var root: Panel = Panel.new();
+    root.widget.at(0, 0);
+    root.widget.size(480, 160);
+    root.widget.base.style.set_u32(StyleProp.PaddingLeft, 0u32);
+    root.widget.base.style.set_u32(StyleProp.PaddingRight, 0u32);
+    root.widget.base.style.set_u32(StyleProp.PaddingTop, 0u32);
+    root.widget.base.style.set_u32(StyleProp.PaddingBottom, 0u32);
+
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    input.widget.at(0, 48);
+    input.widget.size(180, 72);
+    try input.set_plain_text("hello" as &const byte);
+
+    var toolbar: RichToolbar = RichToolbar.new(&input);
+    toolbar.widget.at(0, 0);
+    toolbar.widget.size(420, 38);
+
+    _ = gui_obj_register(0, root.obj());
+    _ = gui_obj_register(1, toolbar.obj());
+    _ = gui_obj_register(2, input.obj());
+    _ = root.add(toolbar.obj());
+    _ = root.add(input.obj());
+
+    var tree: ObjTree = obj_tree_new();
+    tree.set_root(0, root.obj());
+
+    var bytes: [byte: 307200] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 480, 160, 1920, PixelFormat.ARGB8888));
+
+    _ = render_schedule_tree_frame(
+        &ctx,
+        &tree,
+        Rect{ x: 0, y: 0, w: 480, h: 160 },
+        true,
+        Color{ r: 0, g: 0, b: 0, a: 255 },
+        null,
+        null,
+        null
+    );
+
+    var dispatcher: EventDispatcher = event_dispatcher_new();
+    _ = dispatcher.dispatch(event_point(EventType.Click, InputDev.Touch, -1, 1u32, Point{ x: rich_toolbar_smoke_click_x(0), y: 18i16 }), &tree);
+
+    const click_dirty_result: RenderFrameResult = render_schedule_tree_frame(
+        &ctx,
+        &tree,
+        Rect{ x: 0, y: 0, w: 480, h: 160 },
+        false,
+        Color{ r: 0, g: 0, b: 0, a: 255 },
+        null,
+        null,
+        null
+    );
+    try assert_eq_i32(click_dirty_result.present_mode as i32, RenderPresentMode.Dirty as i32);
+    try assert_eq_bool(ctx_pixel(&ctx, 12, 11) == Color{ r: 37, g: 99, b: 235, a: 255 }, true);
+
+    _ = dispatcher.process_hover(&tree, Point{ x: rich_toolbar_smoke_click_x(2), y: 18i16 }, 2u32);
+
+    const hover_dirty_result: RenderFrameResult = render_schedule_tree_frame(
+        &ctx,
+        &tree,
+        Rect{ x: 0, y: 0, w: 480, h: 160 },
+        false,
+        Color{ r: 0, g: 0, b: 0, a: 255 },
+        null,
+        null,
+        null
+    );
+    try assert_eq_i32(hover_dirty_result.present_mode as i32, RenderPresentMode.Dirty as i32);
+    try assert_eq_bool(ctx_pixel(&ctx, 12, 11) == Color{ r: 37, g: 99, b: 235, a: 255 }, true);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[0]), true);
+}

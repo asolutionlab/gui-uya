@@ -23,16 +23,13 @@ use widget.base.widget_new;
 use widget.base.widget_text_len;
 use widget.rich_text_input.RichCommand;
 use widget.rich_text_input.RichCommandKind;
-use widget.rich_text_input.RichTextFormatState;
 use widget.rich_text_input.RichTextInput;
 use richtext.document.RICH_MARK_BOLD;
 use richtext.document.RICH_MARK_INLINE_CODE;
 use richtext.document.RICH_MARK_ITALIC;
 use richtext.document.RICH_MARK_STRIKE;
 use richtext.document.RICH_MARK_UNDERLINE;
-use richtext.document.RichInlineMarks;
 use richtext.document.RichBlockType;
-use richtext.document.rich_inline_marks_none;
 
 export const RICH_TOOLBAR_MAX_FORMATS: i32 = 16;
 
@@ -149,93 +146,6 @@ export struct RichToolbar {
     pressed_index: i8,
     last_trigger_index: i8,
     last_trigger_timestamp: u32,
-    transient_state: RichTextFormatState,
-    transient_state_pending: bool,
-}
-
-fn rich_toolbar_default_state() RichTextFormatState {
-    return RichTextFormatState{
-        marks: rich_inline_marks_none(),
-        block_type: RichBlockType.Paragraph,
-        can_mention: true,
-        can_image: true,
-        can_embed: true,
-    };
-}
-
-fn rich_toolbar_toggle_mark(marks: RichInlineMarks, mark_bit: u16) RichInlineMarks {
-    var next: RichInlineMarks = marks;
-    if (next.bits & mark_bit) != 0u16 {
-        next.bits = next.bits & (~mark_bit);
-    } else {
-        next.bits = next.bits | mark_bit;
-    }
-    return next;
-}
-
-fn rich_toolbar_preview_state(spec: RichToolbarFormatSpec, state: RichTextFormatState) RichTextFormatState {
-    var next: RichTextFormatState = state;
-    if spec.command == RichCommandKind.ToggleBold {
-        next.marks = rich_toolbar_toggle_mark(next.marks, RICH_MARK_BOLD);
-        return next;
-    }
-    if spec.command == RichCommandKind.ToggleItalic {
-        next.marks = rich_toolbar_toggle_mark(next.marks, RICH_MARK_ITALIC);
-        return next;
-    }
-    if spec.command == RichCommandKind.ToggleUnderline {
-        next.marks = rich_toolbar_toggle_mark(next.marks, RICH_MARK_UNDERLINE);
-        return next;
-    }
-    if spec.command == RichCommandKind.ToggleStrike {
-        next.marks = rich_toolbar_toggle_mark(next.marks, RICH_MARK_STRIKE);
-        return next;
-    }
-    if spec.command == RichCommandKind.ToggleInlineCode {
-        next.marks = rich_toolbar_toggle_mark(next.marks, RICH_MARK_INLINE_CODE);
-        return next;
-    }
-    if spec.command == RichCommandKind.SetParagraph {
-        next.block_type = RichBlockType.Paragraph;
-        return next;
-    }
-    if spec.command == RichCommandKind.SetHeading1 {
-        next.block_type = RichBlockType.Heading1;
-        return next;
-    }
-    if spec.command == RichCommandKind.SetHeading2 {
-        next.block_type = RichBlockType.Heading2;
-        return next;
-    }
-    if spec.command == RichCommandKind.SetHeading3 {
-        next.block_type = RichBlockType.Heading3;
-        return next;
-    }
-    if spec.command == RichCommandKind.ToggleQuote {
-        if next.block_type == RichBlockType.Quote {
-            next.block_type = RichBlockType.Paragraph;
-        } else {
-            next.block_type = RichBlockType.Quote;
-        }
-        return next;
-    }
-    if spec.command == RichCommandKind.ToggleBulletList {
-        if next.block_type == RichBlockType.BulletItem {
-            next.block_type = RichBlockType.Paragraph;
-        } else {
-            next.block_type = RichBlockType.BulletItem;
-        }
-        return next;
-    }
-    if spec.command == RichCommandKind.ToggleOrderedList {
-        if next.block_type == RichBlockType.OrderedItem {
-            next.block_type = RichBlockType.Paragraph;
-        } else {
-            next.block_type = RichBlockType.OrderedItem;
-        }
-        return next;
-    }
-    return next;
 }
 
 RichToolbarRenderAdapter {
@@ -309,8 +219,6 @@ RichToolbar {
             pressed_index: -1i8,
             last_trigger_index: -1i8,
             last_trigger_timestamp: 0u32,
-            transient_state: rich_toolbar_default_state(),
-            transient_state_pending: false,
         };
     }
 
@@ -326,7 +234,6 @@ RichToolbar {
         if editor != null {
             _ = editor.bind_format_observer(&self.widget.base);
         }
-        self.transient_state_pending = false;
         self.widget.base.invalidate();
         return self;
     }
@@ -369,21 +276,13 @@ RichToolbar {
     }
 
     fn format_active(self: &Self, spec: RichToolbarFormatSpec) bool {
-        const state: RichTextFormatState = self.current_format_state();
-        if spec.mark_bit != 0u16 {
-            return (state.marks.bits & spec.mark_bit) != 0u16;
-        }
-        return rich_toolbar_block_active(spec, state.block_type);
-    }
-
-    fn current_format_state(self: &Self) RichTextFormatState {
-        if self.transient_state_pending {
-            return self.transient_state;
-        }
         if self.editor == null {
-            return rich_toolbar_default_state();
+            return false;
         }
-        return self.editor.current_format_state();
+        if spec.mark_bit != 0u16 {
+            return self.editor.format_has_mark(spec.mark_bit);
+        }
+        return rich_toolbar_block_active(spec, self.editor.format_block_type());
     }
 
     fn trigger_format(self: &Self, index: i32) bool {
@@ -395,11 +294,8 @@ RichToolbar {
             return false;
         }
         const cmd: RichCommand = rich_toolbar_command_for_spec(spec);
-        const preview_state: RichTextFormatState = rich_toolbar_preview_state(spec, self.editor.current_format_state());
         const handled: bool = self.editor.exec(cmd);
         if handled {
-            self.transient_state = preview_state;
-            self.transient_state_pending = true;
             self.editor.restore_focus_after_external_action();
             self.widget.base.invalidate();
         }
@@ -488,6 +384,5 @@ RichToolbar {
         if self.editor == null {
             ctx.draw_round_rect(inner, 6, TRANSPARENT, 0u8);
         }
-        self.transient_state_pending = false;
     }
 }
