@@ -87,7 +87,7 @@ struct DashboardCompareScene {
     metric: i32,
 }
 
-fn dashboard_metric_title(metric: i32) &const byte {
+fn dashboard_compare_metric_title(metric: i32) &const byte {
     if metric == 1 {
         return "Ops Dashboard / NET" as &const byte;
     }
@@ -97,7 +97,7 @@ fn dashboard_metric_title(metric: i32) &const byte {
     return "Ops Dashboard / CPU" as &const byte;
 }
 
-fn dashboard_fill_chart(chart: &Chart, metric: i32) void {
+fn dashboard_compare_fill_chart(chart: &Chart, metric: i32) void {
     _ = chart.clear();
     if metric == 1 {
         _ = chart.add_point(26);
@@ -175,8 +175,8 @@ fn dashboard_apply_metric(scene: &DashboardCompareScene, metric: i32) void {
     if scene.metric == metric {
         return;
     }
-    _ = scene.title.set_text(dashboard_metric_title(metric));
-    dashboard_fill_chart(&scene.chart, metric);
+    _ = scene.title.set_text(dashboard_compare_metric_title(metric));
+    dashboard_compare_fill_chart(&scene.chart, metric);
     dashboard_style_button(&scene.cpu, metric == 0);
     dashboard_style_button(&scene.net, metric == 1);
     dashboard_style_button(&scene.mem, metric == 2);
