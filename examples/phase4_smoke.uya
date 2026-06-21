@@ -1,0 +1,132 @@
+use gui.anim.easing.EasingType;
+use gui.anim.timeline.AnimManager;
+use gui.anim.timeline.anim_manager_new;
+use gui.anim.tween.AnimProp;
+use gui.anim.tween.Tween;
+use gui.anim.tween.anim_value_i32;
+use gui.core.color.Color;
+use gui.core.event.Event;
+use gui.core.event.EventType;
+use gui.core.event.event_none;
+use gui.core.obj.gui_obj_register;
+use gui.core.obj.gui_obj_reset_registry;
+use gui.core.point.Point;
+use gui.core.rect.Rect;
+use gui.platform.disp.DisplayDriverKind;
+use gui.platform.disp.DisplayDriverProfile;
+use gui.platform.disp.DisplayCtx;
+use gui.platform.disp.FrameBuffer;
+use gui.platform.disp.PixelFormat;
+use gui.platform.disp.display_ctx_new;
+use gui.platform.disp.display_driver_profile;
+use gui.platform.disp.framebuffer_new;
+use gui.platform.indev.IInputDev;
+use gui.platform.indev.InputManager;
+use gui.platform.indev.TouchDriver;
+use gui.platform.indev.input_manager_new;
+use gui.platform.indev.touch_driver_new;
+use gui.render.ctx.RenderCtx;
+use gui.render.ctx.render_ctx_new;
+use gui.render.img.ImageData;
+use gui.render.img.image_data_new;
+use gui.res.cache.ImageCache;
+use gui.res.cache.image_cache_new;
+use gui.res.cache.image_cache_put_async;
+use gui.res.fs.RomFileSystem;
+use gui.res.fs.fs_read_async;
+use gui.res.fs.rom_fs_new;
+use gui.style.StyleProp;
+use std.async.block_on;
+use gui.widget.page.Page;
+use gui.widget.page.PageNavigator;
+use gui.widget.page.PageTransitionKind;
+use gui.widget.page.page_navigator_new;
+
+/// 运行 `phase4_smoke` 场景并返回退出码。
+export fn run_phase4_smoke() i32 {
+    gui_obj_reset_registry();
+
+    var front_bytes: [byte: 16384] = [];
+    var back_bytes: [byte: 16384] = [];
+    const front: FrameBuffer = framebuffer_new(&front_bytes[0], 64, 48, 256, PixelFormat.ARGB8888);
+    const back: FrameBuffer = framebuffer_new(&back_bytes[0], 64, 48, 256, PixelFormat.ARGB8888);
+    var display: DisplayCtx = display_ctx_new(front, back);
+    _ = display;
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&back_bytes[0], 64, 48, 256, PixelFormat.ARGB8888));
+
+    var page_a: Page = Page.new("P4-A");
+    var page_b: Page = Page.new("P4-B");
+    page_a.widget.at(0, 0);
+    page_a.widget.size(64, 48);
+    page_b.widget.at(0, 0);
+    page_b.widget.size(64, 48);
+    page_a.widget.base.style.set_color(StyleProp.BgColor, Color{ r: 255, g: 243, b: 236, a: 255 });
+    page_b.widget.base.style.set_color(StyleProp.BgColor, Color{ r: 232, g: 244, b: 255, a: 255 });
+
+    _ = gui_obj_register(1, page_a.obj());
+    _ = gui_obj_register(2, page_b.obj());
+
+    var nav: PageNavigator = page_navigator_new(Rect{ x: 0, y: 0, w: 64, h: 48 });
+    _ = nav.push(page_a.obj(), PageTransitionKind.None, 0u32);
+    _ = nav.push(page_b.obj(), PageTransitionKind.SlideLeft, 120u32);
+    nav.render(&ctx);
+    nav.update(120u32);
+    if nav.top() != page_b.obj() {
+        return 1;
+    }
+
+    var manager: AnimManager = anim_manager_new();
+    var tween: Tween = Tween.new(2, AnimProp.X, anim_value_i32(12), 100u32);
+    tween.with_from_i32(0);
+    tween.with_easing(EasingType.EaseOutCubic);
+    _ = manager.start_tween(&tween) catch {
+        return 2;
+    };
+    manager.update_all(100u32);
+    if page_b.widget.base.x != 12 {
+        return 3;
+    }
+
+    var rom: RomFileSystem = rom_fs_new();
+    var blob: [byte: 4] = [80, 52, 33, 10];
+    var fs_out: [byte: 8] = [];
+    _ = rom.add_file("phase4.bin", &blob[0] as &const byte, 4usize);
+    const fs_n: usize = block_on<usize>(fs_read_async<RomFileSystem>(&rom, "phase4.bin", &fs_out[0], 8usize)) catch {
+        return 4;
+    };
+    if fs_n != 4usize || fs_out[0] != 80 {
+        return 5;
+    }
+
+    var cache: ImageCache = image_cache_new(4, 64u32);
+    var img_bytes: [byte: 12] = [255, 0, 0,   0, 255, 0,   0, 0, 255,   255, 255, 255];
+    const img: ImageData = image_data_new(&img_bytes[0], 2, 2, 6, PixelFormat.RGB888);
+    const loaded: bool = block_on<bool>(image_cache_put_async(&cache, 9u32, img)) catch {
+        return 6;
+    };
+    if !loaded {
+        return 7;
+    }
+
+    var out_img: ImageData = img;
+    if !cache.get(9u32, &out_img) || out_img.size.w != 2 {
+        return 8;
+    }
+
+    var touch: TouchDriver = touch_driver_new();
+    var manager_input: InputManager = input_manager_new();
+    var touch_dev: IInputDev = touch;
+    _ = manager_input.attach(&touch_dev);
+    touch.feed(3, 10u32, Point{ x: 4, y: 4 }, true);
+    var evt: Event = event_none();
+    if !manager_input.poll(&evt) || evt.event_type != EventType.Press {
+        return 9;
+    }
+
+    const st7789: DisplayDriverProfile = display_driver_profile(DisplayDriverKind.ST7789);
+    if st7789.width != 240 || st7789.height != 320 {
+        return 10;
+    }
+
+    return 0;
+}

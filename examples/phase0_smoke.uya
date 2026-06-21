@@ -1,0 +1,47 @@
+use std.runtime.entry;
+
+use gui.core.event.EventQueue;
+use gui.core.event.EventType;
+use gui.core.event.InputDev;
+use gui.core.event.event_point;
+use gui.core.event.event_queue_new;
+use gui.core.obj.GuiObj;
+use gui.core.obj.gui_obj_default;
+use gui.core.obj.gui_obj_register;
+use gui.core.obj.gui_obj_reset_registry;
+use gui.core.obj_tree.ObjTree;
+use gui.core.obj_tree.obj_tree_new;
+use gui.core.point.Point;
+use gui.core.rect.Rect;
+
+/// 运行 `phase0_smoke` 场景并返回退出码。
+export fn run_phase0_smoke() i32 {
+    gui_obj_reset_registry();
+
+    var root: GuiObj = gui_obj_default();
+    var child: GuiObj = gui_obj_default();
+    root.set_area(Rect{ x: 0, y: 0, w: 200, h: 200 });
+    child.set_area(Rect{ x: 20, y: 20, w: 50, h: 50 });
+
+    if !gui_obj_register(0, &root) {
+        return 1;
+    }
+    if !gui_obj_register(1, &child) {
+        return 2;
+    }
+
+    var tree: ObjTree = obj_tree_new();
+    tree.set_root(0, &root);
+    tree.attach(0, 1);
+
+    if tree.find_at_point(0, Point{ x: 25, y: 25 }) != 1 {
+        return 3;
+    }
+
+    var queue: EventQueue = event_queue_new();
+    if !queue.push(event_point(EventType.Click, InputDev.Touch, 1, 10, Point{ x: 25, y: 25 })) {
+        return 4;
+    }
+
+    return 0;
+}

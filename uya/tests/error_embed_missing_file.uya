@@ -1,5 +1,0 @@
-export fn main() i32 {
-    const _x: &[const byte] = @embed("fixtures/embed/does_not_exist.bin");
-    _ = _x;
-    return 0;
-}

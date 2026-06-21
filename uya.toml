@@ -1,15 +1,17 @@
 [package]
 name = "gui_uya"
+module = "gui_uya"
 version = "0.1.0-dev"
+source-dir = "src"
 uya_min_version = "0.9.4"
 description = "Embedded GUI runtime and simulator scaffolding built with Uya."
 
 [layout]
-source_dir = "gui"
-test_dir = "gui/tests"
-bench_dir = "gui/benchmarks"
-example_dir = "gui/examples"
+source_dir = "src"
+test_dir = "tests"
+bench_dir = "src/gui/benchmarks"
+example_dir = "examples"
 
 [tool.make]
 default_target = "test"
-smoke_example = "gui/phase2_smoke.uya"
+smoke_example = "apps/phase6_smoke.uya"

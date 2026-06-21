@@ -8,14 +8,14 @@
 
 - 已落地阶段 A 主体代码：`rules.uya`、`ai.uya`、`demo_doudizhu.uya`、sim 接入和基础测试文件均已创建并接线。
 - 当前仍以离线路径为唯一完成口径；OpenAI 相关文件尚未开始。
-- 已真实通过默认测试链路：`./uya/bin/uya test gui/test_suite.uya -O0 --stack-size 65536`、`make test`。
+- 已真实通过默认测试链路：`make test`。
 - 已真实通过 headless smoke，并产出/核对 `build/sim/doudizhu.bmp` 截图。
 - 已修复 simulator 窗口路径下 `--max-frames` 对静态 retained 页面不退出的问题，并真实通过 `make sim-run SIM_ARGS="--demo doudizhu --max-frames 3 --screenshot build/sim/doudizhu_simrun_check.bmp"`。
 - 文档中仍保留未完成的只有手工可玩与完整打一局相关项。
 
 ## 1. 项目背景
 
-当前仓库是 UyaGUI 嵌入式 GUI/模拟器工程，已有 `2048`、`novel`、`widgets` 等 retained-state demo。斗地主 demo 应沿用现有 demo 结构：示例逻辑放在 `gui/examples/*`，模拟器入口由 `gui/sim/config.uya` 和 `gui/sim/app.uya` 接入，运行通过 `make sim-run` / `make sim-headless` 验证。
+当前仓库是 UyaGUI 嵌入式 GUI/模拟器工程，已有 `2048`、`novel`、`widgets` 等 retained-state demo。斗地主 demo 应沿用现有 demo 结构：示例逻辑放在 `examples/*`，模拟器入口由 `src/gui/sim/config.uya` 和 `src/gui/sim/app.uya` 接入，运行通过 `make sim-run` / `make sim-headless` 验证。
 
 本项目最终目标包含 OpenAI 决策路径，但开发上不建议一开始把规则、UI、模拟器接入、网络桥接混做。推荐拆成两个严格串行的阶段：
 
@@ -190,30 +190,30 @@ SDL2 input / keyboard
 
 ### 8.1 阶段 A 新增文件
 
-- `gui/examples/demo_doudizhu.uya`
-- `gui/examples/doudizhu/rules.uya`
-- `gui/examples/doudizhu/ai.uya`
-- `gui/tests/test_doudizhu_rules.uya`
-- `gui/tests/test_doudizhu_ai.uya`
+- `examples/demo_doudizhu.uya`
+- `examples/doudizhu/rules.uya`
+- `examples/doudizhu/ai.uya`
+- `tests/test_doudizhu_rules.uya`
+- `tests/test_doudizhu_ai.uya`
 
 ### 8.2 阶段 A 修改文件
 
-- `gui/sim/config.uya`
-- `gui/sim/app.uya`
-- `gui/test_suite.uya`
+- `src/gui/sim/config.uya`
+- `src/gui/sim/app.uya`
+- `tests/test_suite.uya`
 - `docs/openai_doudizhu_demo_todo.md`
 
 ### 8.3 阶段 B 新增文件
 
-- `gui/platform/openai/chat.uya`
-- `gui/platform/openai/openai_chat_host.c`
-- `gui/platform/openai/openai_chat_stub.c`
+- `src/gui/platform/openai/chat.uya`
+- `src/gui/platform/openai/openai_chat_host.c`
+- `src/gui/platform/openai/openai_chat_stub.c`
 
 ### 8.4 阶段 B 修改文件
 
 - `tools/build_gui_sim.sh`
 - `README.md`
-- `gui/examples/doudizhu/ai.uya`
+- `examples/doudizhu/ai.uya`
 
 ## 9. 常量与数据结构
 
@@ -420,7 +420,7 @@ DdzPageRetained
 - `SimDemoKind.Doudizhu`
 - `--demo doudizhu`
 - `sim_demo_name()` 返回 `斗地主`
-- `gui/sim/app.uya` 接入 render/update/input
+- `src/gui/sim/app.uya` 接入 render/update/input
 - 热键 `Z`
 
 ### 10.5 tests 与 smoke
@@ -429,7 +429,7 @@ DdzPageRetained
 
 - 规则单测
 - AI 单测
-- `gui/test_suite.uya` 聚合
+- `tests/test_suite.uya` 聚合
 - `make test`
 - `sim-run` 手工对局验证
 - `sim-headless` 截图 smoke
@@ -574,7 +574,6 @@ bridge 不知道斗地主规则本身。
 
 必须全部满足：
 
-- `./uya/bin/uya test gui/test_suite.uya -O0 --stack-size 65536`
 - `make test`
 - `make sim-run SIM_ARGS="--demo doudizhu --scale 1"`
 - 至少手工完整跑完一局

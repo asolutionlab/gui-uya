@@ -1,5 +1,6 @@
 build/
-gui/build/
+src/gui/build/
+__pycache__/
 .uyacache/
 *.o
 *.out

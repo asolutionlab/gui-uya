@@ -1,0 +1,173 @@
+use gui.core.color.BLUE;
+use gui.core.color.Color;
+use gui.core.color.GREEN;
+use gui.core.color.RED;
+use gui.core.rect.Rect;
+use gui.platform.disp.DisplayCtx;
+use gui.platform.disp.FrameBuffer;
+use gui.platform.disp.PixelFormat;
+use gui.platform.disp.display_ctx_new;
+use gui.platform.disp.framebuffer_copy;
+use gui.platform.disp.framebuffer_new;
+use gui.render.batch.DrawBatch;
+use gui.render.batch.draw_batch_new;
+use gui.render.cpu_backend.cpu_render_batch_execute;
+use gui.render.ctx.RenderCtx;
+use gui.render.ctx.RenderMode;
+use gui.render.ctx.render_ctx_attach_batch;
+use gui.render.ctx.ctx_pixel;
+use gui.render.ctx.render_ctx_set_mode;
+use gui.render.ctx.render_ctx_new;
+use gui.render.gpu.GpuFillRectCmd;
+use gui.render.gpu.GpuStrokeRectCmd;
+use gui.render.gpu_software.SoftwareGpuCtx;
+use gui.render.gpu_software.software_gpu_new;
+use gui.render.zerocopy.ZeroCopyCtx;
+use gui.render.zerocopy.zerocopy_ctx_new;
+use std.testing.assert_eq_bool;
+use std.testing.assert_eq_i32;
+
+export const TEST_RENDER_PIPELINE_MODULE: i32 = 1;
+
+test "batch optimize merges adjacent rects and executes" {
+    var bytes: [byte: 256] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 8, 8, 16, PixelFormat.RGB565));
+    var batch: DrawBatch = draw_batch_new();
+    const red0: Color = Color{ r: 255, g: 0, b: 0, a: 255 };
+    const red1: Color = Color{ r: 255, g: 0, b: 0, a: 255 };
+    const red2: Color = Color{ r: 255, g: 0, b: 0, a: 255 };
+
+    batch.push_fill_rect(Rect{ x: 0, y: 0, w: 2, h: 2 }, red0);
+    batch.push_fill_rect(Rect{ x: 2, y: 0, w: 2, h: 2 }, red1);
+    batch.optimize();
+    try assert_eq_i32(batch.count as i32, 1);
+    cpu_render_batch_execute(&ctx, &batch);
+
+    try assert_eq_bool(ctx_pixel(&ctx, 3, 0) == red2, true);
+    try assert_eq_i32(ctx.stats.batch_flushes as i32, 1);
+}
+
+test "batch optimize reorders safe commands and merges separated runs" {
+    var bytes: [byte: 1024] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 16, 16, 64, PixelFormat.ARGB8888));
+    var batch: DrawBatch = draw_batch_new();
+    const red_a: Color = Color{ r: 255, g: 0, b: 0, a: 255 };
+    const blue_a: Color = Color{ r: 0, g: 0, b: 255, a: 255 };
+    const red_b: Color = Color{ r: 255, g: 0, b: 0, a: 255 };
+    const white_a: Color = Color{ r: 255, g: 255, b: 255, a: 255 };
+    const green_a: Color = Color{ r: 0, g: 255, b: 0, a: 255 };
+    const white_b: Color = Color{ r: 255, g: 255, b: 255, a: 255 };
+    const red_expect: Color = Color{ r: 255, g: 0, b: 0, a: 255 };
+    const blue_expect: Color = Color{ r: 0, g: 0, b: 255, a: 255 };
+    const white_expect: Color = Color{ r: 255, g: 255, b: 255, a: 255 };
+    const green_expect: Color = Color{ r: 0, g: 255, b: 0, a: 255 };
+
+    batch.push_fill_rect(Rect{ x: 0, y: 0, w: 2, h: 2 }, red_a);
+    batch.push_fill_rect(Rect{ x: 10, y: 0, w: 2, h: 2 }, blue_a);
+    batch.push_fill_rect(Rect{ x: 2, y: 0, w: 2, h: 2 }, red_b);
+    batch.push_line(0, 6, 1, 6, white_a, 1);
+    batch.push_line(10, 6, 11, 6, green_a, 1);
+    batch.push_line(2, 6, 3, 6, white_b, 1);
+
+    const switches_before: i32 = batch.state_switch_count() as i32;
+    batch.optimize();
+    cpu_render_batch_execute(&ctx, &batch);
+
+    try assert_eq_i32(switches_before, 6);
+    try assert_eq_i32(batch.count as i32, 4);
+    try assert_eq_i32(batch.state_switches_after as i32, 4);
+    try assert_eq_bool(batch.state_switches_after < batch.state_switches_before, true);
+    try assert_eq_bool(batch.merge_count >= 2u16, true);
+    try assert_eq_bool(batch.reorder_count > 0u16, true);
+    try assert_eq_bool(ctx_pixel(&ctx, 3, 0) == red_expect, true);
+    try assert_eq_bool(ctx_pixel(&ctx, 10, 0) == blue_expect, true);
+    try assert_eq_bool(ctx_pixel(&ctx, 3, 6) == white_expect, true);
+    try assert_eq_bool(ctx_pixel(&ctx, 10, 6) == green_expect, true);
+}
+
+test "batch optimize keeps overlapping draws in original order" {
+    var bytes: [byte: 1024] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 16, 16, 64, PixelFormat.ARGB8888));
+    var batch: DrawBatch = draw_batch_new();
+    const blue_first: Color = Color{ r: 0, g: 0, b: 255, a: 255 };
+    const red_second: Color = Color{ r: 255, g: 0, b: 0, a: 255 };
+    const red_expect: Color = Color{ r: 255, g: 0, b: 0, a: 255 };
+
+    batch.push_fill_rect(Rect{ x: 2, y: 2, w: 4, h: 4 }, blue_first);
+    batch.push_fill_rect(Rect{ x: 0, y: 0, w: 8, h: 8 }, red_second);
+
+    const switches_before: i32 = batch.state_switch_count() as i32;
+    batch.optimize();
+    cpu_render_batch_execute(&ctx, &batch);
+
+    try assert_eq_i32(switches_before, 2);
+    try assert_eq_i32(batch.count as i32, 2);
+    try assert_eq_i32(batch.state_switches_after as i32, 2);
+    try assert_eq_i32(batch.reorder_count as i32, 0);
+    try assert_eq_bool(ctx_pixel(&ctx, 3, 3) == red_expect, true);
+}
+
+test "software gpu and zerocopy present rendered content" {
+    var front_bytes: [byte: 256] = [];
+    var back_bytes: [byte: 256] = [];
+    const front: FrameBuffer = framebuffer_new(&front_bytes[0], 8, 8, 32, PixelFormat.ARGB8888);
+    const back: FrameBuffer = framebuffer_new(&back_bytes[0], 8, 8, 32, PixelFormat.ARGB8888);
+    var display: DisplayCtx = display_ctx_new(front, back);
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&back_bytes[0], 8, 8, 32, PixelFormat.ARGB8888));
+    var gpu: SoftwareGpuCtx = software_gpu_new(&ctx);
+    var zc: ZeroCopyCtx = zerocopy_ctx_new(&display);
+    const green1: Color = Color{ r: 0, g: 255, b: 0, a: 255 };
+    var fill_cmds: [GpuFillRectCmd: 1] = [GpuFillRectCmd{
+        rect: Rect{ x: 0, y: 0, w: 2, h: 2 },
+        color: Color{ r: 0, g: 255, b: 0, a: 255 },
+    }];
+    var stroke_cmds: [GpuStrokeRectCmd: 1] = [GpuStrokeRectCmd{
+        rect: Rect{ x: 0, y: 0, w: 2, h: 2 },
+        color: Color{ r: 0, g: 255, b: 0, a: 255 },
+        width: 1,
+    }];
+
+    gpu.fill_rects(&fill_cmds[0], 1);
+    gpu.draw_rects(&stroke_cmds[0], 1);
+    gpu.sync();
+    zc.present(Rect{ x: 0, y: 0, w: 2, h: 2 });
+
+    try assert_eq_i32(display.frame_id as i32, 1);
+    try assert_eq_bool(ctx_pixel(&ctx, 0, 0) == green1, true);
+    try assert_eq_i32(gpu.sync_count as i32, 1);
+}
+
+test "render ctx batch mode flushes queued geometry" {
+    var bytes: [byte: 256] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 8, 8, 32, PixelFormat.ARGB8888));
+    var batch: DrawBatch = draw_batch_new();
+    render_ctx_attach_batch(&ctx, &batch);
+    render_ctx_set_mode(&ctx, RenderMode.Batch);
+
+    const red_draw: Color = Color{ r: 255, g: 0, b: 0, a: 255 };
+    const red_expect: Color = Color{ r: 255, g: 0, b: 0, a: 255 };
+    const white_draw: Color = Color{ r: 255, g: 255, b: 255, a: 255 };
+    const white_expect: Color = Color{ r: 255, g: 255, b: 255, a: 255 };
+    ctx.fill_rect(Rect{ x: 0, y: 0, w: 3, h: 3 }, red_draw);
+    ctx.draw_line(0, 4, 7, 4, white_draw, 1);
+
+    try assert_eq_i32(batch.count as i32, 2);
+    try assert_eq_i32(ctx.stats.batch_flushes as i32, 0);
+    try assert_eq_bool(ctx_pixel(&ctx, 2, 2) == red_expect, true);
+    try assert_eq_bool(ctx_pixel(&ctx, 7, 4) == white_expect, true);
+    try assert_eq_i32(batch.count as i32, 0);
+    try assert_eq_i32(ctx.stats.batch_flushes as i32, 1);
+}
+
+test "framebuffer copy preserves previous frame for retained render" {
+    var src_bytes: [byte: 64] = [];
+    var dst_bytes: [byte: 64] = [];
+    var src_ctx: RenderCtx = render_ctx_new(framebuffer_new(&src_bytes[0], 4, 4, 16, PixelFormat.ARGB8888));
+    var dst_fb: FrameBuffer = framebuffer_new(&dst_bytes[0], 4, 4, 16, PixelFormat.ARGB8888);
+    var dst_ctx: RenderCtx = render_ctx_new(dst_fb);
+    const red_expect: Color = Color{ r: 255, g: 0, b: 0, a: 255 };
+
+    src_ctx.fill_rect(Rect{ x: 1, y: 1, w: 2, h: 2 }, Color{ r: 255, g: 0, b: 0, a: 255 });
+    try assert_eq_bool(framebuffer_copy(&dst_fb, &src_ctx.fb), true);
+    try assert_eq_bool(ctx_pixel(&dst_ctx, 2, 2) == red_expect, true);
+}

@@ -1,0 +1,636 @@
+use gui.core.color.BLACK;
+use gui.core.color.Color;
+use gui.core.rect.Rect;
+use gui.core.size.SIZE_ZERO;
+use gui.core.size.Size;
+
+extern fn memcpy(dst: &byte, src: &const byte, n: usize) &void;
+
+type DispByteVec16 = @vector(u8, 16);
+
+fn copy_color(color: &Color) Color {
+    return Color{
+        r: color.r,
+        g: color.g,
+        b: color.b,
+        a: color.a,
+    };
+}
+
+fn grayscale(color: &Color) u8 {
+    return (((color.r as u32) * 30u32 + (color.g as u32) * 59u32 + (color.b as u32) * 11u32) / 100u32) as u8;
+}
+
+fn pack_argb4444(color: &Color) u16 {
+    const a: u16 = ((color.a as u32 >> 4) as! u16).value;
+    const r: u16 = ((color.r as u32 >> 4) as! u16).value;
+    const g: u16 = ((color.g as u32 >> 4) as! u16).value;
+    const b: u16 = ((color.b as u32 >> 4) as! u16).value;
+    return (a << 12) | (r << 8) | (g << 4) | b;
+}
+
+fn unpack_argb4444(bits: u16) Color {
+    const a4: u16 = (bits >> 12) & 0x000Fu16;
+    const r4: u16 = (bits >> 8) & 0x000Fu16;
+    const g4: u16 = (bits >> 4) & 0x000Fu16;
+    const b4: u16 = bits & 0x000Fu16;
+    return Color{
+        a: ((a4 * 17u16) as! u8).value,
+        r: ((r4 * 17u16) as! u8).value,
+        g: ((g4 * 17u16) as! u8).value,
+        b: ((b4 * 17u16) as! u8).value,
+    };
+}
+
+fn unpack_rgb565(bits: u16) Color {
+    const r5: u16 = (bits >> 11) & 0x001Fu16;
+    const g6: u16 = (bits >> 5) & 0x003Fu16;
+    const b5: u16 = bits & 0x001Fu16;
+    return Color{
+        r: (((r5 << 3) | (r5 >> 2)) as! u8).value,
+        g: (((g6 << 2) | (g6 >> 4)) as! u8).value,
+        b: (((b5 << 3) | (b5 >> 2)) as! u8).value,
+        a: 255,
+    };
+}
+
+fn fill_repeat_bytes1(dst: &byte, len: usize, value: u8) void {
+    const fill: DispByteVec16 = @vector.splat(value);
+    var off: usize = 0usize;
+    while off + 16usize <= len {
+        @vector.store(&dst[off], fill);
+        off = off + 16usize;
+    }
+    while off < len {
+        dst[off] = value;
+        off = off + 1usize;
+    }
+}
+
+fn fill_repeat_bytes2(dst: &byte, len: usize, b0: u8, b1: u8) void {
+    var pattern: [byte: 16] = [];
+    var i: usize = 0usize;
+    while i < 16usize {
+        pattern[i] = b0;
+        pattern[i + 1usize] = b1;
+        i = i + 2usize;
+    }
+    const fill: DispByteVec16 = @vector.load(&pattern[0]);
+    var off: usize = 0usize;
+    while off + 16usize <= len {
+        @vector.store(&dst[off], fill);
+        off = off + 16usize;
+    }
+    while off + 1usize < len {
+        dst[off] = b0;
+        dst[off + 1usize] = b1;
+        off = off + 2usize;
+    }
+}
+
+fn fill_repeat_bytes4(dst: &byte, len: usize, b0: u8, b1: u8, b2: u8, b3: u8) void {
+    var pattern: [byte: 16] = [];
+    var i: usize = 0usize;
+    while i < 16usize {
+        pattern[i] = b0;
+        pattern[i + 1usize] = b1;
+        pattern[i + 2usize] = b2;
+        pattern[i + 3usize] = b3;
+        i = i + 4usize;
+    }
+    const fill: DispByteVec16 = @vector.load(&pattern[0]);
+    var off: usize = 0usize;
+    while off + 16usize <= len {
+        @vector.store(&dst[off], fill);
+        off = off + 16usize;
+    }
+    while off + 3usize < len {
+        dst[off] = b0;
+        dst[off + 1usize] = b1;
+        dst[off + 2usize] = b2;
+        dst[off + 3usize] = b3;
+        off = off + 4usize;
+    }
+}
+
+fn fill_repeat_rgb888(dst: &byte, width: usize, color: &Color) void {
+    var x: usize = 0usize;
+    while x < width {
+        const off: usize = x * 3usize;
+        dst[off] = color.r;
+        dst[off + 1usize] = color.g;
+        dst[off + 2usize] = color.b;
+        x = x + 1usize;
+    }
+}
+
+fn framebuffer_row_bytes(fb: &FrameBuffer) usize {
+    if fb.format == PixelFormat.I1 {
+        return (fb.size.w as usize + 7usize) / 8usize;
+    }
+    if fb.format == PixelFormat.I4 {
+        return (fb.size.w as usize + 1usize) / 2usize;
+    }
+    return fb.size.w as usize * bytes_per_pixel(fb.format) as usize;
+}
+
+fn clear_row_fast(fb: &FrameBuffer, row_offset: usize, width: usize, color: &Color) bool {
+    if color.a != 255u8 {
+        return false;
+    }
+
+    if fb.format == PixelFormat.RGB565 {
+        const bits: u16 = color.to_rgb565();
+        fill_repeat_bytes2(
+            &fb.pixels[row_offset],
+            width * 2usize,
+            ((bits & 0x00FFu16) as! u8).value,
+            ((bits >> 8) as! u8).value
+        );
+        return true;
+    }
+    if fb.format == PixelFormat.RGB888 {
+        fill_repeat_rgb888(&fb.pixels[row_offset], width, color);
+        return true;
+    }
+    if fb.format == PixelFormat.ARGB8888 {
+        fill_repeat_bytes4(&fb.pixels[row_offset], width * 4usize, color.a, color.r, color.g, color.b);
+        return true;
+    }
+    if fb.format == PixelFormat.ARGB4444 {
+        const bits: u16 = pack_argb4444(color);
+        fill_repeat_bytes2(
+            &fb.pixels[row_offset],
+            width * 2usize,
+            ((bits & 0x00FFu16) as! u8).value,
+            ((bits >> 8) as! u8).value
+        );
+        return true;
+    }
+    if fb.format == PixelFormat.L8 {
+        fill_repeat_bytes1(&fb.pixels[row_offset], width, grayscale(color));
+        return true;
+    }
+    if fb.format == PixelFormat.A8 {
+        fill_repeat_bytes1(&fb.pixels[row_offset], width, color.a);
+        return true;
+    }
+    return false;
+}
+
+fn pixel_byte_offset(fb: &FrameBuffer, x: i32, y: i32) usize {
+    const row: usize = (y as! usize).value * fb.stride as usize;
+    if fb.format == PixelFormat.RGB565 || fb.format == PixelFormat.ARGB4444 {
+        return row + (x as! usize).value * 2usize;
+    }
+    if fb.format == PixelFormat.RGB888 {
+        return row + (x as! usize).value * 3usize;
+    }
+    if fb.format == PixelFormat.ARGB8888 {
+        return row + (x as! usize).value * 4usize;
+    }
+    if fb.format == PixelFormat.L8 || fb.format == PixelFormat.A8 {
+        return row + (x as! usize).value;
+    }
+    if fb.format == PixelFormat.I1 {
+        return row + ((x as! usize).value / 8usize);
+    }
+    return row + ((x as! usize).value / 2usize);
+}
+
+fn framebuffer_write_pixel_raw(fb: &FrameBuffer, x: i32, y: i32, color: &Color) void {
+    const offset: usize = pixel_byte_offset(fb, x, y);
+    if fb.format == PixelFormat.RGB565 {
+        const bits: u16 = color.to_rgb565();
+        fb.pixels[offset] = ((bits & 0x00FFu16) as! u8).value;
+        fb.pixels[offset + 1usize] = ((bits >> 8) as! u8).value;
+        return;
+    }
+    if fb.format == PixelFormat.RGB888 {
+        fb.pixels[offset] = color.r;
+        fb.pixels[offset + 1usize] = color.g;
+        fb.pixels[offset + 2usize] = color.b;
+        return;
+    }
+    if fb.format == PixelFormat.ARGB8888 {
+        fb.pixels[offset] = color.a;
+        fb.pixels[offset + 1usize] = color.r;
+        fb.pixels[offset + 2usize] = color.g;
+        fb.pixels[offset + 3usize] = color.b;
+        return;
+    }
+    if fb.format == PixelFormat.ARGB4444 {
+        const bits: u16 = pack_argb4444(color);
+        fb.pixels[offset] = ((bits & 0x00FFu16) as! u8).value;
+        fb.pixels[offset + 1usize] = ((bits >> 8) as! u8).value;
+        return;
+    }
+    if fb.format == PixelFormat.L8 {
+        fb.pixels[offset] = grayscale(color);
+        return;
+    }
+    if fb.format == PixelFormat.A8 {
+        fb.pixels[offset] = color.a;
+        return;
+    }
+    if fb.format == PixelFormat.I1 {
+        const bit: i32 = 7 - (x % 8);
+        const mask: u8 = 1u8 << bit;
+        const gray: u8 = grayscale(color);
+        const current: u8 = fb.pixels[offset];
+        if gray >= 128 {
+            fb.pixels[offset] = current | mask;
+        } else {
+            fb.pixels[offset] = current & (0xFFu8 ^ mask);
+        }
+        return;
+    }
+
+    const gray4: u8 = grayscale(color) >> 4;
+    const current: u8 = fb.pixels[offset];
+    if (x % 2) == 0 {
+        fb.pixels[offset] = (current & 0x0Fu8) | (gray4 << 4);
+    } else {
+        fb.pixels[offset] = (current & 0xF0u8) | gray4;
+    }
+}
+
+export enum PixelFormat {
+    RGB565,
+    RGB888,
+    ARGB8888,
+    ARGB4444,
+    L8,
+    A8,
+    I1,
+    I4,
+}
+
+export struct FrameBuffer {
+    pixels: &byte,
+    size: Size,
+    stride: u16,
+    format: PixelFormat,
+}
+
+export struct DisplayCtx {
+    front: FrameBuffer,
+    back: FrameBuffer,
+    frame_id: u32,
+
+    fn swap_buffers(self: &Self) void {
+        const tmp: FrameBuffer = self.front;
+        self.front = self.back;
+        self.back = tmp;
+        self.frame_id = self.frame_id + 1u32;
+    }
+
+    fn get_back_buffer(self: &Self) &FrameBuffer {
+        return &self.back;
+    }
+
+    fn get_front_buffer(self: &Self) &FrameBuffer {
+        return &self.front;
+    }
+
+    fn clear(self: &Self, color: Color) void {
+        framebuffer_clear(&self.back, color);
+    }
+}
+
+/// 返回指定像素格式的每像素字节数。
+export fn bytes_per_pixel(format: PixelFormat) u8 {
+    if format == PixelFormat.RGB565 || format == PixelFormat.ARGB4444 {
+        return 2;
+    }
+    if format == PixelFormat.RGB888 {
+        return 3;
+    }
+    if format == PixelFormat.ARGB8888 {
+        return 4;
+    }
+    if format == PixelFormat.L8 || format == PixelFormat.A8 {
+        return 1;
+    }
+    return 1;
+}
+
+/// 计算指定帧缓冲配置所需的总字节数。
+export fn framebuffer_required_bytes(w: u16, h: u16, format: PixelFormat) usize {
+    if format == PixelFormat.I1 {
+        return (w as usize + 7usize) / 8usize * h as usize;
+    }
+    if format == PixelFormat.I4 {
+        return (w as usize + 1usize) / 2usize * h as usize;
+    }
+    return w as usize * h as usize * bytes_per_pixel(format) as usize;
+}
+
+/// 返回帧缓冲覆盖的完整矩形区域。
+export fn framebuffer_rect(fb: &FrameBuffer) Rect {
+    return Rect{ x: 0, y: 0, w: fb.size.w, h: fb.size.h };
+}
+
+/// 复制整个源帧缓冲到目标帧缓冲。
+export fn framebuffer_copy(dst: &FrameBuffer, src: &FrameBuffer) bool {
+    if dst == null || src == null || dst.pixels == null || src.pixels == null {
+        return false;
+    }
+    if dst.size.w != src.size.w || dst.size.h != src.size.h || dst.format != src.format {
+        return false;
+    }
+
+    const row_bytes: usize = framebuffer_row_bytes(src);
+    if row_bytes == 0usize {
+        return false;
+    }
+
+    if dst.stride as usize == row_bytes && src.stride as usize == row_bytes {
+        _ = memcpy(dst.pixels, src.pixels as &const byte, row_bytes * src.size.h as usize);
+        return true;
+    }
+
+    var y: usize = 0usize;
+    while y < src.size.h as usize {
+        const dst_row: usize = y * dst.stride as usize;
+        const src_row: usize = y * src.stride as usize;
+        _ = memcpy(&dst.pixels[dst_row], &src.pixels[src_row] as &const byte, row_bytes);
+        y = y + 1usize;
+    }
+    return true;
+}
+
+/// 复制源帧缓冲的指定矩形区域到目标帧缓冲。
+export fn framebuffer_copy_rect(dst: &FrameBuffer, src: &FrameBuffer, rect: Rect) bool {
+    if dst == null || src == null || dst.pixels == null || src.pixels == null || rect.is_empty() {
+        return false;
+    }
+    if dst.format != src.format || dst.size.w != src.size.w || dst.size.h != src.size.h {
+        return false;
+    }
+
+    const src_rect: Rect = framebuffer_rect(src);
+    const clipped: Rect = src_rect.intersect(rect);
+    if clipped.is_empty() {
+        return false;
+    }
+
+    var pixel_bytes: usize = 0usize;
+    if src.format == PixelFormat.I1 {
+        if clipped.x as i32 % 8 != 0 || clipped.w as i32 % 8 != 0 {
+            return false;
+        }
+        pixel_bytes = clipped.w as usize / 8usize;
+    } else if src.format == PixelFormat.I4 {
+        if clipped.x as i32 % 2 != 0 || clipped.w as i32 % 2 != 0 {
+            return false;
+        }
+        pixel_bytes = clipped.w as usize / 2usize;
+    } else {
+        pixel_bytes = clipped.w as usize * bytes_per_pixel(src.format) as usize;
+    }
+
+    var y: usize = 0usize;
+    while y < clipped.h as usize {
+        const src_off: usize = pixel_byte_offset(src, clipped.x as i32, clipped.y as i32 + y as i32);
+        const dst_off: usize = pixel_byte_offset(dst, clipped.x as i32, clipped.y as i32 + y as i32);
+        _ = memcpy(&dst.pixels[dst_off], &src.pixels[src_off] as &const byte, pixel_bytes);
+        y = y + 1usize;
+    }
+    return true;
+}
+
+/// 根据像素指针和尺寸信息构造帧缓冲描述符。
+export fn framebuffer_new(pixels: &byte, w: u16, h: u16, stride: u16, format: PixelFormat) FrameBuffer {
+    return FrameBuffer{
+        pixels: pixels,
+        size: Size{ w: w, h: h },
+        stride: stride,
+        format: format,
+    };
+}
+
+/// 返回空的帧缓冲描述符。
+export fn empty_framebuffer() FrameBuffer {
+    return FrameBuffer{
+        pixels: null,
+        size: SIZE_ZERO,
+        stride: 0,
+        format: PixelFormat.RGB565,
+    };
+}
+
+/// 创建包含前后缓冲的显示上下文。
+export fn display_ctx_new(front: FrameBuffer, back: FrameBuffer) DisplayCtx {
+    return DisplayCtx{
+        front: front,
+        back: back,
+        frame_id: 0u32,
+    };
+}
+
+/// 判断坐标是否位于帧缓冲范围内。
+export fn framebuffer_inside(fb: &FrameBuffer, x: i32, y: i32) bool {
+    return x >= 0 && y >= 0 && x < fb.size.w as i32 && y < fb.size.h as i32;
+}
+
+/// 读取帧缓冲指定坐标的颜色值。
+export fn framebuffer_get_pixel(fb: &FrameBuffer, x: i32, y: i32) Color {
+    if fb == null || fb.pixels == null || !framebuffer_inside(fb, x, y) {
+        return BLACK;
+    }
+
+    const offset: usize = pixel_byte_offset(fb, x, y);
+    if fb.format == PixelFormat.RGB565 {
+        const bits: u16 = fb.pixels[offset] as u16 | ((fb.pixels[offset + 1usize] as u16) << 8);
+        return unpack_rgb565(bits);
+    }
+    if fb.format == PixelFormat.RGB888 {
+        return Color{
+            r: fb.pixels[offset],
+            g: fb.pixels[offset + 1usize],
+            b: fb.pixels[offset + 2usize],
+            a: 255,
+        };
+    }
+    if fb.format == PixelFormat.ARGB8888 {
+        return Color{
+            a: fb.pixels[offset],
+            r: fb.pixels[offset + 1usize],
+            g: fb.pixels[offset + 2usize],
+            b: fb.pixels[offset + 3usize],
+        };
+    }
+    if fb.format == PixelFormat.ARGB4444 {
+        const bits: u16 = fb.pixels[offset] as u16 | ((fb.pixels[offset + 1usize] as u16) << 8);
+        return unpack_argb4444(bits);
+    }
+    if fb.format == PixelFormat.L8 {
+        const l: u8 = fb.pixels[offset];
+        return Color{ r: l, g: l, b: l, a: 255 };
+    }
+    if fb.format == PixelFormat.A8 {
+        const a: u8 = fb.pixels[offset];
+        return Color{ r: 255, g: 255, b: 255, a: a };
+    }
+    if fb.format == PixelFormat.I1 {
+        const bit: i32 = 7 - (x % 8);
+        const mask: u8 = 1u8 << bit;
+        const byte_value: u8 = fb.pixels[offset];
+        const on: bool = (byte_value & mask) != 0u8;
+        if on {
+            return Color{ r: 255, g: 255, b: 255, a: 255 };
+        }
+        return BLACK;
+    }
+
+    const packed: u8 = fb.pixels[offset];
+    var nibble: u8 = packed & 0x0Fu8;
+    if (x % 2) == 0 {
+        nibble = (packed >> 4) & 0x0Fu8;
+    }
+    const value: u8 = ((((nibble as u16) << 4) | nibble as u16) as! u8).value;
+    return Color{ r: value, g: value, b: value, a: 255 };
+}
+
+/// 向帧缓冲指定坐标写入颜色值。
+export fn framebuffer_set_pixel(fb: &FrameBuffer, x: i32, y: i32, color: &Color) void {
+    if fb == null || fb.pixels == null || !framebuffer_inside(fb, x, y) {
+        return;
+    }
+
+    const alpha: u8 = color.a;
+    var write: Color = copy_color(color);
+    if alpha < 255 && fb.format != PixelFormat.I1 {
+        const dst: Color = framebuffer_get_pixel(fb, x, y);
+        const src_copy: Color = copy_color(color);
+        write = dst.blend(src_copy);
+    }
+    framebuffer_write_pixel_raw(fb, x, y, &write);
+}
+
+/// 使用指定颜色清空整个帧缓冲。
+export fn framebuffer_clear(fb: &FrameBuffer, color: Color) void {
+    if fb == null || fb.pixels == null {
+        return;
+    }
+    var target: FrameBuffer = FrameBuffer{
+        pixels: fb.pixels,
+        size: fb.size,
+        stride: fb.stride,
+        format: fb.format,
+    };
+    var y: i32 = 0;
+    while y < fb.size.h as i32 {
+        const row_offset: usize = (y as! usize).value * fb.stride as usize;
+        if clear_row_fast(&target, row_offset, fb.size.w as usize, &color) {
+            y = y + 1;
+            continue;
+        }
+        var x: i32 = 0;
+        while x < fb.size.w as i32 {
+            framebuffer_write_pixel_raw(&target, x, y, &color);
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+}
+
+export enum DisplayDriverKind {
+    ILI9341,
+    ST7789,
+    ST7735,
+    SSD1963_480x272,
+    SSD1963_800x480,
+    RA8875_800x480,
+}
+
+export struct DisplayDriverProfile {
+    kind: DisplayDriverKind,
+    width: u16,
+    height: u16,
+    stride: u16,
+    format: PixelFormat,
+    bus_hz: u32,
+    name_ptr: &const byte,
+}
+
+/// 返回指定显示驱动类型的能力画像。
+export fn display_driver_profile(kind: DisplayDriverKind) DisplayDriverProfile {
+    if kind == DisplayDriverKind.ILI9341 {
+        return DisplayDriverProfile{
+            kind: kind,
+            width: 320,
+            height: 240,
+            stride: 640,
+            format: PixelFormat.RGB565,
+            bus_hz: 40000000u32,
+            name_ptr: "ILI9341",
+        };
+    }
+    if kind == DisplayDriverKind.ST7789 {
+        return DisplayDriverProfile{
+            kind: kind,
+            width: 240,
+            height: 320,
+            stride: 480,
+            format: PixelFormat.RGB565,
+            bus_hz: 40000000u32,
+            name_ptr: "ST7789",
+        };
+    }
+    if kind == DisplayDriverKind.ST7735 {
+        return DisplayDriverProfile{
+            kind: kind,
+            width: 128,
+            height: 160,
+            stride: 256,
+            format: PixelFormat.RGB565,
+            bus_hz: 27000000u32,
+            name_ptr: "ST7735",
+        };
+    }
+    if kind == DisplayDriverKind.SSD1963_800x480 {
+        return DisplayDriverProfile{
+            kind: kind,
+            width: 800,
+            height: 480,
+            stride: 1600,
+            format: PixelFormat.RGB565,
+            bus_hz: 9000000u32,
+            name_ptr: "SSD1963-800x480",
+        };
+    }
+    if kind == DisplayDriverKind.RA8875_800x480 {
+        return DisplayDriverProfile{
+            kind: kind,
+            width: 800,
+            height: 480,
+            stride: 1600,
+            format: PixelFormat.RGB565,
+            bus_hz: 12000000u32,
+            name_ptr: "RA8875-800x480",
+        };
+    }
+    return DisplayDriverProfile{
+        kind: kind,
+        width: 480,
+        height: 272,
+        stride: 960,
+        format: PixelFormat.RGB565,
+        bus_hz: 9000000u32,
+        name_ptr: "SSD1963-480x272",
+    };
+}
+
+/// 计算指定显示驱动默认缓冲所需的字节数。
+export fn display_driver_required_bytes(kind: DisplayDriverKind) usize {
+    const profile: DisplayDriverProfile = display_driver_profile(kind);
+    return framebuffer_required_bytes(profile.width, profile.height, profile.format);
+}
+
+/// 按驱动默认画像构造帧缓冲描述符。
+export fn framebuffer_new_for_driver(pixels: &byte, kind: DisplayDriverKind) FrameBuffer {
+    const profile: DisplayDriverProfile = display_driver_profile(kind);
+    return framebuffer_new(pixels, profile.width, profile.height, profile.stride, profile.format);
+}

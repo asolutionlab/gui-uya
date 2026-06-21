@@ -2,9 +2,9 @@
 
 ## 主题系统位置
 
-- 主题定义与管理: [theme.uya](/home/winger/uya/gui-uya/gui/style/theme.uya:1)
-- 样式结构: [style.uya](/home/winger/uya/gui-uya/gui/style/style.uya:1)
-- 样式属性枚举: [prop.uya](/home/winger/uya/gui-uya/gui/style/prop.uya:1)
+- 主题定义与管理: [theme.uya](/home/winger/uya/gui-uya/src/gui/style/theme.uya:1)
+- 样式结构: [style.uya](/home/winger/uya/gui-uya/src/gui/style/style.uya:1)
+- 样式属性枚举: [prop.uya](/home/winger/uya/gui-uya/src/gui/style/prop.uya:1)
 
 ## 内置主题
 
@@ -36,4 +36,4 @@ manager.apply_to_tree(page.obj());
 
 ## 示例
 
-[demo_dashboard.uya](/home/winger/uya/gui-uya/gui/examples/demo_dashboard.uya:1) 演示了页面树构建完成后再统一应用 `Dark` 主题的做法。
+[demo_dashboard.uya](/home/winger/uya/gui-uya/examples/demo_dashboard.uya:1) 演示了页面树构建完成后再统一应用 `Dark` 主题的做法。

@@ -1,0 +1,425 @@
+use gui.core.color.Color;
+use libc.O_CREAT;
+use libc.O_TRUNC;
+use libc.O_WRONLY;
+use libc.strlen;
+use libc.sys_close;
+use libc.sys_open;
+use libc.sys_write;
+use libc.tolower;
+use gui.platform.disp.FrameBuffer;
+use gui.platform.disp.framebuffer_get_pixel;
+use gui.platform.disp.framebuffer_required_bytes;
+
+extern fn malloc(size: usize) &void;
+extern fn free(ptr: &void) void;
+
+export const SIM_SCREENSHOT_MAGIC: u32 = 0x46425559u32;
+export const SIM_SCREENSHOT_VERSION: u16 = 1u16;
+const SIM_BMP_FILE_HEADER_BYTES: usize = 14usize;
+const SIM_BMP_INFO_HEADER_BYTES: usize = 40usize;
+const SIM_BMP_PIXEL_OFFSET: u32 = 54u32;
+const SIM_PNG_SIGNATURE_BYTES: usize = 8usize;
+const SIM_PNG_IHDR_BYTES: usize = 13usize;
+const SIM_PNG_CHUNK_OVERHEAD_BYTES: usize = 12usize;
+const SIM_PNG_DEFLATE_BLOCK_MAX: usize = 65535usize;
+const SIM_ZLIB_HEADER_BYTES: usize = 2usize;
+const SIM_ZLIB_ADLER32_BYTES: usize = 4usize;
+const SIM_PNG_ADLER_MOD: u32 = 65521u32;
+
+export error ScreenshotIo;
+
+struct ScreenshotHeader {
+    magic: u32,
+    version: u16,
+    width: u16,
+    height: u16,
+    stride: u16,
+    format: u8,
+    reserved: u8,
+    payload_bytes: u32,
+}
+
+struct ScreenshotPngIdatState {
+    remaining_raw_bytes: usize,
+    block_remaining_bytes: usize,
+    adler_s1: u32,
+    adler_s2: u32,
+    chunk_crc: u32,
+}
+
+/// 计算原始截图载荷需要的字节数。
+export fn screenshot_payload_bytes(fb: &FrameBuffer) usize {
+    return framebuffer_required_bytes(fb.size.w, fb.size.h, fb.format);
+}
+
+fn screenshot_ext_eq_ci(path: &const byte, ext: &const byte) bool {
+    if path == null || ext == null {
+        return false;
+    }
+    const path_len: usize = strlen(path as *const byte);
+    const ext_len: usize = strlen(ext as *const byte);
+    if path_len < ext_len {
+        return false;
+    }
+
+    var i: usize = 0usize;
+    while i < ext_len {
+        const path_idx: usize = path_len - ext_len + i;
+        const path_ch: u8 = (tolower(path[path_idx] as i32) as! u8).value;
+        const ext_ch: u8 = (tolower(ext[i] as i32) as! u8).value;
+        if path_ch != ext_ch {
+            return false;
+        }
+        i = i + 1usize;
+    }
+    return true;
+}
+
+fn screenshot_put_le16(dst: &byte, offset: usize, value: u16) void {
+    dst[offset] = ((value & 0x00FFu16) as! u8).value;
+    dst[offset + 1usize] = ((value >> 8) as! u8).value;
+}
+
+fn screenshot_put_le32(dst: &byte, offset: usize, value: u32) void {
+    dst[offset] = ((value & 0x000000FFu32) as! u8).value;
+    dst[offset + 1usize] = ((value >> 8) as! u8).value;
+    dst[offset + 2usize] = ((value >> 16) as! u8).value;
+    dst[offset + 3usize] = ((value >> 24) as! u8).value;
+}
+
+fn screenshot_put_be32(dst: &byte, offset: usize, value: u32) void {
+    dst[offset] = ((value >> 24) as! u8).value;
+    dst[offset + 1usize] = (((value >> 16) & 0x000000FFu32) as! u8).value;
+    dst[offset + 2usize] = (((value >> 8) & 0x000000FFu32) as! u8).value;
+    dst[offset + 3usize] = ((value & 0x000000FFu32) as! u8).value;
+}
+
+fn screenshot_write_all(fd: i32, data: &const byte, len: usize) !void {
+    var offset: usize = 0usize;
+    while offset < len {
+        const ptr: *const byte = @ptr_from_usize(@usize_from_ptr(data as &void) + offset) as *const byte;
+        const written: isize = (sys_write(fd, ptr, len - offset) catch {
+            return error.ScreenshotIo;
+        });
+        if written <= 0 {
+            return error.ScreenshotIo;
+        }
+        offset = offset + ((written as! usize).value);
+    }
+}
+
+fn screenshot_crc32_update_byte(crc: u32, value: u8) u32 {
+    var c: u32 = crc ^ (value as u32);
+    var i: i32 = 0;
+    while i < 8 {
+        if (c & 1u32) != 0u32 {
+            c = (c >> 1) ^ 0xEDB88320u32;
+        } else {
+            c = c >> 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn screenshot_crc32_update_bytes(crc: u32, data: &const byte, len: usize) u32 {
+    var out: u32 = crc;
+    var i: usize = 0usize;
+    while i < len {
+        out = screenshot_crc32_update_byte(out, data[i]);
+        i = i + 1usize;
+    }
+    return out;
+}
+
+fn screenshot_adler32_update(state: &ScreenshotPngIdatState, data: &const byte, len: usize) void {
+    var i: usize = 0usize;
+    while i < len {
+        state.adler_s1 = (state.adler_s1 + (data[i] as u32)) % SIM_PNG_ADLER_MOD;
+        state.adler_s2 = (state.adler_s2 + state.adler_s1) % SIM_PNG_ADLER_MOD;
+        i = i + 1usize;
+    }
+}
+
+fn screenshot_png_block_count(raw_bytes: usize) usize {
+    if raw_bytes == 0usize {
+        return 1usize;
+    }
+    return (raw_bytes + (SIM_PNG_DEFLATE_BLOCK_MAX - 1usize)) / SIM_PNG_DEFLATE_BLOCK_MAX;
+}
+
+fn screenshot_png_idat_bytes(fb: &FrameBuffer) usize {
+    const raw_bytes: usize = fb.size.h as usize * (1usize + fb.size.w as usize * 4usize);
+    return SIM_ZLIB_HEADER_BYTES
+        + raw_bytes
+        + screenshot_png_block_count(raw_bytes) * 5usize
+        + SIM_ZLIB_ADLER32_BYTES;
+}
+
+fn screenshot_png_write_chunk_begin(fd: i32, chunk_type: &byte, payload_len: u32, crc: &u32) !void {
+    var header: [byte: 8] = [];
+    screenshot_put_be32(&header[0], 0usize, payload_len);
+    header[4] = chunk_type[0];
+    header[5] = chunk_type[1usize];
+    header[6] = chunk_type[2usize];
+    header[7] = chunk_type[3usize];
+    try screenshot_write_all(fd, &header[0], 8usize);
+    crc[0] = 0xFFFFFFFFu32;
+    crc[0] = screenshot_crc32_update_bytes(crc[0], &header[4], 4usize);
+}
+
+fn screenshot_png_write_chunk_data(fd: i32, data: &const byte, len: usize, crc: &u32) !void {
+    if len == 0usize {
+        return;
+    }
+    crc[0] = screenshot_crc32_update_bytes(crc[0], data, len);
+    try screenshot_write_all(fd, data, len);
+}
+
+fn screenshot_png_write_chunk_end(fd: i32, crc: &u32) !void {
+    var tail: [byte: 4] = [];
+    screenshot_put_be32(&tail[0], 0usize, crc[0] ^ 0xFFFFFFFFu32);
+    try screenshot_write_all(fd, &tail[0], 4usize);
+}
+
+fn screenshot_png_write_idat_stream_bytes(fd: i32, data: &const byte, len: usize, state: &ScreenshotPngIdatState) !void {
+    var offset: usize = 0usize;
+    while offset < len {
+        if state.block_remaining_bytes == 0usize {
+            var next_block_len: usize = state.remaining_raw_bytes;
+            if next_block_len > SIM_PNG_DEFLATE_BLOCK_MAX {
+                next_block_len = SIM_PNG_DEFLATE_BLOCK_MAX;
+            }
+            const is_final: bool = next_block_len == state.remaining_raw_bytes;
+            const block_len_u16: u16 = (next_block_len as! u16).value;
+            const nlen: u16 = 0xFFFFu16 ^ block_len_u16;
+            var block_header: [byte: 5] = [];
+            if is_final {
+                block_header[0] = 1u8;
+            } else {
+                block_header[0] = 0u8;
+            }
+            block_header[1usize] = ((block_len_u16 & 0x00FFu16) as! u8).value;
+            block_header[2usize] = ((block_len_u16 >> 8) as! u8).value;
+            block_header[3usize] = ((nlen & 0x00FFu16) as! u8).value;
+            block_header[4usize] = ((nlen >> 8) as! u8).value;
+            try screenshot_png_write_chunk_data(fd, &block_header[0], 5usize, &state.chunk_crc);
+            state.block_remaining_bytes = next_block_len;
+        }
+
+        const pending: usize = len - offset;
+        var chunk_len: usize = pending;
+        if chunk_len > state.block_remaining_bytes {
+            chunk_len = state.block_remaining_bytes;
+        }
+        const ptr: &const byte = @ptr_from_usize(@usize_from_ptr(data as &void) + offset) as &const byte;
+        screenshot_adler32_update(state, ptr, chunk_len);
+        try screenshot_png_write_chunk_data(fd, ptr, chunk_len, &state.chunk_crc);
+        state.block_remaining_bytes = state.block_remaining_bytes - chunk_len;
+        state.remaining_raw_bytes = state.remaining_raw_bytes - chunk_len;
+        offset = offset + chunk_len;
+    }
+}
+
+fn screenshot_bmp_row_stride(fb: &FrameBuffer) usize {
+    const raw_row_bytes: usize = fb.size.w as usize * 3usize;
+    return ((raw_row_bytes + 3usize) / 4usize) * 4usize;
+}
+
+/// 将帧缓冲写出为 PNG 文件。
+export fn screenshot_write_png(path: &const byte, fb: &FrameBuffer) !usize {
+    if fb == null || fb.pixels == null {
+        return error.ScreenshotIo;
+    }
+
+    const fd: i32 = (sys_open(path as *const byte, (O_CREAT | O_TRUNC | O_WRONLY) as i32, 0o644) catch {
+        return error.ScreenshotIo;
+    });
+    const row_bytes: usize = 1usize + fb.size.w as usize * 4usize;
+    const row_mem: &byte = malloc(row_bytes) as &byte;
+    if row_mem == null {
+        _ = sys_close(fd) catch {};
+        return error.ScreenshotIo;
+    }
+    defer {
+        free(row_mem as &void);
+    }
+
+    var png_signature: [byte: 8] = [137, 80, 78, 71, 13, 10, 26, 10];
+    try screenshot_write_all(fd, &png_signature[0], SIM_PNG_SIGNATURE_BYTES);
+
+    var chunk_type_ihdr: [byte: 4] = ['I', 'H', 'D', 'R'];
+    var ihdr: [byte: 13] = [];
+    screenshot_put_be32(&ihdr[0], 0usize, fb.size.w as u32);
+    screenshot_put_be32(&ihdr[0], 4usize, fb.size.h as u32);
+    ihdr[8usize] = 8u8;
+    ihdr[9usize] = 6u8;
+    ihdr[10usize] = 0u8;
+    ihdr[11usize] = 0u8;
+    ihdr[12usize] = 0u8;
+
+    var ihdr_crc: u32 = 0u32;
+    try screenshot_png_write_chunk_begin(fd, &chunk_type_ihdr[0], SIM_PNG_IHDR_BYTES as u32, &ihdr_crc);
+    try screenshot_png_write_chunk_data(fd, &ihdr[0], SIM_PNG_IHDR_BYTES, &ihdr_crc);
+    try screenshot_png_write_chunk_end(fd, &ihdr_crc);
+
+    const raw_bytes: usize = fb.size.h as usize * row_bytes;
+    const idat_bytes: usize = screenshot_png_idat_bytes(fb);
+    var chunk_type_idat: [byte: 4] = ['I', 'D', 'A', 'T'];
+    var idat_state: ScreenshotPngIdatState = ScreenshotPngIdatState{
+        remaining_raw_bytes: raw_bytes,
+        block_remaining_bytes: 0usize,
+        adler_s1: 1u32,
+        adler_s2: 0u32,
+        chunk_crc: 0u32,
+    };
+
+    try screenshot_png_write_chunk_begin(fd, &chunk_type_idat[0], idat_bytes as u32, &idat_state.chunk_crc);
+    var zlib_header: [byte: 2] = [0x78, 0x01];
+    try screenshot_png_write_chunk_data(fd, &zlib_header[0], 2usize, &idat_state.chunk_crc);
+
+    var y: i32 = 0;
+    while y < fb.size.h as i32 {
+        row_mem[0] = 0u8;
+        var row_offset: usize = 1usize;
+        var x: i32 = 0;
+        while x < fb.size.w as i32 {
+            const color: Color = framebuffer_get_pixel(fb, x, y);
+            row_mem[row_offset] = color.r;
+            row_mem[row_offset + 1usize] = color.g;
+            row_mem[row_offset + 2usize] = color.b;
+            row_mem[row_offset + 3usize] = color.a;
+            row_offset = row_offset + 4usize;
+            x = x + 1;
+        }
+        try screenshot_png_write_idat_stream_bytes(fd, row_mem as &const byte, row_bytes, &idat_state);
+        y = y + 1;
+    }
+
+    var adler_tail: [byte: 4] = [];
+    screenshot_put_be32(&adler_tail[0], 0usize, (idat_state.adler_s2 << 16) | idat_state.adler_s1);
+    try screenshot_png_write_chunk_data(fd, &adler_tail[0], 4usize, &idat_state.chunk_crc);
+    try screenshot_png_write_chunk_end(fd, &idat_state.chunk_crc);
+
+    var chunk_type_iend: [byte: 4] = ['I', 'E', 'N', 'D'];
+    var iend_crc: u32 = 0u32;
+    try screenshot_png_write_chunk_begin(fd, &chunk_type_iend[0], 0u32, &iend_crc);
+    try screenshot_png_write_chunk_end(fd, &iend_crc);
+
+    _ = sys_close(fd) catch {};
+    return SIM_PNG_SIGNATURE_BYTES
+        + SIM_PNG_CHUNK_OVERHEAD_BYTES + SIM_PNG_IHDR_BYTES
+        + SIM_PNG_CHUNK_OVERHEAD_BYTES + idat_bytes
+        + SIM_PNG_CHUNK_OVERHEAD_BYTES;
+}
+
+/// 将帧缓冲写出为 BMP 文件。
+export fn screenshot_write_bmp(path: &const byte, fb: &FrameBuffer) !usize {
+    if fb == null || fb.pixels == null {
+        return error.ScreenshotIo;
+    }
+
+    const fd: i32 = (sys_open(path as *const byte, (O_CREAT | O_TRUNC | O_WRONLY) as i32, 0o644) catch {
+        return error.ScreenshotIo;
+    });
+    const row_stride: usize = screenshot_bmp_row_stride(fb);
+    const pixel_bytes: usize = row_stride * fb.size.h as usize;
+    const total_bytes: usize = SIM_BMP_PIXEL_OFFSET as usize + pixel_bytes;
+
+    var file_header: [byte: 14] = [];
+    file_header[0] = 'B' as u8;
+    file_header[1] = 'M' as u8;
+    screenshot_put_le32(&file_header[0], 2usize, total_bytes as u32);
+    screenshot_put_le32(&file_header[0], 10usize, SIM_BMP_PIXEL_OFFSET);
+
+    var info_header: [byte: 40] = [];
+    screenshot_put_le32(&info_header[0], 0usize, SIM_BMP_INFO_HEADER_BYTES as u32);
+    screenshot_put_le32(&info_header[0], 4usize, fb.size.w as u32);
+    screenshot_put_le32(&info_header[0], 8usize, fb.size.h as u32);
+    screenshot_put_le16(&info_header[0], 12usize, 1u16);
+    screenshot_put_le16(&info_header[0], 14usize, 24u16);
+    screenshot_put_le32(&info_header[0], 20usize, pixel_bytes as u32);
+
+    _ = (sys_write(fd, &file_header[0], SIM_BMP_FILE_HEADER_BYTES) catch {
+        _ = sys_close(fd) catch {};
+        return error.ScreenshotIo;
+    });
+    _ = (sys_write(fd, &info_header[0], SIM_BMP_INFO_HEADER_BYTES) catch {
+        _ = sys_close(fd) catch {};
+        return error.ScreenshotIo;
+    });
+
+    var padding: [byte: 3] = [];
+    var bgr: [byte: 3] = [];
+    const pad_bytes: usize = row_stride - (fb.size.w as usize * 3usize);
+    var y: i32 = fb.size.h as i32 - 1;
+    while y >= 0 {
+        var x: i32 = 0;
+        while x < fb.size.w as i32 {
+            const color: Color = framebuffer_get_pixel(fb, x, y);
+            bgr[0] = color.b;
+            bgr[1] = color.g;
+            bgr[2] = color.r;
+            _ = (sys_write(fd, &bgr[0], 3usize) catch {
+                _ = sys_close(fd) catch {};
+                return error.ScreenshotIo;
+            });
+            x = x + 1;
+        }
+        if pad_bytes > 0usize {
+            _ = (sys_write(fd, &padding[0], pad_bytes) catch {
+                _ = sys_close(fd) catch {};
+                return error.ScreenshotIo;
+            });
+        }
+        y = y - 1;
+    }
+
+    _ = sys_close(fd) catch {};
+    return total_bytes;
+}
+
+/// 将帧缓冲写出为原始自定义格式文件。
+export fn screenshot_write_raw(path: &const byte, fb: &FrameBuffer) !usize {
+    if fb == null || fb.pixels == null {
+        return error.ScreenshotIo;
+    }
+
+    const fd: i32 = (sys_open(path as *const byte, (O_CREAT | O_TRUNC | O_WRONLY) as i32, 0o644) catch {
+        return error.ScreenshotIo;
+    });
+    const payload_bytes: usize = screenshot_payload_bytes(fb);
+    var header: ScreenshotHeader = ScreenshotHeader{
+        magic: SIM_SCREENSHOT_MAGIC,
+        version: SIM_SCREENSHOT_VERSION,
+        width: fb.size.w,
+        height: fb.size.h,
+        stride: fb.stride,
+        format: fb.format as u8,
+        reserved: 0u8,
+        payload_bytes: payload_bytes as u32,
+    };
+
+    _ = (sys_write(fd, &header as *const byte, @size_of(ScreenshotHeader) as usize) catch {
+        _ = sys_close(fd) catch {};
+        return error.ScreenshotIo;
+    });
+    _ = (sys_write(fd, fb.pixels as *const byte, payload_bytes) catch {
+        _ = sys_close(fd) catch {};
+        return error.ScreenshotIo;
+    });
+    _ = sys_close(fd) catch {};
+    return payload_bytes + @size_of(ScreenshotHeader) as usize;
+}
+
+/// 按输出路径扩展名选择合适的截图写出格式。
+export fn screenshot_write(path: &const byte, fb: &FrameBuffer) !usize {
+    if screenshot_ext_eq_ci(path, ".png") {
+        return screenshot_write_png(path, fb);
+    }
+    if screenshot_ext_eq_ci(path, ".bmp") {
+        return screenshot_write_bmp(path, fb);
+    }
+    return screenshot_write_raw(path, fb);
+}

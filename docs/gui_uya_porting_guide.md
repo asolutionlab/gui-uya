@@ -4,14 +4,14 @@
 
 移植时主要看三个模块：
 
-- [disp.uya](/home/winger/uya/gui-uya/gui/platform/disp.uya:1): framebuffer 与 display profile
-- [indev.uya](/home/winger/uya/gui-uya/gui/platform/indev.uya:1): 触摸/鼠标/按键/编码器
-- [tick.uya](/home/winger/uya/gui-uya/gui/platform/tick.uya:1): 毫秒/微秒计时与 sleep
+- [disp.uya](/home/winger/uya/gui-uya/src/gui/platform/disp.uya:1): framebuffer 与 display profile
+- [indev.uya](/home/winger/uya/gui-uya/src/gui/platform/indev.uya:1): 触摸/鼠标/按键/编码器
+- [tick.uya](/home/winger/uya/gui-uya/src/gui/platform/tick.uya:1): 毫秒/微秒计时与 sleep
 
 文件系统和资源层如果目标板需要落地，也要看：
 
-- [fs.uya](/home/winger/uya/gui-uya/gui/res/fs.uya:1)
-- [cache.uya](/home/winger/uya/gui-uya/gui/res/cache.uya:1)
+- [fs.uya](/home/winger/uya/gui-uya/src/gui/res/fs.uya:1)
+- [cache.uya](/home/winger/uya/gui-uya/src/gui/res/cache.uya:1)
 
 ## 推荐移植顺序
 

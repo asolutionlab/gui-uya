@@ -1,0 +1,201 @@
+use gui.core.event.Event;
+use gui.core.event.EVENT_TEXT_INPUT_MAX_BYTES;
+use gui.core.event.event_none;
+use gui.core.point.POINT_ZERO;
+use gui.core.point.Point;
+use gui.platform.indev.IInputDev;
+use gui.platform.indev.InputManager;
+use gui.platform.indev.KeyDriver;
+use gui.platform.indev.TextDriver;
+use gui.platform.indev.TouchDriver;
+use gui.platform.indev.EncoderDriver;
+use gui.platform.indev.encoder_driver_new;
+use gui.platform.indev.input_manager_new;
+use gui.platform.indev.key_driver_new;
+use gui.platform.indev.text_driver_new;
+use gui.platform.indev.touch_driver_configure_pointer_precision;
+use gui.platform.indev.touch_driver_new;
+use gui.sim.runtime_core.IRuntimeInput;
+
+const SDL_EVT_NONE: u8 = 0;
+const SDL_EVT_QUIT: u8 = 1;
+const SDL_EVT_POINTER_MOVE: u8 = 2;
+const SDL_EVT_POINTER_DOWN: u8 = 3;
+const SDL_EVT_POINTER_UP: u8 = 4;
+const SDL_EVT_KEY_DOWN: u8 = 5;
+const SDL_EVT_KEY_UP: u8 = 6;
+const SDL_EVT_WHEEL: u8 = 7;
+const SDL_EVT_TEXT_INPUT: u8 = 8;
+
+extern fn uya_gui_sim_sdl_poll_event(out_evt: &SdlHostEvent) i32;
+extern fn uya_gui_sim_sdl_wait_event(timeout_ms: i32) i32;
+
+export struct SdlHostEvent {
+    kind: u8,
+    x: i16,
+    y: i16,
+    value: i32,
+    key_code: u16,
+    reserved: u16,
+    text_len: u16,
+    text_bytes: [byte: EVENT_TEXT_INPUT_MAX_BYTES],
+}
+
+fn sdl_host_event_key_repeat(raw: &SdlHostEvent) bool {
+    return (raw.reserved & 0x8000u16) != 0u16;
+}
+
+fn sdl_host_event_modifiers(raw: &SdlHostEvent) u16 {
+    return raw.reserved & 0x7FFFu16;
+}
+
+export struct SdlInputSystem : IRuntimeInput {
+    manager: InputManager,
+    touch: TouchDriver,
+    key: KeyDriver,
+    text: TextDriver,
+    encoder: EncoderDriver,
+    touch_dev: IInputDev,
+    key_dev: IInputDev,
+    text_dev: IInputDev,
+    encoder_dev: IInputDev,
+    quit_requested: bool,
+    hover_pending: bool,
+    hover_point: Point,
+    last_pointer: Point,
+    pointer_down: bool,
+
+    fn init(self: &Self) void {
+        touch_driver_configure_pointer_precision(&self.touch);
+        var touch_iface: IInputDev = self.touch;
+        var key_iface: IInputDev = self.key;
+        var text_iface: IInputDev = self.text;
+        var encoder_iface: IInputDev = self.encoder;
+        self.touch_dev = touch_iface;
+        self.key_dev = key_iface;
+        self.text_dev = text_iface;
+        self.encoder_dev = encoder_iface;
+        self.manager = input_manager_new();
+        _ = self.manager.attach(&self.touch_dev);
+        _ = self.manager.attach(&self.key_dev);
+        _ = self.manager.attach(&self.text_dev);
+        _ = self.manager.attach(&self.encoder_dev);
+    }
+
+    fn pump(self: &Self, timestamp: u32) i32 {
+        var pumped: i32 = 0;
+        var raw: SdlHostEvent = SdlHostEvent{
+            kind: SDL_EVT_NONE,
+            x: 0,
+            y: 0,
+            value: 0,
+            key_code: 0u16,
+            reserved: 0u16,
+            text_len: 0u16,
+            text_bytes: [],
+        };
+        while uya_gui_sim_sdl_poll_event(&raw) != 0 {
+            pumped = pumped + 1;
+            const point: Point = Point{ x: raw.x, y: raw.y };
+            self.last_pointer = point;
+
+            if raw.kind == SDL_EVT_QUIT {
+                self.quit_requested = true;
+                continue;
+            }
+            if raw.kind == SDL_EVT_POINTER_MOVE {
+                if self.pointer_down {
+                    self.touch.feed(-1, timestamp, point, true);
+                } else {
+                    self.hover_pending = true;
+                    self.hover_point = point;
+                }
+                continue;
+            }
+            if raw.kind == SDL_EVT_POINTER_DOWN {
+                self.pointer_down = true;
+                self.touch.feed(-1, timestamp, point, true);
+                continue;
+            }
+            if raw.kind == SDL_EVT_POINTER_UP {
+                self.pointer_down = false;
+                self.touch.feed(-1, timestamp, point, false);
+                self.hover_pending = true;
+                self.hover_point = point;
+                continue;
+            }
+            if raw.kind == SDL_EVT_KEY_DOWN {
+                self.key.feed_modifiers(-1, timestamp, raw.key_code, true, sdl_host_event_modifiers(&raw), sdl_host_event_key_repeat(&raw));
+                continue;
+            }
+            if raw.kind == SDL_EVT_KEY_UP {
+                self.key.feed_modifiers(-1, timestamp, raw.key_code, false, sdl_host_event_modifiers(&raw), false);
+                continue;
+            }
+            if raw.kind == SDL_EVT_TEXT_INPUT {
+                self.text.feed(-1, timestamp, &raw.text_bytes[0], raw.text_len as usize);
+                continue;
+            }
+            if raw.kind == SDL_EVT_WHEEL {
+                self.encoder.feed(-1, timestamp, raw.value as i16);
+            }
+        }
+        return pumped;
+    }
+
+    fn poll(self: &Self, out_evt: &Event) bool {
+        return self.manager.poll(out_evt);
+    }
+
+    fn wait(self: &Self, timeout_ms: i32) bool {
+        _ = self;
+        return uya_gui_sim_sdl_wait_event(timeout_ms) != 0;
+    }
+
+    fn poll_hover(self: &Self, out_point: &Point) bool {
+        if !self.hover_pending || out_point == null {
+            return false;
+        }
+        out_point[0] = self.hover_point;
+        self.hover_pending = false;
+        return true;
+    }
+
+    fn poll_hover_coords(self: &Self, out_x: &i16, out_y: &i16) bool {
+        if !self.hover_pending || out_x == null || out_y == null {
+            return false;
+        }
+        out_x[0] = self.hover_point.x;
+        out_y[0] = self.hover_point.y;
+        self.hover_pending = false;
+        return true;
+    }
+
+    fn quit_requested(self: &Self) bool {
+        return self.quit_requested;
+    }
+
+    fn pointer_down_active(self: &Self) bool {
+        return self.pointer_down;
+    }
+}
+
+/// 创建 SDL2 输入系统实例。
+export fn sdl_input_system_new() SdlInputSystem {
+    return SdlInputSystem{
+        manager: input_manager_new(),
+        touch: touch_driver_new(),
+        key: key_driver_new(),
+        text: text_driver_new(),
+        encoder: encoder_driver_new(),
+        touch_dev: touch_driver_new(),
+        key_dev: key_driver_new(),
+        text_dev: text_driver_new(),
+        encoder_dev: encoder_driver_new(),
+        quit_requested: false,
+        hover_pending: false,
+        hover_point: POINT_ZERO,
+        last_pointer: POINT_ZERO,
+        pointer_down: false,
+    };
+}

@@ -1,0 +1,109 @@
+use gui.core.event.Event;
+use gui.core.event.EventType;
+use gui.core.event.event_none;
+use gui.platform.web.indev_web.WebInputSystem;
+use gui.platform.web.indev_web.web_input_system_init;
+use gui.platform.web.indev_web.web_input_system_new;
+use gui.platform.web.indev_web.web_input_system_poll;
+use gui.platform.web.indev_web.web_input_system_poll_hover;
+use gui.platform.web.indev_web.web_input_system_pump;
+use gui.platform.web.web_common.WEB_EVT_KEY_DOWN;
+use gui.platform.web.web_common.WEB_EVT_KEY_UP;
+use gui.platform.web.web_common.WEB_EVT_POINTER_DOWN;
+use gui.platform.web.web_common.WEB_EVT_POINTER_MOVE;
+use gui.platform.web.web_common.WEB_EVT_POINTER_UP;
+use gui.platform.web.web_common.WEB_EVT_TEXT_INPUT;
+use gui.platform.web.web_common.WEB_EVT_WHEEL;
+use gui.platform.web.web_common.WebHostEvent;
+use gui.platform.web.web_common.web_feed_host_event;
+use gui.platform.web.web_common.web_feed_host_text_event;
+use gui.platform.web.web_common.web_host_event_none;
+use gui.platform.web.web_common.web_host_event_queue_len;
+use gui.platform.web.web_common.web_poll_host_event;
+use gui.sim.common.SIM_KEY_ESCAPE;
+use std.testing.assert_eq_bool;
+use std.testing.assert_eq_i32;
+use std.testing.expect;
+
+export const TEST_WEB_BACKEND_MODULE: i32 = 1;
+
+fn web_drain_queue() void {
+    var raw: WebHostEvent = web_host_event_none();
+    while web_poll_host_event(&raw) {
+        raw = web_host_event_none();
+    }
+}
+
+test "web host queue keeps insertion order" {
+    web_drain_queue();
+    try assert_eq_bool(web_feed_host_event(WEB_EVT_POINTER_DOWN, 11, 12, 0, 0u16, 0u16), true);
+    try assert_eq_bool(web_feed_host_text_event("中文" as &const byte, 6usize, 0u16), true);
+    try assert_eq_bool(web_feed_host_event(WEB_EVT_WHEEL, 0, 0, -1, 0u16, 0u16), true);
+    try assert_eq_i32(web_host_event_queue_len() as i32, 3);
+
+    var raw: WebHostEvent = web_host_event_none();
+    try assert_eq_bool(web_poll_host_event(&raw), true);
+    try assert_eq_i32(raw.kind as i32, WEB_EVT_POINTER_DOWN as i32);
+    try assert_eq_i32(raw.x as i32, 11);
+
+    try assert_eq_bool(web_poll_host_event(&raw), true);
+    try assert_eq_i32(raw.kind as i32, WEB_EVT_TEXT_INPUT as i32);
+    try assert_eq_i32(raw.text_len as i32, 6);
+
+    try assert_eq_bool(web_poll_host_event(&raw), true);
+    try assert_eq_i32(raw.kind as i32, WEB_EVT_WHEEL as i32);
+    try assert_eq_i32(raw.value, -1);
+    try assert_eq_i32(web_host_event_queue_len() as i32, 0);
+}
+
+test "web input system maps pointer key and wheel events" {
+    web_drain_queue();
+    var input: WebInputSystem = web_input_system_new();
+    web_input_system_init(&input);
+
+    try assert_eq_bool(web_feed_host_event(WEB_EVT_POINTER_DOWN, 24, 36, 0, 0u16, 0u16), true);
+    try assert_eq_bool(web_feed_host_event(WEB_EVT_POINTER_MOVE, 28, 40, 0, 0u16, 0u16), true);
+    try assert_eq_bool(web_feed_host_event(WEB_EVT_POINTER_UP, 28, 40, 0, 0u16, 0u16), true);
+    try assert_eq_bool(web_feed_host_event(WEB_EVT_KEY_DOWN, 0, 0, 0, SIM_KEY_ESCAPE, 0u16), true);
+    try assert_eq_bool(web_feed_host_event(WEB_EVT_KEY_UP, 0, 0, 0, SIM_KEY_ESCAPE, 0u16), true);
+    try assert_eq_bool(web_feed_host_text_event("中文" as &const byte, 6usize, 0u16), true);
+    try assert_eq_bool(web_feed_host_event(WEB_EVT_WHEEL, 0, 0, 1, 0u16, 0u16), true);
+
+    try assert_eq_i32(web_input_system_pump(&input, 10u32), 7);
+
+    var evt: Event = event_none();
+    var saw_press: bool = false;
+    var saw_release: bool = false;
+    var saw_key_down: bool = false;
+    var saw_key_up: bool = false;
+    var saw_text_input: bool = false;
+    var saw_wheel: bool = false;
+    while web_input_system_poll(&input, &evt) {
+        if evt.event_type == EventType.Press {
+            saw_press = true;
+        } else if evt.event_type == EventType.Release {
+            saw_release = true;
+        } else if evt.event_type == EventType.KeyDown && evt.key_code() == SIM_KEY_ESCAPE {
+            saw_key_down = true;
+        } else if evt.event_type == EventType.KeyUp && evt.key_code() == SIM_KEY_ESCAPE {
+            saw_key_up = true;
+        } else if evt.event_type == EventType.TextInput && evt.text_len() == 6usize {
+            saw_text_input = true;
+        } else if evt.value() == 1 {
+            saw_wheel = true;
+        }
+        evt = event_none();
+    }
+    try assert_eq_bool(saw_press, true);
+    try assert_eq_bool(saw_release, true);
+    try assert_eq_bool(saw_key_down, true);
+    try assert_eq_bool(saw_key_up, true);
+    try assert_eq_bool(saw_text_input, true);
+    try assert_eq_bool(saw_wheel, true);
+
+    var hover_x: i16 = 0;
+    var hover_y: i16 = 0;
+    try assert_eq_bool(web_input_system_poll_hover(&input, &hover_x, &hover_y), true);
+    try assert_eq_i32(hover_x as i32, 28);
+    try assert_eq_i32(hover_y as i32, 40);
+}

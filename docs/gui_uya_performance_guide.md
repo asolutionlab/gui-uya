@@ -70,7 +70,7 @@ make dashboard-compare-report
 - [phase5_bench.json](/home/winger/gui-uya/build/phase5_bench.json:1)
 - [gui_uya_phase5_report.md](./gui_uya_phase5_report.md)
 - `build/dashboard_compare/dashboard_compare_report.md`
-- `gui/benchmarks/phase5_bench_baseline.json`
+- `src/gui/benchmarks/phase5_bench_baseline.json`
 
 说明：
 

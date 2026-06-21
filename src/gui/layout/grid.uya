@@ -1,0 +1,123 @@
+use gui.core.obj.GuiObj;
+use gui.style.StyleProp;
+
+export const MAX_GRID_COLS: i32 = 8;
+export const MAX_GRID_ROWS: i32 = 8;
+
+export enum GridAutoFlow {
+    Row,
+    Column,
+}
+
+export struct GridConfig {
+    columns: [u16: 8],
+    rows: [u16: 8],
+    col_count: u8,
+    row_count: u8,
+    gap_x: u8,
+    gap_y: u8,
+    padding: [u8: 4],
+    auto_flow: GridAutoFlow,
+}
+
+fn grid_measure_span(tracks: [u16: 8], count: i32, start: i32, span: i32, gap: i32) i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while i < span && (start + i) < count {
+        total = total + tracks[start + i] as i32;
+        i = i + 1;
+    }
+    if span > 1 {
+        total = total + gap * (span - 1);
+    }
+    return total;
+}
+
+fn grid_track_offset(tracks: [u16: 8], start: i32, gap: i32) i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while i < start {
+        total = total + tracks[i] as i32 + gap;
+        i = i + 1;
+    }
+    return total;
+}
+
+export struct GridLayout {
+    config: GridConfig,
+
+    fn apply(self: &Self, container: &GuiObj) void {
+        if self.config.col_count == 0 || self.config.row_count == 0 {
+            return;
+        }
+
+        var auto_col: i32 = 0;
+        var auto_row: i32 = 0;
+        var child: &GuiObj = container.child_head;
+        while child != null {
+            if child.visible() {
+                var col: i32 = child.style.get_i32_or(StyleProp.GridColumn, auto_col);
+                var row: i32 = child.style.get_i32_or(StyleProp.GridRow, auto_row);
+                var col_span: i32 = child.style.get_i32_or(StyleProp.GridColumnSpan, 1);
+                var row_span: i32 = child.style.get_i32_or(StyleProp.GridRowSpan, 1);
+
+                if col < 0 {
+                    col = 0;
+                }
+                if row < 0 {
+                    row = 0;
+                }
+                if col_span < 1 {
+                    col_span = 1;
+                }
+                if row_span < 1 {
+                    row_span = 1;
+                }
+
+                if col >= self.config.col_count as i32 {
+                    col = self.config.col_count as i32 - 1;
+                }
+                if row >= self.config.row_count as i32 {
+                    row = self.config.row_count as i32 - 1;
+                }
+
+                child.x = (self.config.padding[3] as i32 + grid_track_offset(self.config.columns, col, self.config.gap_x as i32)) as i16;
+                child.y = (self.config.padding[0] as i32 + grid_track_offset(self.config.rows, row, self.config.gap_y as i32)) as i16;
+                child.w = grid_measure_span(self.config.columns, self.config.col_count as i32, col, col_span, self.config.gap_x as i32) as u16;
+                child.h = grid_measure_span(self.config.rows, self.config.row_count as i32, row, row_span, self.config.gap_y as i32) as u16;
+                child.flags.layout_dirty = false;
+
+                if self.config.auto_flow == GridAutoFlow.Row {
+                    auto_col = auto_col + 1;
+                    if auto_col >= self.config.col_count as i32 {
+                        auto_col = 0;
+                        auto_row = auto_row + 1;
+                    }
+                } else {
+                    auto_row = auto_row + 1;
+                    if auto_row >= self.config.row_count as i32 {
+                        auto_row = 0;
+                        auto_col = auto_col + 1;
+                    }
+                }
+            }
+            child = child.sibling_next;
+        }
+    }
+}
+
+/// 返回默认的网格布局器。
+export fn grid_layout_default() GridLayout {
+    return GridLayout{
+        config: GridConfig{
+            columns: [40, 40, 40, 40, 40, 40, 40, 40],
+            rows: [20, 20, 20, 20, 20, 20, 20, 20],
+            col_count: 2,
+            row_count: 2,
+            gap_x: 0,
+            gap_y: 0,
+            padding: [0, 0, 0, 0],
+            auto_flow: GridAutoFlow.Row,
+        },
+    };
+}

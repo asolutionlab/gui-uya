@@ -17,12 +17,19 @@ decl_re = re.compile(r'^export (mc|const|enum|struct|interface|fn|@async_fn fn)'
 lines_out = [
     "# UyaGUI API Reference",
     "",
-    "> 该文件由 `tools/gen_gui_api_docs.sh` 从 `gui/**/*.uya` 自动生成。",
+    "> 该文件由 `tools/gen_gui_api_docs.sh` 从 `src/gui/**/*.uya`、`apps/**/*.uya`、`examples/**/*.uya`、`tests/**/*.uya` 自动生成。",
     "> 内容聚焦公开符号索引，详细设计说明请结合 `docs/gui_uya_*.md` 系列文档阅读。",
     "",
 ]
 
-for file in sorted((repo_root / "gui").rglob("*.uya")):
+source_roots = [
+    repo_root / "apps",
+    repo_root / "examples",
+    repo_root / "src" / "gui",
+    repo_root / "tests",
+]
+
+for file in sorted(path for root in source_roots for path in root.rglob("*.uya")):
     source_lines = file.read_text(encoding="utf-8").splitlines()
     entries: list[tuple[int, str, list[str]]] = []
 

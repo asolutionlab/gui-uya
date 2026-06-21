@@ -1,0 +1,329 @@
+use gui.core.color.BLACK;
+use gui.core.color.Color;
+use gui.core.color.WHITE;
+use gui.core.obj.GuiObj;
+use gui.core.obj.gui_obj_default;
+use gui.style.Style;
+use gui.style.StyleBuilder;
+use gui.style.StyleProp;
+use gui.style.StyleValue;
+use gui.style.style_builder_new;
+use gui.style.style_default;
+use gui.style.style_make;
+use gui.style.theme.ThemeVariant;
+use gui.style.theme.Theme;
+use gui.style.theme.ThemeManager;
+use gui.style.theme.compact_theme;
+use gui.style.theme.material_dark_theme;
+use gui.style.theme.material_light_theme;
+use gui.style.theme.theme_manager_new;
+use std.testing.assert_eq_bool;
+use std.testing.assert_eq_i32;
+use std.testing.expect;
+
+export const TEST_STYLE_MODULE: i32 = 1;
+
+fn hex_color(hex: u32) Color {
+    return Color{
+        r: ((hex >> 16) & 0xFFu32) as u8,
+        g: ((hex >> 8) & 0xFFu32) as u8,
+        b: (hex & 0xFFu32) as u8,
+        a: 255,
+    };
+}
+
+fn assert_style_color(st: &Style, prop: StyleProp, expected: Color) !void {
+    try assert_eq_bool(st.get_color_or(prop, BLACK) == expected, true);
+}
+
+fn assert_style_u32(st: &Style, prop: StyleProp, expected: u32) !void {
+    try assert_eq_i32(st.get_u32_or(prop, 0u32) as i32, expected as i32);
+}
+
+fn assert_style_i32(st: &Style, prop: StyleProp, expected: i32) !void {
+    try assert_eq_i32(st.get_i32_or(prop, 0), expected);
+}
+
+fn assert_style_ptr(st: &Style, prop: StyleProp, expected: &void) !void {
+    try assert_eq_bool(st.get_ptr_or(prop, null) == expected, true);
+}
+
+test "style inline get set and ext props" {
+    var st: Style = style_default();
+    st.set_color(StyleProp.BgColor, hex_color(0x112233u32));
+    st.set_u32(StyleProp.BorderWidth, 3u32);
+    st.set_i32(StyleProp.FlexGrow, 2);
+
+    var bg: StyleValue = StyleValue.u(0u32);
+    var border_width: StyleValue = StyleValue.u(0u32);
+    var flex_grow: StyleValue = StyleValue.i(0);
+
+    try assert_eq_bool(st.get(StyleProp.BgColor, &bg), true);
+    try assert_eq_bool(st.get(StyleProp.BorderWidth, &border_width), true);
+    try assert_eq_bool(st.get(StyleProp.FlexGrow, &flex_grow), true);
+
+    match bg {
+        .color(c) => { try assert_eq_i32(c.r as i32, 0x11); },
+        else => { return error.AssertionFailed; },
+    };
+    match border_width {
+        .u(v) => { try assert_eq_i32(v as i32, 3); },
+        else => { return error.AssertionFailed; },
+    };
+    match flex_grow {
+        .i(v) => { try assert_eq_i32(v, 2); },
+        else => { return error.AssertionFailed; },
+    };
+}
+
+test "style merge and clone keep overridden values" {
+    var base: Style = style_default();
+    var overlay: Style = style_default();
+
+    base.set_color(StyleProp.BgColor, hex_color(0x101010u32));
+    overlay.set_color(StyleProp.FgColor, hex_color(0xFFFFFFu32));
+    overlay.set_u32(StyleProp.PaddingLeft, 12u32);
+
+    base.merge(overlay);
+    const cloned: Style = base.clone();
+
+    try expect(base.get_color_or(StyleProp.BgColor, BLACK).r == 0x10);
+    try assert_eq_i32(base.get_u32_or(StyleProp.PaddingLeft, 0u32) as i32, 12);
+    try assert_eq_i32(cloned.get_u32_or(StyleProp.PaddingLeft, 0u32) as i32, 12);
+    try assert_eq_bool(cloned.get_color_or(StyleProp.FgColor, BLACK) == WHITE, true);
+}
+
+test "style builder and macro create expected values" {
+    var builder: StyleBuilder = style_builder_new();
+    builder.bg_color(hex_color(0x334455u32));
+    builder.fg_color(hex_color(0xEEEEEEu32));
+    builder.border(2, hex_color(0x222222u32));
+    builder.radius(9);
+    builder.padding(6);
+    builder.margin(4);
+    builder.font_size(16);
+    builder.opacity(200);
+    const built: Style = builder.build();
+
+    const macro_style: Style = style_make(hex_color(0xAA0000u32), hex_color(0xFFFFFFu32), 1, hex_color(0x550000u32), 5, 220);
+
+    try assert_eq_i32(built.get_u32_or(StyleProp.Radius, 0u32) as i32, 9);
+    try assert_eq_i32(built.get_u32_or(StyleProp.PaddingTop, 0u32) as i32, 6);
+    try assert_eq_i32(built.get_u32_or(StyleProp.MarginLeft, 0u32) as i32, 4);
+    try assert_eq_i32(macro_style.get_u32_or(StyleProp.Opacity, 0u32) as i32, 220);
+    try assert_eq_bool(macro_style.get_color_or(StyleProp.FgColor, BLACK) == WHITE, true);
+}
+
+test "style property coverage matrix spans inline and ext props" {
+    var st: Style = style_default();
+    var probe: GuiObj = gui_obj_default();
+
+    st.set_color(StyleProp.BgColor, hex_color(0x010203u32));
+    st.set_color(StyleProp.FgColor, hex_color(0x111213u32));
+    st.set_color(StyleProp.BorderColor, hex_color(0x212223u32));
+    st.set_color(StyleProp.ShadowColor, hex_color(0x313233u32));
+    st.set_u32(StyleProp.Width, 101u32);
+    st.set_u32(StyleProp.Height, 55u32);
+    st.set_u32(StyleProp.MinWidth, 12u32);
+    st.set_u32(StyleProp.MinHeight, 13u32);
+    st.set_u32(StyleProp.MaxWidth, 140u32);
+    st.set_u32(StyleProp.MaxHeight, 141u32);
+    st.set_u32(StyleProp.BorderWidth, 4u32);
+    st.set_u32(StyleProp.Radius, 7u32);
+    st.set_u32(StyleProp.PaddingTop, 1u32);
+    st.set_u32(StyleProp.PaddingRight, 2u32);
+    st.set_u32(StyleProp.PaddingBottom, 3u32);
+    st.set_u32(StyleProp.PaddingLeft, 4u32);
+    st.set_u32(StyleProp.MarginTop, 5u32);
+    st.set_u32(StyleProp.MarginRight, 6u32);
+    st.set_u32(StyleProp.MarginBottom, 7u32);
+    st.set_u32(StyleProp.MarginLeft, 8u32);
+    st.set_u32(StyleProp.FontSize, 16u32);
+    st.set_u32(StyleProp.Opacity, 210u32);
+    st.set_ptr(StyleProp.Font, &probe as &void);
+
+    st.set_color(StyleProp.BgHoverColor, hex_color(0x414243u32));
+    st.set_color(StyleProp.BgPressColor, hex_color(0x515253u32));
+    st.set_color(StyleProp.BgFocusColor, hex_color(0x616263u32));
+    st.set_color(StyleProp.BgDisableColor, hex_color(0x717273u32));
+    st.set_i32(StyleProp.ShadowOffsetX, 9);
+    st.set_i32(StyleProp.ShadowOffsetY, -3);
+    st.set_i32(StyleProp.ShadowBlur, 11);
+    st.set_ptr(StyleProp.BgImage, &probe as &void);
+    st.set_u32(StyleProp.LayoutMode, 2u32);
+    st.set_u32(StyleProp.FlexDirection, 3u32);
+    st.set_u32(StyleProp.JustifyContent, 4u32);
+    st.set_u32(StyleProp.AlignItems, 1u32);
+    st.set_u32(StyleProp.AlignSelf, 2u32);
+    st.set_i32(StyleProp.FlexGrow, 3);
+    st.set_i32(StyleProp.FlexShrink, 4);
+    st.set_i32(StyleProp.FlexBasis, 48);
+    st.set_u32(StyleProp.Gap, 9u32);
+    st.set_u32(StyleProp.RowGap, 10u32);
+    st.set_u32(StyleProp.ColGap, 11u32);
+    st.set_i32(StyleProp.GridColumn, 2);
+    st.set_i32(StyleProp.GridRow, 1);
+    st.set_i32(StyleProp.GridColumnSpan, 3);
+    st.set_i32(StyleProp.GridRowSpan, 2);
+    st.set_u32(StyleProp.Overflow, 1u32);
+
+    try assert_style_color(&st, StyleProp.BgColor, hex_color(0x010203u32));
+    try assert_style_color(&st, StyleProp.FgColor, hex_color(0x111213u32));
+    try assert_style_color(&st, StyleProp.BorderColor, hex_color(0x212223u32));
+    try assert_style_color(&st, StyleProp.ShadowColor, hex_color(0x313233u32));
+    try assert_style_u32(&st, StyleProp.Width, 101u32);
+    try assert_style_u32(&st, StyleProp.Height, 55u32);
+    try assert_style_u32(&st, StyleProp.MinWidth, 12u32);
+    try assert_style_u32(&st, StyleProp.MinHeight, 13u32);
+    try assert_style_u32(&st, StyleProp.MaxWidth, 140u32);
+    try assert_style_u32(&st, StyleProp.MaxHeight, 141u32);
+    try assert_style_u32(&st, StyleProp.BorderWidth, 4u32);
+    try assert_style_u32(&st, StyleProp.Radius, 7u32);
+    try assert_style_u32(&st, StyleProp.PaddingTop, 1u32);
+    try assert_style_u32(&st, StyleProp.PaddingRight, 2u32);
+    try assert_style_u32(&st, StyleProp.PaddingBottom, 3u32);
+    try assert_style_u32(&st, StyleProp.PaddingLeft, 4u32);
+    try assert_style_u32(&st, StyleProp.MarginTop, 5u32);
+    try assert_style_u32(&st, StyleProp.MarginRight, 6u32);
+    try assert_style_u32(&st, StyleProp.MarginBottom, 7u32);
+    try assert_style_u32(&st, StyleProp.MarginLeft, 8u32);
+    try assert_style_u32(&st, StyleProp.FontSize, 16u32);
+    try assert_style_u32(&st, StyleProp.Opacity, 210u32);
+    try assert_style_ptr(&st, StyleProp.Font, &probe as &void);
+
+    try assert_style_color(&st, StyleProp.BgHoverColor, hex_color(0x414243u32));
+    try assert_style_color(&st, StyleProp.BgPressColor, hex_color(0x515253u32));
+    try assert_style_color(&st, StyleProp.BgFocusColor, hex_color(0x616263u32));
+    try assert_style_color(&st, StyleProp.BgDisableColor, hex_color(0x717273u32));
+    try assert_style_i32(&st, StyleProp.ShadowOffsetX, 9);
+    try assert_style_i32(&st, StyleProp.ShadowOffsetY, -3);
+    try assert_style_i32(&st, StyleProp.ShadowBlur, 11);
+    try assert_style_ptr(&st, StyleProp.BgImage, &probe as &void);
+    try assert_style_u32(&st, StyleProp.LayoutMode, 2u32);
+    try assert_style_u32(&st, StyleProp.FlexDirection, 3u32);
+    try assert_style_u32(&st, StyleProp.JustifyContent, 4u32);
+    try assert_style_u32(&st, StyleProp.AlignItems, 1u32);
+    try assert_style_u32(&st, StyleProp.AlignSelf, 2u32);
+    try assert_style_i32(&st, StyleProp.FlexGrow, 3);
+    try assert_style_i32(&st, StyleProp.FlexShrink, 4);
+    try assert_style_i32(&st, StyleProp.FlexBasis, 48);
+    try assert_style_u32(&st, StyleProp.Gap, 9u32);
+    try assert_style_u32(&st, StyleProp.RowGap, 10u32);
+    try assert_style_u32(&st, StyleProp.ColGap, 11u32);
+    try assert_style_i32(&st, StyleProp.GridColumn, 2);
+    try assert_style_i32(&st, StyleProp.GridRow, 1);
+    try assert_style_i32(&st, StyleProp.GridColumnSpan, 3);
+    try assert_style_i32(&st, StyleProp.GridRowSpan, 2);
+    try assert_style_u32(&st, StyleProp.Overflow, 1u32);
+    try assert_eq_i32(st.ext_count as i32, 24);
+}
+
+test "style builder extended dsl covers layout and state helpers" {
+    var builder: StyleBuilder = style_builder_new();
+    builder.size(120, 40);
+    builder.min_size(80, 20);
+    builder.max_size(240, 72);
+    builder.state_bg(hex_color(0x112233u32), hex_color(0x223344u32), hex_color(0x334455u32), hex_color(0x445566u32));
+    builder.layout_mode(2u32);
+    builder.gap(7);
+    builder.flex(2, 1, 48);
+    builder.grid_cell(1, 2, 3, 4);
+    builder.overflow(1u32);
+    const st: Style = builder.build();
+
+    try assert_style_u32(&st, StyleProp.Width, 120u32);
+    try assert_style_u32(&st, StyleProp.Height, 40u32);
+    try assert_style_u32(&st, StyleProp.MinWidth, 80u32);
+    try assert_style_u32(&st, StyleProp.MinHeight, 20u32);
+    try assert_style_u32(&st, StyleProp.MaxWidth, 240u32);
+    try assert_style_u32(&st, StyleProp.MaxHeight, 72u32);
+    try assert_style_color(&st, StyleProp.BgHoverColor, hex_color(0x112233u32));
+    try assert_style_color(&st, StyleProp.BgPressColor, hex_color(0x223344u32));
+    try assert_style_color(&st, StyleProp.BgFocusColor, hex_color(0x334455u32));
+    try assert_style_color(&st, StyleProp.BgDisableColor, hex_color(0x445566u32));
+    try assert_style_u32(&st, StyleProp.LayoutMode, 2u32);
+    try assert_style_u32(&st, StyleProp.Gap, 7u32);
+    try assert_style_i32(&st, StyleProp.FlexGrow, 2);
+    try assert_style_i32(&st, StyleProp.FlexShrink, 1);
+    try assert_style_i32(&st, StyleProp.FlexBasis, 48);
+    try assert_style_i32(&st, StyleProp.GridColumn, 1);
+    try assert_style_i32(&st, StyleProp.GridRow, 2);
+    try assert_style_i32(&st, StyleProp.GridColumnSpan, 3);
+    try assert_style_i32(&st, StyleProp.GridRowSpan, 4);
+    try assert_style_u32(&st, StyleProp.Overflow, 1u32);
+}
+
+test "style builder grid area shorthand maps to grid placement props" {
+    var builder: StyleBuilder = style_builder_new();
+    builder.grid_area(2, 3, 4, 5);
+    const st: Style = builder.build();
+
+    try assert_style_i32(&st, StyleProp.GridColumn, 2);
+    try assert_style_i32(&st, StyleProp.GridRow, 3);
+    try assert_style_i32(&st, StyleProp.GridColumnSpan, 4);
+    try assert_style_i32(&st, StyleProp.GridRowSpan, 5);
+}
+
+test "theme manager switches active variant" {
+    var manager: ThemeManager = theme_manager_new();
+    manager.register_theme(material_light_theme());
+    manager.register_theme(material_dark_theme());
+
+    manager.switch_theme(ThemeVariant.Dark);
+    const current: &Theme = manager.current();
+    if current == null {
+        return error.AssertionFailed;
+    }
+
+    try assert_eq_i32(current.variant as i32, ThemeVariant.Dark as i32);
+    try assert_style_color(&current.button_style, StyleProp.BgColor, hex_color(0x2563EBu32));
+}
+
+test "theme manager applies component specific styles" {
+    var manager: ThemeManager = theme_manager_new();
+    manager.register_theme(material_light_theme());
+    manager.register_theme(compact_theme());
+    manager.switch_theme(ThemeVariant.System);
+
+    var panel: GuiObj = gui_obj_default();
+    var button: GuiObj = gui_obj_default();
+    var label: GuiObj = gui_obj_default();
+    var slider: GuiObj = gui_obj_default();
+    var image: GuiObj = gui_obj_default();
+    var rich_text: GuiObj = gui_obj_default();
+    var rich_toolbar: GuiObj = gui_obj_default();
+
+    panel.type_tag = 0x1007u32;
+    button.type_tag = 0x1001u32;
+    label.type_tag = 0x1002u32;
+    slider.type_tag = 0x1004u32;
+    image.type_tag = 0x1003u32;
+    rich_text.type_tag = 0x100Du32;
+    rich_toolbar.type_tag = 0x100Eu32;
+    button.flags.clickable = true;
+    slider.flags.focusable = true;
+
+    panel.add_child(&button);
+    panel.add_child(&label);
+    panel.add_child(&slider);
+    panel.add_child(&image);
+    panel.add_child(&rich_text);
+    panel.add_child(&rich_toolbar);
+
+    manager.apply_to_tree(&panel);
+    const current: &Theme = manager.current();
+    if current == null {
+        return error.AssertionFailed;
+    }
+
+    try assert_style_color(&panel.style, StyleProp.BgColor, current.panel_style.get_color_or(StyleProp.BgColor, BLACK));
+    try assert_style_color(&button.style, StyleProp.BgColor, current.button_style.get_color_or(StyleProp.BgColor, BLACK));
+    try assert_style_color(&label.style, StyleProp.FgColor, current.text_style.get_color_or(StyleProp.FgColor, BLACK));
+    try assert_style_u32(&label.style, StyleProp.FontSize, current.text_style.get_u32_or(StyleProp.FontSize, 0u32));
+    try assert_style_u32(&slider.style, StyleProp.Radius, current.compact_style.get_u32_or(StyleProp.Radius, 0u32));
+    try assert_style_color(&image.style, StyleProp.BgColor, current.panel_style.get_color_or(StyleProp.BgColor, BLACK));
+    try assert_style_color(&rich_text.style, StyleProp.BgColor, current.rich_text_style.get_color_or(StyleProp.BgColor, BLACK));
+    try assert_style_u32(&rich_text.style, StyleProp.FontSize, current.rich_text_style.get_u32_or(StyleProp.FontSize, 0u32));
+    try assert_style_color(&rich_toolbar.style, StyleProp.BgColor, current.rich_toolbar_style.get_color_or(StyleProp.BgColor, BLACK));
+    try assert_style_u32(&rich_toolbar.style, StyleProp.Radius, current.rich_toolbar_style.get_u32_or(StyleProp.Radius, 0u32));
+}

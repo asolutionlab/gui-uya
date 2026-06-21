@@ -1,0 +1,557 @@
+use gui.core.event.Event;
+use gui.core.event.EventPhase;
+use gui.core.event.EventType;
+use gui.core.rect.Rect;
+use gui.render.ctx.RenderCtx;
+use gui.style.DEFAULT_STYLE;
+use gui.style.Style;
+
+export const GUI_OBJ_REGISTRY_CAPACITY: i32 = 256;
+
+export interface IGuiObj {
+    fn type_id(self: &Self) u32;
+    fn parent(self: &Self) &GuiObj;
+    fn area(self: &Self) Rect;
+    fn set_area(self: &Self, r: Rect) void;
+    fn screen_area(self: &Self) Rect;
+    fn invalidate(self: &Self) void;
+    fn visible(self: &Self) bool;
+    fn layout(self: &Self, available: Rect) void;
+    fn render(self: &Self, ctx: &RenderCtx) void;
+    fn handle_event(self: &Self, evt: &Event) bool;
+}
+
+export interface IContainer {
+    fn add_child(self: &Self, child: &GuiObj) void;
+    fn remove_child(self: &Self, child: &GuiObj) void;
+    fn child_count(self: &Self) i32;
+    fn child_at(self: &Self, index: i32) &GuiObj;
+}
+
+export interface IGuiEventCallback {
+    fn invoke(self: &Self, obj: &GuiObj, evt: &Event, user_data: &void) bool;
+}
+
+export interface IGuiRenderCallback {
+    fn invoke(self: &Self, obj: &GuiObj, ctx: &RenderCtx, user_data: &void) void;
+}
+
+export interface IGuiLayoutCallback {
+    fn invoke(self: &Self, obj: &GuiObj, available: Rect, user_data: &void) void;
+}
+
+export interface IGuiInputCallback {
+    fn invoke(self: &Self, obj: &GuiObj, evt: &Event, user_data: &void) bool;
+}
+
+export struct EventCallbackSlot {
+    callback: &IGuiEventCallback,
+    user_data: &void,
+}
+
+export struct ObjFlags {
+    visible: bool,
+    enabled: bool,
+    invalid: bool,
+    floating: bool,
+    clickable: bool,
+    focusable: bool,
+    dirty: bool,
+    layout_dirty: bool,
+    reserved: u8,
+}
+
+export struct GuiObj : IGuiObj, IContainer {
+    obj_idx: i32,
+    type_tag: u32,
+    parent_ref: &GuiObj,
+    parent_idx: i32,
+    child_head: &GuiObj,
+    child_tail: &GuiObj,
+    sibling_prev: &GuiObj,
+    sibling_next: &GuiObj,
+    x: i16,
+    y: i16,
+    w: u16,
+    h: u16,
+    flags: ObjFlags,
+    self_invalid: bool,
+    invalid_area: Rect,
+    style: Style,
+    user_data: &void,
+    render_cb: &IGuiRenderCallback,
+    layout_cb: &IGuiLayoutCallback,
+    input_cb: &IGuiInputCallback,
+    click_cb: EventCallbackSlot,
+    press_cb: EventCallbackSlot,
+    release_cb: EventCallbackSlot,
+    long_press_cb: EventCallbackSlot,
+    value_change_cb: EventCallbackSlot,
+    pinch_cb: EventCallbackSlot,
+    hover_cb: EventCallbackSlot,
+    focus_cb: EventCallbackSlot,
+    name_ptr: &const byte,
+}
+
+var _gui_obj_registry: [&GuiObj: 256] = [];
+
+fn gui_obj_dispatch_slot(obj: &GuiObj, slot: &EventCallbackSlot, evt: &Event) bool {
+    if slot.callback == null {
+        return false;
+    }
+    return slot.callback.invoke(obj, evt, slot.user_data);
+}
+
+/// 返回默认的 GUI 对象标志位集合。
+export fn obj_flags_default() ObjFlags {
+    return ObjFlags{
+        visible: true,
+        enabled: true,
+        invalid: false,
+        floating: false,
+        clickable: false,
+        focusable: false,
+        dirty: true,
+        layout_dirty: true,
+        reserved: 0,
+    };
+}
+
+/// 返回空的对象事件回调槽位。
+export fn event_callback_slot_default() EventCallbackSlot {
+    return EventCallbackSlot{
+        callback: null,
+        user_data: null,
+    };
+}
+
+GuiObj {
+    fn invalidate_region(self: &Self, region: Rect) void {
+        if region.is_empty() {
+            return;
+        }
+        self.flags.invalid = true;
+        self.flags.dirty = true;
+        self.self_invalid = true;
+        if self.invalid_area.is_empty() {
+            self.invalid_area = region;
+        } else {
+            self.invalid_area = self.invalid_area.union_rect(region);
+        }
+
+        var current: &GuiObj = self.parent_ref;
+        while current != null {
+            current.flags.invalid = true;
+            current = current.parent_ref;
+        }
+    }
+
+    fn type_id(self: &Self) u32 {
+        return self.type_tag;
+    }
+
+    fn parent(self: &Self) &GuiObj {
+        return self.parent_ref;
+    }
+
+    fn area(self: &Self) Rect {
+        return Rect{
+            x: self.x,
+            y: self.y,
+            w: self.w,
+            h: self.h,
+        };
+    }
+
+    fn set_area(self: &Self, r: Rect) void {
+        const old_area: Rect = self.screen_area();
+        self.x = r.x;
+        self.y = r.y;
+        self.w = r.w;
+        self.h = r.h;
+        self.flags.dirty = true;
+        self.flags.layout_dirty = true;
+        const new_area: Rect = self.screen_area();
+        self.invalidate_region(old_area.union_rect(new_area));
+    }
+
+    fn screen_area(self: &Self) Rect {
+        var current: &GuiObj = self.parent_ref;
+        var sx: i32 = self.x as i32;
+        var sy: i32 = self.y as i32;
+
+        while current != null {
+            sx = sx + current.x as i32;
+            sy = sy + current.y as i32;
+            current = current.parent_ref;
+        }
+
+        return Rect{
+            x: sx as i16,
+            y: sy as i16,
+            w: self.w,
+            h: self.h,
+        };
+    }
+
+    fn invalidate(self: &Self) void {
+        self.invalidate_region(self.screen_area());
+    }
+
+    fn visible(self: &Self) bool {
+        return self.flags.visible;
+    }
+
+    fn layout(self: &Self, available: Rect) void {
+        if self.layout_cb != null {
+            self.layout_cb.invoke(self, available, self.user_data);
+            self.flags.layout_dirty = false;
+            return;
+        }
+        if self.w == 0 {
+            self.w = available.w;
+        }
+        if self.h == 0 {
+            self.h = available.h;
+        }
+        self.flags.layout_dirty = false;
+    }
+
+    fn render(self: &Self, ctx: &RenderCtx) void {
+        const clip: Rect = ctx.current_clip();
+        const area: Rect = self.screen_area();
+        const visible: Rect = clip.intersect(area);
+        if visible.is_empty() {
+            return;
+        }
+        if self.render_cb != null {
+            self.render_cb.invoke(self, ctx, self.user_data);
+        }
+    }
+
+    fn handle_event(self: &Self, evt: &Event) bool {
+        if !self.flags.enabled {
+            return false;
+        }
+
+        if evt.phase == EventPhase.Target && evt.target != self.obj_idx {
+            return false;
+        }
+
+        var delegated: bool = false;
+        if self.input_cb != null {
+            delegated = self.input_cb.invoke(self, evt, self.user_data);
+            if delegated {
+                evt.handled = true;
+            }
+            if evt.stop_bubble {
+                return delegated;
+            }
+        }
+
+        if self.dispatch_callback(evt) {
+            evt.handled = true;
+            return true;
+        }
+
+        if evt.event_type == EventType.FocusIn || evt.event_type == EventType.FocusOut {
+            if self.flags.focusable {
+                evt.handled = true;
+                return true;
+            }
+            return false;
+        }
+
+        if evt.phase == EventPhase.Target
+            && (evt.event_type == EventType.Click
+                || evt.event_type == EventType.DoubleClick
+                || evt.event_type == EventType.Press
+                || evt.event_type == EventType.Release
+                || evt.event_type == EventType.LongPress) {
+            if self.flags.clickable {
+                evt.handled = true;
+                return true;
+            }
+        }
+        return delegated;
+    }
+
+    fn add_child(self: &Self, child: &GuiObj) void {
+        if child == null || child == self {
+            return;
+        }
+
+        if child.parent_ref != null {
+            child.parent_ref.remove_child(child);
+        }
+
+        child.parent_ref = self;
+        child.parent_idx = self.obj_idx;
+        child.sibling_prev = self.child_tail;
+        child.sibling_next = null;
+
+        if self.child_tail != null {
+            self.child_tail.sibling_next = child;
+        } else {
+            self.child_head = child;
+        }
+
+        self.child_tail = child;
+        self.flags.layout_dirty = true;
+        self.invalidate();
+    }
+
+    fn remove_child(self: &Self, child: &GuiObj) void {
+        if child == null || child.parent_ref != self {
+            return;
+        }
+
+        if child.sibling_prev != null {
+            child.sibling_prev.sibling_next = child.sibling_next;
+        } else {
+            self.child_head = child.sibling_next;
+        }
+
+        if child.sibling_next != null {
+            child.sibling_next.sibling_prev = child.sibling_prev;
+        } else {
+            self.child_tail = child.sibling_prev;
+        }
+
+        child.parent_ref = null;
+        child.parent_idx = -1;
+        child.sibling_prev = null;
+        child.sibling_next = null;
+        self.flags.layout_dirty = true;
+        self.invalidate();
+    }
+
+    fn child_count(self: &Self) i32 {
+        var count: i32 = 0;
+        var child: &GuiObj = self.child_head;
+        while child != null {
+            count = count + 1;
+            child = child.sibling_next;
+        }
+        return count;
+    }
+
+    fn child_at(self: &Self, index: i32) &GuiObj {
+        if index < 0 {
+            return null;
+        }
+
+        var child: &GuiObj = self.child_head;
+        var i: i32 = 0;
+        while child != null {
+            if i == index {
+                return child;
+            }
+            child = child.sibling_next;
+            i = i + 1;
+        }
+        return null;
+    }
+
+    fn move_to(self: &Self, nx: i16, ny: i16) void {
+        if self.x == nx && self.y == ny {
+            return;
+        }
+        const old_area: Rect = self.screen_area();
+        self.x = nx;
+        self.y = ny;
+        self.flags.layout_dirty = true;
+        self.invalidate_region(old_area.union_rect(self.screen_area()));
+    }
+
+    fn set_size(self: &Self, nw: u16, nh: u16) void {
+        if self.w == nw && self.h == nh {
+            return;
+        }
+        const old_area: Rect = self.screen_area();
+        self.w = nw;
+        self.h = nh;
+        self.flags.layout_dirty = true;
+        self.invalidate_region(old_area.union_rect(self.screen_area()));
+    }
+
+    fn on_click(self: &Self, callback: &IGuiEventCallback, user_data: &void) void {
+        self.click_cb.callback = callback;
+        self.click_cb.user_data = user_data;
+    }
+
+    fn on_press(self: &Self, callback: &IGuiEventCallback, user_data: &void) void {
+        self.press_cb.callback = callback;
+        self.press_cb.user_data = user_data;
+    }
+
+    fn on_release(self: &Self, callback: &IGuiEventCallback, user_data: &void) void {
+        self.release_cb.callback = callback;
+        self.release_cb.user_data = user_data;
+    }
+
+    fn on_long_press(self: &Self, callback: &IGuiEventCallback, user_data: &void) void {
+        self.long_press_cb.callback = callback;
+        self.long_press_cb.user_data = user_data;
+    }
+
+    fn on_value_change(self: &Self, callback: &IGuiEventCallback, user_data: &void) void {
+        self.value_change_cb.callback = callback;
+        self.value_change_cb.user_data = user_data;
+    }
+
+    fn on_pinch(self: &Self, callback: &IGuiEventCallback, user_data: &void) void {
+        self.pinch_cb.callback = callback;
+        self.pinch_cb.user_data = user_data;
+    }
+
+    fn on_hover(self: &Self, callback: &IGuiEventCallback, user_data: &void) void {
+        self.hover_cb.callback = callback;
+        self.hover_cb.user_data = user_data;
+    }
+
+    fn on_focus(self: &Self, callback: &IGuiEventCallback, user_data: &void) void {
+        self.focus_cb.callback = callback;
+        self.focus_cb.user_data = user_data;
+    }
+
+    fn dispatch_callback(self: &Self, evt: &Event) bool {
+        if evt.event_type == EventType.Click || evt.event_type == EventType.DoubleClick {
+            return gui_obj_dispatch_slot(self, &self.click_cb, evt);
+        }
+        if evt.event_type == EventType.Press {
+            return gui_obj_dispatch_slot(self, &self.press_cb, evt);
+        }
+        if evt.event_type == EventType.Release {
+            return gui_obj_dispatch_slot(self, &self.release_cb, evt);
+        }
+        if evt.event_type == EventType.LongPress {
+            return gui_obj_dispatch_slot(self, &self.long_press_cb, evt);
+        }
+        if evt.event_type == EventType.ValueChange {
+            return gui_obj_dispatch_slot(self, &self.value_change_cb, evt);
+        }
+        if evt.event_type == EventType.PinchStart || evt.event_type == EventType.Pinch || evt.event_type == EventType.PinchEnd {
+            return gui_obj_dispatch_slot(self, &self.pinch_cb, evt);
+        }
+        if evt.event_type == EventType.HoverEnter || evt.event_type == EventType.HoverMove || evt.event_type == EventType.HoverLeave {
+            return gui_obj_dispatch_slot(self, &self.hover_cb, evt);
+        }
+        if evt.event_type == EventType.FocusIn || evt.event_type == EventType.FocusOut {
+            return gui_obj_dispatch_slot(self, &self.focus_cb, evt);
+        }
+        return false;
+    }
+
+    fn drop(self: GuiObj) void {
+        if self.obj_idx < 0 {
+            return;
+        }
+
+        const live: &GuiObj = gui_obj_get(self.obj_idx);
+        if live == null {
+            return;
+        }
+
+        if live.parent_ref != null {
+            live.parent_ref.remove_child(live);
+        }
+
+        var child: &GuiObj = live.child_head;
+        while child != null {
+            const next: &GuiObj = child.sibling_next;
+            child.parent_ref = null;
+            child.parent_idx = -1;
+            child.sibling_prev = null;
+            child.sibling_next = null;
+            child = next;
+        }
+
+        live.child_head = null;
+        live.child_tail = null;
+        gui_obj_unregister(self.obj_idx);
+    }
+
+}
+
+/// 构造默认初始化的 `GuiObj`。
+export fn gui_obj_default() GuiObj {
+    return GuiObj{
+        obj_idx: -1,
+        type_tag: 0,
+        parent_ref: null,
+        parent_idx: -1,
+        child_head: null,
+        child_tail: null,
+        sibling_prev: null,
+        sibling_next: null,
+        x: 0,
+        y: 0,
+        w: 0,
+        h: 0,
+        flags: obj_flags_default(),
+        self_invalid: false,
+        invalid_area: RECT_ZERO,
+        style: DEFAULT_STYLE,
+        user_data: null,
+        render_cb: null,
+        layout_cb: null,
+        input_cb: null,
+        click_cb: event_callback_slot_default(),
+        press_cb: event_callback_slot_default(),
+        release_cb: event_callback_slot_default(),
+        long_press_cb: event_callback_slot_default(),
+        value_change_cb: event_callback_slot_default(),
+        pinch_cb: event_callback_slot_default(),
+        hover_cb: event_callback_slot_default(),
+        focus_cb: event_callback_slot_default(),
+        name_ptr: "obj",
+    };
+}
+
+/// 将对象注册到全局 GUI 对象表。
+export fn gui_obj_register(idx: i32, obj: &GuiObj) bool {
+    if idx < 0 || idx >= GUI_OBJ_REGISTRY_CAPACITY || obj == null {
+        return false;
+    }
+    const slot: usize = (idx as! usize).value;
+    if slot >= (GUI_OBJ_REGISTRY_CAPACITY as usize) {
+        return false;
+    }
+    _gui_obj_registry[slot] = obj;
+    obj.obj_idx = idx;
+    return true;
+}
+
+/// 按注册索引获取 GUI 对象引用。
+export fn gui_obj_get(idx: i32) &GuiObj {
+    if idx < 0 || idx >= GUI_OBJ_REGISTRY_CAPACITY {
+        return null;
+    }
+    const slot: usize = (idx as! usize).value;
+    if slot >= (GUI_OBJ_REGISTRY_CAPACITY as usize) {
+        return null;
+    }
+    return _gui_obj_registry[slot];
+}
+
+/// 从全局 GUI 对象表中移除对象。
+export fn gui_obj_unregister(idx: i32) void {
+    if idx < 0 || idx >= GUI_OBJ_REGISTRY_CAPACITY {
+        return;
+    }
+    const slot: usize = (idx as! usize).value;
+    if slot >= (GUI_OBJ_REGISTRY_CAPACITY as usize) {
+        return;
+    }
+    _gui_obj_registry[slot] = null;
+}
+
+/// 清空全局 GUI 对象注册表。
+export fn gui_obj_reset_registry() void {
+    var i: i32 = 0;
+    while i < GUI_OBJ_REGISTRY_CAPACITY {
+        _gui_obj_registry[i] = null;
+        i = i + 1;
+    }
+}

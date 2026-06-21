@@ -30,7 +30,7 @@ typedef struct {
     lv_font_t * font;
 } font_asset_t;
 
-static const char * latin_font_path = "gui/render/DejaVuSans.ttf";
+static const char * latin_font_path = "src/gui/render/DejaVuSans.ttf";
 static const char * cjk_font_path = "/usr/share/fonts/opentype/source-han-cjk/SourceHanSansSC-Regular.otf";
 static const char * cjk_font_fallback_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
 

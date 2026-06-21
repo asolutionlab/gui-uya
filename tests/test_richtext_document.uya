@@ -1,0 +1,188 @@
+use libc.strncmp;
+use gui.richtext.document.RICH_MARK_BOLD;
+use gui.richtext.document.RichBlockType;
+use gui.richtext.document.RichDocument;
+use gui.richtext.document.RichInlineMarks;
+use gui.richtext.document.rich_document_new;
+use gui.richtext.selection.RichRange;
+use gui.richtext.selection.RichPos;
+use gui.richtext.selection.rich_range_normalized;
+use std.testing.assert_eq_bool;
+use std.testing.assert_eq_i32;
+
+export const TEST_RICHTEXT_DOCUMENT_MODULE: i32 = 1;
+
+test "rich document builds blocks from plain text and exports plain text" {
+    var doc: RichDocument = rich_document_new();
+    defer doc.dispose();
+
+    try doc.set_plain_text("Hello\n世界" as &const byte);
+    try assert_eq_i32(doc.block_count as i32, 2);
+    try assert_eq_i32(doc.blocks[0].span_count as i32, 1);
+    try assert_eq_i32(doc.blocks[1].span_count as i32, 1);
+
+    var out: [byte: 32] = [];
+    const written: usize = doc.export_plain_text(&out[0], 32usize);
+    try assert_eq_i32(written as i32, 12);
+    try assert_eq_bool(strncmp(&out[0] as *const byte, "Hello\n世界" as *const byte, written) == 0, true);
+}
+
+test "rich document split and merge keep utf8 boundaries valid" {
+    var doc: RichDocument = rich_document_new();
+    defer doc.dispose();
+
+    try doc.set_plain_text("中文" as &const byte);
+    const right_index: u16 = try doc.split_span(0u32, 0u16, 3usize);
+    try assert_eq_i32(right_index as i32, 1);
+    try assert_eq_i32(doc.blocks[0].span_count as i32, 2);
+    try assert_eq_i32(doc.blocks[0].spans[0].text_len as i32, 3);
+    try assert_eq_i32(doc.blocks[0].spans[1].text_len as i32, 3);
+    try assert_eq_bool(strncmp(doc.blocks[0].spans[0].text_ptr as *const byte, "中" as *const byte, 3usize) == 0, true);
+    try assert_eq_bool(strncmp(doc.blocks[0].spans[1].text_ptr as *const byte, "文" as *const byte, 3usize) == 0, true);
+
+    try assert_eq_bool(try doc.merge_spans(0u32, 0u16), true);
+    try assert_eq_i32(doc.blocks[0].span_count as i32, 1);
+    try assert_eq_i32(doc.blocks[0].spans[0].text_len as i32, 6);
+    try assert_eq_bool(strncmp(doc.blocks[0].spans[0].text_ptr as *const byte, "中文" as *const byte, 6usize) == 0, true);
+}
+
+test "rich document position and linear offsets stay consistent" {
+    var doc: RichDocument = rich_document_new();
+    defer doc.dispose();
+
+    try doc.set_plain_text("A\n中文" as &const byte);
+    const offset_after_zhong: u32 = try doc.pos_to_linear_offset(RichPos{
+        block_index: 1u32,
+        span_index: 0u16,
+        utf8_offset: 3u32,
+        affinity: 0u8,
+    });
+    try assert_eq_i32(offset_after_zhong as i32, 3);
+
+    const pos_from_offset: RichPos = try doc.linear_offset_to_pos(3u32);
+    try assert_eq_i32(pos_from_offset.block_index as i32, 1);
+    try assert_eq_i32(pos_from_offset.span_index as i32, 0);
+    try assert_eq_i32(pos_from_offset.utf8_offset as i32, 3);
+
+    const moved_left: RichPos = try doc.move_left(RichPos{
+        block_index: 1u32,
+        span_index: 0u16,
+        utf8_offset: 3u32,
+        affinity: 0u8,
+    });
+    try assert_eq_i32(moved_left.block_index as i32, 1);
+    try assert_eq_i32(moved_left.utf8_offset as i32, 0);
+
+    const moved_right: RichPos = try doc.move_right(moved_left);
+    try assert_eq_i32(moved_right.block_index as i32, 1);
+    try assert_eq_i32(moved_right.utf8_offset as i32, 3);
+
+    const block_start: RichPos = try doc.move_block_start(RichPos{
+        block_index: 1u32,
+        span_index: 0u16,
+        utf8_offset: 3u32,
+        affinity: 0u8,
+    });
+    try assert_eq_i32(block_start.block_index as i32, 1);
+    try assert_eq_i32(block_start.utf8_offset as i32, 0);
+
+    const block_end: RichPos = try doc.move_block_end(block_start);
+    try assert_eq_i32(block_end.block_index as i32, 1);
+    try assert_eq_i32(block_end.utf8_offset as i32, 6);
+}
+
+test "rich document vertical movement preserves logical column and clamps by block length" {
+    var doc: RichDocument = rich_document_new();
+    defer doc.dispose();
+
+    try doc.set_plain_text("A中B\nxy\n世界" as &const byte);
+    _ = try doc.split_span(0u32, 0u16, 1usize);
+    _ = try doc.split_span(0u32, 1u16, 3usize);
+
+    const source_for_down: RichPos = RichPos{
+        block_index: 0u32,
+        span_index: 2u16,
+        utf8_offset: 0u32,
+        affinity: 0u8,
+    };
+    const moved_down_once: RichPos = try doc.move_down(source_for_down);
+    try assert_eq_i32(moved_down_once.block_index as i32, 1);
+    try assert_eq_i32(moved_down_once.span_index as i32, 0);
+    try assert_eq_i32(moved_down_once.utf8_offset as i32, 2);
+
+    const moved_down_twice: RichPos = try doc.move_down(moved_down_once);
+    try assert_eq_i32(moved_down_twice.block_index as i32, 2);
+    try assert_eq_i32(moved_down_twice.span_index as i32, 0);
+    try assert_eq_i32(moved_down_twice.utf8_offset as i32, 6);
+
+    const moved_up_once: RichPos = try doc.move_up(moved_down_twice);
+    try assert_eq_i32(moved_up_once.block_index as i32, 1);
+    try assert_eq_i32(moved_up_once.utf8_offset as i32, 2);
+
+    const moved_up_twice: RichPos = try doc.move_up(moved_up_once);
+    try assert_eq_i32(moved_up_twice.block_index as i32, 0);
+    try assert_eq_i32((try doc.pos_to_linear_offset(moved_up_twice)) as i32, 2);
+
+    const top_stays: RichPos = try doc.move_up(RichPos{
+        block_index: 0u32,
+        span_index: 2u16,
+        utf8_offset: 0u32,
+        affinity: 0u8,
+    });
+    try assert_eq_i32(top_stays.block_index as i32, 0);
+    try assert_eq_i32(top_stays.span_index as i32, 2);
+    try assert_eq_i32(top_stays.utf8_offset as i32, 0);
+
+    const bottom_stays: RichPos = try doc.move_down(RichPos{
+        block_index: 2u32,
+        span_index: 0u16,
+        utf8_offset: 6u32,
+        affinity: 0u8,
+    });
+    try assert_eq_i32(bottom_stays.block_index as i32, 2);
+    try assert_eq_i32(bottom_stays.utf8_offset as i32, 6);
+}
+
+test "rich range normalization keeps anchor and focus ordered" {
+    const normalized: RichRange = rich_range_normalized(RichRange{
+        anchor: RichPos{
+            block_index: 1u32,
+            span_index: 0u16,
+            utf8_offset: 3u32,
+            affinity: 0u8,
+        },
+        focus: RichPos{
+            block_index: 0u32,
+            span_index: 0u16,
+            utf8_offset: 1u32,
+            affinity: 0u8,
+        },
+    });
+    try assert_eq_i32(normalized.anchor.block_index as i32, 0);
+    try assert_eq_i32(normalized.focus.block_index as i32, 1);
+}
+
+test "rich document normalize merges adjacent spans and removes extra empty spans" {
+    var doc: RichDocument = rich_document_new();
+    defer doc.dispose();
+
+    _ = try doc.append_block(RichBlockType.Paragraph, 0u8);
+    doc.blocks[0].spans[0].marks = RichInlineMarks{
+        bits: RICH_MARK_BOLD,
+        link_ref: 0u16,
+    };
+    try assert_eq_bool(try doc.set_span_text(0u32, 0u16, "A" as &const byte, 1usize), true);
+    _ = try doc.append_span(0u32, "B" as &const byte, 1usize, RichInlineMarks{
+        bits: RICH_MARK_BOLD,
+        link_ref: 0u16,
+    });
+    _ = try doc.append_span(0u32, "" as &const byte, 0usize, RichInlineMarks{
+        bits: RICH_MARK_BOLD,
+        link_ref: 0u16,
+    });
+
+    try doc.normalize();
+    try assert_eq_i32(doc.blocks[0].span_count as i32, 1);
+    try assert_eq_i32(doc.blocks[0].spans[0].text_len as i32, 2);
+    try assert_eq_bool(strncmp(doc.blocks[0].spans[0].text_ptr as *const byte, "AB" as *const byte, 2usize) == 0, true);
+}

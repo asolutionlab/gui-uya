@@ -7,41 +7,45 @@
 ## 当前状态
 
 - 截至 `2026-04-29`，Phase 0 到 Phase 5 的仓库内基线已具备，Phase 6 的文档与示例基线已补齐。
-- 当前默认 smoke 入口为 `gui/phase6_smoke.uya`，`make build` 会生成 `build/phase6_smoke`。
-- Linux 模拟器首版 SDL2 MVP 已落地，入口为 `gui/sim_main.uya`，可通过 `make sim-build`、`make sim-run`、`make sim-headless` 使用。
-- `make bench-verify` 现会基于 `gui/benchmarks/phase5_bench_baseline.json` 校验 benchmark 回归阈值，`make dashboard-compare-report` 会生成 UyaGUI / LVGL dashboard 同场景对照报告。
+- 当前默认 smoke 入口为 `apps/phase6_smoke.uya`，`make build` 会生成 `build/phase6_smoke`。
+- Linux 模拟器首版 SDL2 MVP 已落地，入口为 `apps/sim_main.uya`，可通过 `make sim-build`、`make sim-run`、`make sim-headless` 使用。
+- `make bench-verify` 现会基于 `src/gui/benchmarks/phase5_bench_baseline.json` 校验 benchmark 回归阈值，`make dashboard-compare-report` 会生成 UyaGUI / LVGL dashboard 同场景对照报告。
 - 默认文本渲染已从“占位方框”切换为内置 `5x7` 位图字形，英文、数字和常见标点可正常显示。
 - 目标板实机验证、正式发布打包、真实字体/图片解码链路仍在后续范围内。
 
 ### 本地验证快照
 
-以下结果基于 `2026-04-26` 在当前仓库工作区的实际执行：
+以下结果基于 `2026-06-21` 在当前仓库工作区的实际执行：
 
-- `./uya/bin/uya --version` 输出 `v0.9.4`
+- `uya --version` 输出 `v0.10.0`
 - `make build` 通过
-- `make sim-build` 通过
-- `make sim-run SIM_ARGS="--max-frames 2 --screenshot build/sim/readme_check.bmp"` 通过，并生成截图
+- `make sim-build SIM_BUILD_DIR=build/sim-check` 通过
+- `make sim-web-build SIM_WEB_BUILD_DIR=build/web-check` 通过
+- `make bench-verify` 通过
 - `make test` 通过
-  - `gui/test_suite.uya` 的 `94` 个测试通过
-  - `gui/render_test_suite.uya` 的 `12` 个测试通过
+  - `tests/test_suite.uya` 的 `165` 个测试通过
+  - `tests/test_suite_extra.uya` 的 `57` 个测试通过
+  - `tests/richtext_test_suite.uya` 的 `64` 个测试通过
+  - `tests/web_present_plan_suite.uya` 的 `4` 个测试通过
+  - `tests/render_test_suite.uya` 的 `38` 个测试通过
 
 如果你当前只是想验证 GUI 核心与模拟器相关逻辑，可先单独执行：
 
 ```bash
-./uya/bin/uya test gui/test_suite.uya -O0
+make test
 ```
 
 ## 快速开始
 
 ### 1. 检查工具链
 
-仓库已内置 Uya 编译器：
+优先使用系统 `PATH` 中的 Uya 编译器：
 
 ```bash
-./uya/bin/uya --version
+uya --version
 ```
 
-当前 `uya.toml` 要求的最小版本为 `0.9.4`，仓库内置版本与之匹配。
+当前 `uya.toml` 要求的最小版本为 `0.9.4`。
 
 ### 2. 常用命令
 
@@ -62,12 +66,12 @@ make release
 
 说明：
 
-- `make build`：构建默认 smoke 应用 `gui/phase6_smoke.uya`
-- `make test`：运行 GUI 主测试集和 render 测试集
+- `make build`：构建默认 smoke 应用 `apps/phase6_smoke.uya`
+- `make test`：运行 GUI 主测试集、扩展测试集、rich text、web present plan 和 render 测试集
 - `make bench`：执行 benchmark
 - `make bench-report`：生成 `build/phase5_bench.txt`
 - `make bench-json`：把 `build/phase5_bench.txt` 解析为 `build/phase5_bench.json`
-- `make bench-verify`：按 `gui/benchmarks/phase5_bench_baseline.json` 校验 benchmark 阈值
+- `make bench-verify`：按 `src/gui/benchmarks/phase5_bench_baseline.json` 校验 benchmark 阈值
 - `make dashboard-compare-report`：生成 `build/dashboard_compare/dashboard_compare_report.{md,json}`
 - `make docs-api`：生成 API 索引文档 `docs/gui_uya_api_reference.md`
 - `make sim-web-build`：构建 Web 模拟器产物到 `build/web/`
@@ -286,7 +290,7 @@ make sim-web-run
 make sim-web-pages
 ```
 
-- `make sim-web-build` 会生成 `build/web/index.html`、`index.js`、`index.wasm`、`index.data`，以及独立的 `gui/render/generated/wqy_microhei_demo_*.{fnt,a8}` 外部字体资源
+- `make sim-web-build` 会生成 `build/web/index.html`、`index.js`、`index.wasm`、`index.data`，以及独立的 `build/web/gui/render/generated/wqy_microhei_demo_*.{fnt,a8}` 外部字体资源
 - `make sim-web-run` / `make sim-web-serve` 默认会先把 dev Cloudflare Worker 部署一次，再生成带 `openai_config.js` 的 Web 产物并启动本地静态服务器
 - `make sim-web-pages` 会把 GitHub Pages 需要的公开文件整理到 `build/pages/`，并写入 `.nojekyll`
 - 仓库内置 `.github/workflows/sim-web-pages.yml`，推送到 `main` 后会自动构建并部署 Pages
@@ -318,41 +322,44 @@ make build-esp32
 ```text
 .
 ├── docs/           # 架构、快速开始、模拟器、移植、性能、主题等文档
-├── gui/            # GUI 主工程
-│   ├── core/       # 对象树、事件、脏区、几何与基础类型
-│   ├── render/     # 渲染上下文、批处理、GPU、零拷贝、字体、图像
-│   ├── widget/     # Button、Label、Page、Slider、Chart 等组件
-│   ├── layout/     # abs / auto / flex / grid
-│   ├── anim/       # tween / timeline / easing
-│   ├── style/      # 主题、样式、属性系统
-│   ├── res/        # pool、buffer、cache、fs
-│   ├── platform/   # 显示、输入、时钟与 SDL2 / FB 后端
-│   ├── sim/        # 模拟器 runner、配置、录制、截图、profiler
-│   ├── examples/   # smoke 与 demo 示例
-│   └── tests/      # 单元测试与回归测试
+├── apps/           # 可执行入口与 smoke / simulator main
+├── examples/       # smoke、demo 与示例业务逻辑
+├── src/
+│   └── gui/        # GUI 框架源码，保留 gui.* 模块命名空间
+│       ├── core/   # 对象树、事件、脏区、几何与基础类型
+│       ├── render/ # 渲染上下文、批处理、GPU、零拷贝、字体、图像
+│       ├── widget/ # Button、Label、Page、Slider、Chart 等组件
+│       ├── layout/ # abs / auto / flex / grid
+│       ├── anim/   # tween / timeline / easing
+│       ├── style/  # 主题、样式、属性系统
+│       ├── res/    # pool、buffer、cache、fs
+│       ├── platform/ # 显示、输入、时钟与 SDL2 / FB 后端
+│       └── sim/    # 模拟器 runner、配置、录制、截图、profiler
+├── tests/          # 单元测试、回归测试与测试 suite 入口
 ├── tools/          # 构建与文档脚本
-├── uya/            # 内置 Uya 编译器与标准库
 ├── Makefile
 └── uya.toml
 ```
 
+`uya.toml` 将 package source root 指向 `src`，因此发布源码只包含 `src/gui`，不会把顶层 `examples/` 和 `tests/` 一起作为库源码打包；同时源码仍以 `gui.*` 作为公开模块路径。
+
 ## 示例入口
 
-- `gui/examples/phase0_smoke.uya`
-- `gui/examples/phase1_smoke.uya`
-- `gui/examples/phase2_smoke.uya`
-- `gui/examples/phase3_smoke.uya`
-- `gui/examples/phase4_smoke.uya`
-- `gui/examples/phase6_smoke.uya`
-- `gui/examples/demo_clock.uya`
-- `gui/examples/demo_music.uya`
-- `gui/examples/demo_settings.uya`
-- `gui/examples/demo_dashboard.uya`
-- `gui/examples/demo_game.uya`
-- `gui/examples/demo_perf.uya`
-- `gui/examples/demo_novel.uya`
-- `gui/examples/demo_widgets.uya`
-- `gui/examples/demo_custom.uya`
+- `examples/phase0_smoke.uya`
+- `examples/phase1_smoke.uya`
+- `examples/phase2_smoke.uya`
+- `examples/phase3_smoke.uya`
+- `examples/phase4_smoke.uya`
+- `examples/phase6_smoke.uya`
+- `examples/demo_clock.uya`
+- `examples/demo_music.uya`
+- `examples/demo_settings.uya`
+- `examples/demo_dashboard.uya`
+- `examples/demo_game.uya`
+- `examples/demo_perf.uya`
+- `examples/demo_novel.uya`
+- `examples/demo_widgets.uya`
+- `examples/demo_custom.uya`
 
 ## 文档导航
 
@@ -386,6 +393,6 @@ make build-esp32
 - [Makefile](Makefile)
 - [项目配置](uya.toml)
 - [模拟器构建脚本](tools/build_gui_sim.sh)
-- [测试总入口](gui/test_suite.uya)
-- [Render 测试总入口](gui/render_test_suite.uya)
-- [模拟器入口](gui/sim_main.uya)
+- [测试总入口](tests/test_suite.uya)
+- [Render 测试总入口](tests/render_test_suite.uya)
+- [模拟器入口](apps/sim_main.uya)

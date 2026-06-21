@@ -1,0 +1,370 @@
+use libc.atoi;
+use libc.getenv;
+use gui.render.cpu_backend.CpuRenderBackendKind;
+use gui.render.cpu_backend.cpu_render_backend_name;
+use gui.sim.common.SIM_DEFAULT_RES_HEIGHT;
+use gui.sim.common.SIM_DEFAULT_RES_WIDTH;
+use gui.sim.common.sim_cstr_empty;
+use gui.sim.common.sim_cstr_eq;
+use std.runtime.get_argc;
+use std.runtime.get_argv;
+
+fn sim_clamp_positive_i32(value: i32, fallback: i32) i32 {
+    if value <= 0 {
+        return fallback;
+    }
+    return value;
+}
+
+export enum SimDemoKind {
+    Phase4,
+    Phase6,
+    Clock,
+    Music,
+    Settings,
+    Dashboard,
+    Game,
+    Animation,
+    Perf,
+    Novel,
+    Widgets,
+    Custom,
+    RichText,
+    Doudizhu,
+}
+
+export enum SimBackendKind {
+    Sdl2,
+    FrameBuffer,
+    Web,
+}
+
+export enum SimGpuKind {
+    Auto,
+    Software,
+    Gles2,
+}
+
+export struct SimConfig {
+    backend: SimBackendKind,
+    gpu: SimGpuKind,
+    cpu_backend: CpuRenderBackendKind,
+    demo: SimDemoKind,
+    width: u16,
+    height: u16,
+    scale: u8,
+    target_fps: u8,
+    fullscreen: bool,
+    vsync_enabled: bool,
+    adaptive_frame_pacing: bool,
+    hud_enabled: bool,
+    show_dirty_regions: bool,
+    show_help: bool,
+    persist_data: bool,
+    profiler_report_every: u32,
+    max_frames: u32,
+    title: &const byte,
+    resource_root: &const byte,
+    fb_device_path: &const byte,
+    fb_input_device_path: &const byte,
+    fb_tty_device_path: &const byte,
+    screenshot_path: &const byte,
+    record_path: &const byte,
+    playback_path: &const byte,
+}
+
+/// 返回指定 demo 的显示名称。
+export fn sim_demo_name(kind: SimDemoKind) &const byte {
+    if kind == SimDemoKind.Phase6 {
+        return "阶段6" as &const byte;
+    }
+    if kind == SimDemoKind.Clock {
+        return "时钟" as &const byte;
+    }
+    if kind == SimDemoKind.Music {
+        return "音乐" as &const byte;
+    }
+    if kind == SimDemoKind.Settings {
+        return "设置" as &const byte;
+    }
+    if kind == SimDemoKind.Dashboard {
+        return "看板" as &const byte;
+    }
+    if kind == SimDemoKind.Game {
+        return "2048" as &const byte;
+    }
+    if kind == SimDemoKind.Animation {
+        return "动画" as &const byte;
+    }
+    if kind == SimDemoKind.Perf {
+        return "性能" as &const byte;
+    }
+    if kind == SimDemoKind.Novel {
+        return "小说" as &const byte;
+    }
+    if kind == SimDemoKind.Widgets {
+        return "控件总览" as &const byte;
+    }
+    if kind == SimDemoKind.Custom {
+        return "自定义控件" as &const byte;
+    }
+    if kind == SimDemoKind.RichText {
+        return "富文本" as &const byte;
+    }
+    if kind == SimDemoKind.Doudizhu {
+        return "斗地主" as &const byte;
+    }
+    return "阶段4" as &const byte;
+}
+
+/// 返回指定 demo 的默认宽度。
+export fn sim_demo_default_width(kind: SimDemoKind) u16 {
+    _ = kind;
+    return SIM_DEFAULT_RES_WIDTH;
+}
+
+/// 返回指定 demo 的默认高度。
+export fn sim_demo_default_height(kind: SimDemoKind) u16 {
+    _ = kind;
+    return SIM_DEFAULT_RES_HEIGHT;
+}
+
+/// 判断指定 demo 是否属于 phase 首页场景。
+export fn sim_demo_is_phase(kind: SimDemoKind) bool {
+    return kind == SimDemoKind.Phase4 || kind == SimDemoKind.Phase6;
+}
+
+/// 返回指定模拟器后端的显示名称。
+export fn sim_backend_name(kind: SimBackendKind) &const byte {
+    if kind == SimBackendKind.FrameBuffer {
+        return "fb" as &const byte;
+    }
+    if kind == SimBackendKind.Web {
+        return "web" as &const byte;
+    }
+    return "sdl2" as &const byte;
+}
+
+/// 返回指定 GPU 模式的显示名称。
+export fn sim_gpu_name(kind: SimGpuKind) &const byte {
+    if kind == SimGpuKind.Software {
+        return "software" as &const byte;
+    }
+    if kind == SimGpuKind.Gles2 {
+        return "gles2" as &const byte;
+    }
+    return "auto" as &const byte;
+}
+
+/// 返回指定 CPU 渲染后端的显示名称。
+export fn sim_cpu_backend_name(kind: CpuRenderBackendKind) &const byte {
+    return cpu_render_backend_name(kind);
+}
+
+fn sim_parse_cpu_backend(value: &const byte) CpuRenderBackendKind {
+    if value != null && (sim_cstr_eq(value, "batch") || sim_cstr_eq(value, "batched")) {
+        return CpuRenderBackendKind.Batch;
+    }
+    return CpuRenderBackendKind.Immediate;
+}
+
+/// 返回默认的模拟器配置。
+export fn sim_config_default() SimConfig {
+    return SimConfig{
+        backend: SimBackendKind.Sdl2,
+        gpu: SimGpuKind.Auto,
+        cpu_backend: CpuRenderBackendKind.Immediate,
+        demo: SimDemoKind.Phase4,
+        width: SIM_DEFAULT_RES_WIDTH,
+        height: SIM_DEFAULT_RES_HEIGHT,
+        scale: 1,
+        target_fps: 60u8,
+        fullscreen: false,
+        vsync_enabled: true,
+        adaptive_frame_pacing: true,
+        hud_enabled: true,
+        show_dirty_regions: false,
+        show_help: false,
+        persist_data: false,
+        profiler_report_every: 120u32,
+        max_frames: 0u32,
+        title: "UyaGUI 模拟器" as &const byte,
+        resource_root: "." as &const byte,
+        fb_device_path: "" as &const byte,
+        fb_input_device_path: "" as &const byte,
+        fb_tty_device_path: "" as &const byte,
+        screenshot_path: "" as &const byte,
+        record_path: "" as &const byte,
+        playback_path: "" as &const byte,
+    };
+}
+
+export fn sim_config_apply_backend_defaults(cfg: &SimConfig) void {
+    if cfg == null {
+        return;
+    }
+    if sim_cstr_empty(cfg.resource_root) {
+        if cfg.backend == SimBackendKind.Web {
+            cfg.resource_root = "/app";
+        } else {
+            cfg.resource_root = ".";
+        }
+    }
+}
+
+/// 从环境变量和命令行参数构建模拟器配置。
+export fn sim_config_from_runtime() SimConfig {
+    var cfg: SimConfig = sim_config_default();
+    const env_root: &byte = getenv("UYA_GUI_SIM_ROOT");
+    if env_root != null && env_root[0] != 0 {
+        cfg.resource_root = env_root as &const byte;
+    }
+
+    var i: i32 = 1;
+    while i < get_argc() {
+        const arg: &byte = get_argv(i);
+        if arg == null {
+            i = i + 1;
+            continue;
+        }
+
+        if sim_cstr_eq(arg as &const byte, "--help") {
+            cfg.show_help = true;
+        } else if sim_cstr_eq(arg as &const byte, "--fullscreen") {
+            cfg.fullscreen = true;
+        } else if sim_cstr_eq(arg as &const byte, "--windowed") {
+            cfg.fullscreen = false;
+        } else if sim_cstr_eq(arg as &const byte, "--vsync") {
+            cfg.vsync_enabled = true;
+        } else if sim_cstr_eq(arg as &const byte, "--no-vsync") {
+            cfg.vsync_enabled = false;
+        } else if sim_cstr_eq(arg as &const byte, "--adaptive-fps") {
+            cfg.adaptive_frame_pacing = true;
+        } else if sim_cstr_eq(arg as &const byte, "--fixed-fps") {
+            cfg.adaptive_frame_pacing = false;
+        } else if sim_cstr_eq(arg as &const byte, "--hud") {
+            cfg.hud_enabled = true;
+        } else if sim_cstr_eq(arg as &const byte, "--no-hud") {
+            cfg.hud_enabled = false;
+        } else if sim_cstr_eq(arg as &const byte, "--show-dirty") {
+            cfg.show_dirty_regions = true;
+        } else if sim_cstr_eq(arg as &const byte, "--hide-dirty") {
+            cfg.show_dirty_regions = false;
+        } else if sim_cstr_eq(arg as &const byte, "--persist-data") {
+            cfg.persist_data = true;
+        } else if sim_cstr_eq(arg as &const byte, "--no-persist-data") {
+            cfg.persist_data = false;
+        } else if i + 1 < get_argc() {
+            const next: &byte = get_argv(i + 1);
+            if sim_cstr_eq(arg as &const byte, "--demo") && next != null {
+                if sim_cstr_eq(next as &const byte, "phase6") {
+                    cfg.demo = SimDemoKind.Phase6;
+                } else if sim_cstr_eq(next as &const byte, "clock") {
+                    cfg.demo = SimDemoKind.Clock;
+                } else if sim_cstr_eq(next as &const byte, "music") {
+                    cfg.demo = SimDemoKind.Music;
+                } else if sim_cstr_eq(next as &const byte, "settings") {
+                    cfg.demo = SimDemoKind.Settings;
+                } else if sim_cstr_eq(next as &const byte, "dashboard") {
+                    cfg.demo = SimDemoKind.Dashboard;
+                } else if sim_cstr_eq(next as &const byte, "game") {
+                    cfg.demo = SimDemoKind.Game;
+                } else if sim_cstr_eq(next as &const byte, "animation") {
+                    cfg.demo = SimDemoKind.Animation;
+                } else if sim_cstr_eq(next as &const byte, "perf") {
+                    cfg.demo = SimDemoKind.Perf;
+                } else if sim_cstr_eq(next as &const byte, "novel") {
+                    cfg.demo = SimDemoKind.Novel;
+                } else if sim_cstr_eq(next as &const byte, "widgets") {
+                    cfg.demo = SimDemoKind.Widgets;
+                } else if sim_cstr_eq(next as &const byte, "custom") {
+                    cfg.demo = SimDemoKind.Custom;
+                } else if sim_cstr_eq(next as &const byte, "richtext") {
+                    cfg.demo = SimDemoKind.RichText;
+                } else if sim_cstr_eq(next as &const byte, "doudizhu") {
+                    cfg.demo = SimDemoKind.Doudizhu;
+                } else {
+                    cfg.demo = SimDemoKind.Phase4;
+                }
+                i = i + 1;
+            } else if sim_cstr_eq(arg as &const byte, "--backend") && next != null {
+                if sim_cstr_eq(next as &const byte, "fb") || sim_cstr_eq(next as &const byte, "framebuffer") {
+                    cfg.backend = SimBackendKind.FrameBuffer;
+                } else if sim_cstr_eq(next as &const byte, "web") {
+                    cfg.backend = SimBackendKind.Web;
+                } else {
+                    cfg.backend = SimBackendKind.Sdl2;
+                }
+                i = i + 1;
+            } else if sim_cstr_eq(arg as &const byte, "--gpu") && next != null {
+                if sim_cstr_eq(next as &const byte, "software") {
+                    cfg.gpu = SimGpuKind.Software;
+                } else if sim_cstr_eq(next as &const byte, "gles2") || sim_cstr_eq(next as &const byte, "opengles2") {
+                    cfg.gpu = SimGpuKind.Gles2;
+                } else {
+                    cfg.gpu = SimGpuKind.Auto;
+                }
+                i = i + 1;
+            } else if (sim_cstr_eq(arg as &const byte, "--cpu-render") || sim_cstr_eq(arg as &const byte, "--cpu-backend")) && next != null {
+                cfg.cpu_backend = sim_parse_cpu_backend(next as &const byte);
+                i = i + 1;
+            } else if sim_cstr_eq(arg as &const byte, "--width") && next != null {
+                cfg.width = (sim_clamp_positive_i32(atoi(next as &const byte), cfg.width as i32) as! u16).value;
+                i = i + 1;
+            } else if sim_cstr_eq(arg as &const byte, "--height") && next != null {
+                cfg.height = (sim_clamp_positive_i32(atoi(next as &const byte), cfg.height as i32) as! u16).value;
+                i = i + 1;
+            } else if sim_cstr_eq(arg as &const byte, "--scale") && next != null {
+                const parsed_scale: i32 = sim_clamp_positive_i32(atoi(next as &const byte), cfg.scale as i32);
+                if parsed_scale > 0 && parsed_scale <= 8 {
+                    cfg.scale = (parsed_scale as! u8).value;
+                }
+                i = i + 1;
+            } else if sim_cstr_eq(arg as &const byte, "--fps") && next != null {
+                const parsed_fps: i32 = sim_clamp_positive_i32(atoi(next as &const byte), cfg.target_fps as i32);
+                if parsed_fps > 0 && parsed_fps <= 240 {
+                    cfg.target_fps = (parsed_fps as! u8).value;
+                }
+                i = i + 1;
+            } else if sim_cstr_eq(arg as &const byte, "--root") && next != null {
+                cfg.resource_root = next as &const byte;
+                i = i + 1;
+            } else if sim_cstr_eq(arg as &const byte, "--title") && next != null {
+                cfg.title = next as &const byte;
+                i = i + 1;
+            } else if sim_cstr_eq(arg as &const byte, "--fb-dev") && next != null {
+                cfg.fb_device_path = next as &const byte;
+                i = i + 1;
+            } else if sim_cstr_eq(arg as &const byte, "--fb-tty") && next != null {
+                cfg.fb_tty_device_path = next as &const byte;
+                i = i + 1;
+            } else if sim_cstr_eq(arg as &const byte, "--fb-input") && next != null {
+                cfg.fb_input_device_path = next as &const byte;
+                i = i + 1;
+            } else if sim_cstr_eq(arg as &const byte, "--screenshot") && next != null {
+                cfg.screenshot_path = next as &const byte;
+                i = i + 1;
+            } else if sim_cstr_eq(arg as &const byte, "--record") && next != null {
+                cfg.record_path = next as &const byte;
+                i = i + 1;
+            } else if sim_cstr_eq(arg as &const byte, "--playback") && next != null {
+                cfg.playback_path = next as &const byte;
+                i = i + 1;
+            } else if sim_cstr_eq(arg as &const byte, "--max-frames") && next != null {
+                const parsed_frames: i32 = atoi(next as &const byte);
+                if parsed_frames >= 0 {
+                    cfg.max_frames = (parsed_frames as! u32).value;
+                }
+                i = i + 1;
+            } else if sim_cstr_eq(arg as &const byte, "--profile-every") && next != null {
+                const parsed_report: i32 = sim_clamp_positive_i32(atoi(next as &const byte), cfg.profiler_report_every as i32);
+                cfg.profiler_report_every = (parsed_report as! u32).value;
+                i = i + 1;
+            }
+        }
+        i = i + 1;
+    }
+
+    sim_config_apply_backend_defaults(&cfg);
+    return cfg;
+}

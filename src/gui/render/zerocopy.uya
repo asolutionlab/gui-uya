@@ -1,0 +1,167 @@
+use gui.core.dirty_region.DirtyRegion;
+use gui.core.dirty_region.DirtyRegionView;
+use gui.core.rect.RECT_ZERO;
+use gui.core.rect.Rect;
+use gui.platform.disp.DisplayCtx;
+use gui.platform.disp.FrameBuffer;
+
+export const ZERO_COPY_TRANSFER_CAPACITY: i32 = 8;
+
+fn zerocopy_rect_bytes(rect: Rect) u32 {
+    return rect.w as u32 * rect.h as u32;
+}
+
+fn zerocopy_rect_touches(a: Rect, b: Rect) bool {
+    const a_right: i32 = a.x as i32 + a.w as i32;
+    const b_right: i32 = b.x as i32 + b.w as i32;
+    const a_bottom: i32 = a.y as i32 + a.h as i32;
+    const b_bottom: i32 = b.y as i32 + b.h as i32;
+    return !(a_right < b.x as i32 || b_right < a.x as i32 || a_bottom < b.y as i32 || b_bottom < a.y as i32);
+}
+
+export struct ZeroCopyTransfer {
+    region: Rect,
+    bytes: u32,
+    active: bool,
+}
+
+export struct ZeroCopyCtx {
+    display: &DisplayCtx,
+    pending: [ZeroCopyTransfer: 8],
+    pending_count: u8,
+    queued_bytes: u32,
+    completed: u32,
+    completed_regions: u32,
+    completed_bytes: u32,
+
+    fn begin_frame(self: &Self) &FrameBuffer {
+        return self.display.get_back_buffer();
+    }
+
+    fn remove_pending_at(self: &Self, idx: i32) void {
+        if idx < 0 || idx >= self.pending_count as i32 {
+            return;
+        }
+        var i: i32 = idx;
+        while i + 1 < self.pending_count as i32 {
+            self.pending[i] = self.pending[i + 1];
+            i = i + 1;
+        }
+        self.pending_count = self.pending_count - 1;
+    }
+
+    fn best_pending_slot(self: &Self, rect: Rect) i32 {
+        var best_idx: i32 = -1;
+        var best_area: u32 = 0u32;
+        var i: i32 = 0;
+        while i < self.pending_count as i32 {
+            const merged: Rect = self.pending[i].region.union_rect(rect);
+            const area: u32 = zerocopy_rect_bytes(merged);
+            if best_idx < 0 || area < best_area {
+                best_idx = i;
+                best_area = area;
+            }
+            i = i + 1;
+        }
+        return best_idx;
+    }
+
+    fn transfer_region(self: &Self, rect: Rect) void {
+        if rect.is_empty() {
+            return;
+        }
+
+        var merged: Rect = rect;
+        var i: i32 = 0;
+        while i < self.pending_count as i32 {
+            if zerocopy_rect_touches(self.pending[i].region, merged) {
+                self.queued_bytes = self.queued_bytes - self.pending[i].bytes;
+                merged = self.pending[i].region.union_rect(merged);
+                self.remove_pending_at(i);
+                continue;
+            }
+            i = i + 1;
+        }
+
+        if (self.pending_count as i32) < ZERO_COPY_TRANSFER_CAPACITY {
+            const slot: usize = (self.pending_count as! usize).value;
+            self.pending[slot] = ZeroCopyTransfer{
+                region: merged,
+                bytes: zerocopy_rect_bytes(merged),
+                active: true,
+            };
+            self.pending_count = self.pending_count + 1;
+            self.queued_bytes = self.queued_bytes + self.pending[slot].bytes;
+            return;
+        }
+
+        const fallback_slot: i32 = self.best_pending_slot(merged);
+        if fallback_slot >= 0 {
+            self.queued_bytes = self.queued_bytes - self.pending[fallback_slot].bytes;
+            self.pending[fallback_slot].region = self.pending[fallback_slot].region.union_rect(merged);
+            self.pending[fallback_slot].bytes = zerocopy_rect_bytes(self.pending[fallback_slot].region);
+            self.pending[fallback_slot].active = true;
+            self.queued_bytes = self.queued_bytes + self.pending[fallback_slot].bytes;
+        }
+    }
+
+    fn transfer_dirty(self: &Self, dirty: &DirtyRegion, screen: Rect) void {
+        if dirty.should_full_refresh(screen) {
+            self.transfer_region(screen);
+            return;
+        }
+
+        const view: DirtyRegionView = dirty.get_regions();
+        var i: i32 = 0;
+        while i < view.len {
+            self.transfer_region(view.at(i));
+            i = i + 1;
+        }
+    }
+
+    fn flush(self: &Self) void {
+        if self.pending_count == 0 {
+            return;
+        }
+        self.display.swap_buffers();
+        var i: i32 = 0;
+        while i < self.pending_count as i32 {
+            if self.pending[i].active {
+                self.completed_regions = self.completed_regions + 1u32;
+                self.completed_bytes = self.completed_bytes + self.pending[i].bytes;
+                self.pending[i] = ZeroCopyTransfer{
+                    region: RECT_ZERO,
+                    bytes: 0u32,
+                    active: false,
+                };
+            }
+            i = i + 1;
+        }
+        self.pending_count = 0;
+        self.queued_bytes = 0u32;
+        self.completed = self.completed + 1u32;
+    }
+
+    fn present(self: &Self, rect: Rect) void {
+        self.transfer_region(rect);
+        self.flush();
+    }
+
+    fn present_dirty(self: &Self, dirty: &DirtyRegion, screen: Rect) void {
+        self.transfer_dirty(dirty, screen);
+        self.flush();
+    }
+}
+
+/// 创建零拷贝显示提交上下文。
+export fn zerocopy_ctx_new(display: &DisplayCtx) ZeroCopyCtx {
+    return ZeroCopyCtx{
+        display: display,
+        pending: [],
+        pending_count: 0,
+        queued_bytes: 0u32,
+        completed: 0u32,
+        completed_regions: 0u32,
+        completed_bytes: 0u32,
+    };
+}

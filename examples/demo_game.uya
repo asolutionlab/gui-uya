@@ -1,0 +1,1054 @@
+use gui.core.color.Color;
+use gui.core.event.Event;
+use gui.core.event.EventType;
+use gui.core.obj_tree.ObjTree;
+use gui.core.obj_tree.obj_tree_new;
+use gui.core.point.POINT_ZERO;
+use gui.core.point.Point;
+use gui.core.rect.Rect;
+use libc.snprintf;
+use gui.platform.disp.PixelFormat;
+use gui.platform.disp.framebuffer_new;
+use gui.platform.disp.framebuffer_required_bytes;
+use gui.platform.tick.get_tick_ms;
+use gui.render.ctx.RenderCtx;
+use gui.render.ctx.render_ctx_new;
+use gui.render.font.Font;
+use gui.render.font.draw_text;
+use gui.render.font.font_system_ui_ref;
+use gui.render.font.font_ui_default_ref;
+use gui.render.font.text_width;
+use gui.sim.common.sim_layout_font;
+use gui.sim.common.sim_layout_h;
+use gui.sim.common.sim_layout_square;
+use gui.sim.common.sim_layout_w;
+use gui.sim.common.sim_layout_x;
+use gui.sim.common.sim_layout_y;
+use gui.sim.common.SIM_DEFAULT_RES_HEIGHT;
+use gui.sim.common.SIM_DEFAULT_RES_WIDTH;
+use gui.style.StyleProp;
+use gui.widget.btn.Button;
+use gui.widget.canvas.Canvas;
+use gui.widget.lbl.Label;
+use gui.widget.page.Page;
+use gui.widget.panel.Panel;
+
+extern fn malloc(size: usize) &void;
+extern fn free(ptr: &void) void;
+
+const GAME_GRID_SIZE: i32 = 4;
+const GAME_BOARD_CELLS: i32 = 16;
+const GAME_WIN_TILE: i32 = 2048;
+const GAME_DEMO_W: u16 = SIM_DEFAULT_RES_WIDTH;
+const GAME_DEMO_H: u16 = SIM_DEFAULT_RES_HEIGHT;
+const GAME_BOARD_X: i16 = 34;
+const GAME_BOARD_Y: i16 = 102;
+const GAME_BOARD_W: u16 = 344u16;
+const GAME_BOARD_H: u16 = 344u16;
+const GAME_CELL_GAP: i16 = 12;
+const GAME_CELL_SIZE: u16 = 68u16;
+const GAME_PANEL_X: i16 = 398;
+const GAME_PANEL_Y: i16 = 84;
+const GAME_PANEL_W: u16 = 208u16;
+const GAME_PANEL_H: u16 = 356u16;
+const GAME_RESTART_X: i16 = 414;
+const GAME_RESTART_Y: i16 = 308;
+const GAME_RESTART_W: u16 = 176u16;
+const GAME_RESTART_H: u16 = 54u16;
+const GAME_DRAG_THRESHOLD: i32 = 24;
+
+export enum GameMoveDir {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+export struct Game2048Retained {
+    ready: bool,
+    board: [i32: 16],
+    score: i32,
+    best_tile: i32,
+    move_count: i32,
+    rng_state: u32,
+    won: bool,
+    game_over: bool,
+    touch_active: bool,
+    suppress_tap: bool,
+    touch_start: Point,
+    touch_last: Point,
+}
+
+export struct GamePageRetained {
+    tree: ObjTree,
+    page: Page,
+    board_canvas: Canvas,
+    side_panel: Panel,
+    title: Label,
+    subtitle: Label,
+    score_title: Label,
+    score_value: Label,
+    best_title: Label,
+    best_value: Label,
+    moves_title: Label,
+    moves_value: Label,
+    status_title: Label,
+    status_value: Label,
+    restart_btn: Button,
+    hint_title: Label,
+    hint_line1: Label,
+    hint_line2: Label,
+    board_pixels: &byte,
+    score_buf: [byte: 24],
+    best_buf: [byte: 24],
+    moves_buf: [byte: 24],
+    ready: bool,
+    board_snapshot: [i32: 16],
+    won_snapshot: bool,
+    game_over_snapshot: bool,
+}
+
+fn game_abs_i32(value: i32) i32 {
+    if value < 0 {
+        return 0 - value;
+    }
+    return value;
+}
+
+fn game_max_i32(a: i32, b: i32) i32 {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+fn game_cstr_len(text: &const byte) usize {
+    if text == null {
+        return 0usize;
+    }
+    var i: usize = 0usize;
+    while text[i] != 0 {
+        i = i + 1usize;
+    }
+    return i;
+}
+
+
+fn game_font_ref(pixel_height: u8) &Font {
+    const font: &Font = font_ui_default_ref(pixel_height);
+    if font != null {
+        return font;
+    }
+    return font_system_ui_ref(pixel_height);
+}
+
+fn game_font_title() &Font {
+    return game_font_ref(sim_layout_font(30u8));
+}
+
+fn game_font_subtitle() &Font {
+    return game_font_ref(sim_layout_font(14u8));
+}
+
+fn game_font_stat_label() &Font {
+    return game_font_ref(sim_layout_font(13u8));
+}
+
+fn game_font_stat_value() &Font {
+    return game_font_ref(sim_layout_font(24u8));
+}
+
+fn game_font_body() &Font {
+    return game_font_ref(sim_layout_font(16u8));
+}
+
+fn game_font_overlay() &Font {
+    return game_font_ref(sim_layout_font(22u8));
+}
+
+fn game_font_tile(value: i32) &Font {
+    if value >= 1024 {
+        return game_font_ref(sim_layout_font(18u8));
+    }
+    if value >= 128 {
+        return game_font_ref(sim_layout_font(21u8));
+    }
+    return game_font_ref(sim_layout_font(24u8));
+}
+
+struct GameDemoLayout {
+    board_x: i16,
+    board_y: i16,
+    board_w: u16,
+    board_h: u16,
+    cell_gap: i16,
+    cell_size: u16,
+    panel_x: i16,
+    panel_y: i16,
+    panel_w: u16,
+    panel_h: u16,
+    restart_x: i16,
+    restart_y: i16,
+    restart_w: u16,
+    restart_h: u16,
+}
+
+fn game_layout(origin_x: i16, origin_y: i16) GameDemoLayout {
+    return GameDemoLayout{
+        board_x: origin_x + sim_layout_x(GAME_BOARD_X),
+        board_y: origin_y + sim_layout_y(GAME_BOARD_Y),
+        board_w: sim_layout_square(GAME_BOARD_W),
+        board_h: sim_layout_square(GAME_BOARD_H),
+        cell_gap: (sim_layout_square(GAME_CELL_GAP as u16) as! i16).value,
+        cell_size: sim_layout_square(GAME_CELL_SIZE),
+        panel_x: origin_x + sim_layout_x(GAME_PANEL_X),
+        panel_y: origin_y + sim_layout_y(GAME_PANEL_Y),
+        panel_w: sim_layout_w(GAME_PANEL_W),
+        panel_h: sim_layout_h(GAME_PANEL_H),
+        restart_x: origin_x + sim_layout_x(GAME_RESTART_X),
+        restart_y: origin_y + sim_layout_y(GAME_RESTART_Y),
+        restart_w: sim_layout_w(GAME_RESTART_W),
+        restart_h: sim_layout_h(GAME_RESTART_H),
+    };
+}
+
+fn game_seed_from_tick() u32 {
+    var seed: u32 = get_tick_ms();
+    if seed == 0u32 {
+        seed = 1u32;
+    }
+    return seed;
+}
+
+fn game_rng_next(game: &Game2048Retained) u32 {
+    if game.rng_state == 0u32 {
+        game.rng_state = game_seed_from_tick();
+    }
+    game.rng_state = game.rng_state * 1664525u32 + 1013904223u32;
+    if game.rng_state == 0u32 {
+        game.rng_state = 1u32;
+    }
+    return game.rng_state;
+}
+
+fn game_board_index(row: i32, col: i32) usize {
+    return (row * GAME_GRID_SIZE + col) as usize;
+}
+
+fn game_board_line_row(dir: GameMoveDir, line: i32, slot: i32) i32 {
+    if dir == GameMoveDir.Left || dir == GameMoveDir.Right {
+        return line;
+    }
+    if dir == GameMoveDir.Up {
+        return slot;
+    }
+    return GAME_GRID_SIZE - 1 - slot;
+}
+
+fn game_board_line_col(dir: GameMoveDir, line: i32, slot: i32) i32 {
+    if dir == GameMoveDir.Left {
+        return slot;
+    }
+    if dir == GameMoveDir.Right {
+        return GAME_GRID_SIZE - 1 - slot;
+    }
+    return line;
+}
+
+fn game_board_line_get(game: &Game2048Retained, dir: GameMoveDir, line: i32, slot: i32) i32 {
+    const row: i32 = game_board_line_row(dir, line, slot);
+    const col: i32 = game_board_line_col(dir, line, slot);
+    return game.board[game_board_index(row, col)];
+}
+
+fn game_board_line_set(game: &Game2048Retained, dir: GameMoveDir, line: i32, slot: i32, value: i32) void {
+    const row: i32 = game_board_line_row(dir, line, slot);
+    const col: i32 = game_board_line_col(dir, line, slot);
+    game.board[game_board_index(row, col)] = value;
+}
+
+fn game_track_tile(game: &Game2048Retained, value: i32) void {
+    if value > game.best_tile {
+        game.best_tile = value;
+    }
+    if value >= GAME_WIN_TILE {
+        game.won = true;
+    }
+}
+
+fn game_retained_has_moves(game: &Game2048Retained) bool {
+    if game == null {
+        return false;
+    }
+    var row: i32 = 0;
+    while row < GAME_GRID_SIZE {
+        var col: i32 = 0;
+        while col < GAME_GRID_SIZE {
+            const value: i32 = game.board[game_board_index(row, col)];
+            if value == 0 {
+                return true;
+            }
+            if col + 1 < GAME_GRID_SIZE && value == game.board[game_board_index(row, col + 1)] {
+                return true;
+            }
+            if row + 1 < GAME_GRID_SIZE && value == game.board[game_board_index(row + 1, col)] {
+                return true;
+            }
+            col = col + 1;
+        }
+        row = row + 1;
+    }
+    return false;
+}
+
+fn game_retained_spawn_random_tile(game: &Game2048Retained) bool {
+    if game == null {
+        return false;
+    }
+
+    var empty_indices: [i32: 16] = [];
+    var empty_count: i32 = 0;
+    var i: i32 = 0;
+    while i < GAME_BOARD_CELLS {
+        if game.board[i as usize] == 0 {
+            empty_indices[empty_count as usize] = i;
+            empty_count = empty_count + 1;
+        }
+        i = i + 1;
+    }
+    if empty_count == 0 {
+        return false;
+    }
+
+    const pick: i32 = ((game_rng_next(game) % empty_count as u32) as! i32).value;
+    var value: i32 = 2;
+    if game_rng_next(game) % 10u32 == 0u32 {
+        value = 4;
+    }
+    game.board[empty_indices[pick as usize] as usize] = value;
+    game_track_tile(game, value);
+    return true;
+}
+
+fn game_retained_init(game: &Game2048Retained) void {
+    if game == null || game.ready {
+        return;
+    }
+    game_retained_reset(game);
+}
+
+/// 为 `game_retained` 设置确定性的随机种子。
+export fn game_retained_seed(game: &Game2048Retained, seed: u32) void {
+    if game == null {
+        return;
+    }
+    if seed == 0u32 {
+        game.rng_state = 1u32;
+        return;
+    }
+    game.rng_state = seed;
+}
+
+/// 重置 `game_retained` 的运行时状态。
+export fn game_retained_reset(game: &Game2048Retained) void {
+    if game == null {
+        return;
+    }
+    if game.rng_state == 0u32 {
+        game.rng_state = game_seed_from_tick();
+    }
+
+    var i: i32 = 0;
+    while i < GAME_BOARD_CELLS {
+        game.board[i as usize] = 0;
+        i = i + 1;
+    }
+    game.score = 0;
+    game.best_tile = 0;
+    game.move_count = 0;
+    game.won = false;
+    game.game_over = false;
+    game.touch_active = false;
+    game.suppress_tap = false;
+    game.touch_start = Point{ x: POINT_ZERO.x, y: POINT_ZERO.y };
+    game.touch_last = Point{ x: POINT_ZERO.x, y: POINT_ZERO.y };
+    game.ready = true;
+
+    _ = game_retained_spawn_random_tile(game);
+    _ = game_retained_spawn_random_tile(game);
+}
+
+fn game_point_in_rect(point: Point, x: i16, y: i16, w: u16, h: u16) bool {
+    return Rect{ x: x, y: y, w: w, h: h }.contains(point);
+}
+
+fn game_try_move_from_delta(game: &Game2048Retained, dx: i32, dy: i32) bool {
+    if game == null {
+        return false;
+    }
+    const drag_threshold: i32 = sim_layout_square(GAME_DRAG_THRESHOLD as u16) as i32;
+    if game_abs_i32(dx) < drag_threshold && game_abs_i32(dy) < drag_threshold {
+        return false;
+    }
+    if game_abs_i32(dx) >= game_abs_i32(dy) {
+        if dx > 0 {
+            return game_retained_move(game, GameMoveDir.Right);
+        }
+        return game_retained_move(game, GameMoveDir.Left);
+    }
+    if dy > 0 {
+        return game_retained_move(game, GameMoveDir.Down);
+    }
+    return game_retained_move(game, GameMoveDir.Up);
+}
+
+/// 处理 `game_retained` 的触摸输入。
+export fn game_retained_handle_touch(game: &Game2048Retained, evt: &Event, local: Point) void {
+    if game == null || evt == null {
+        return;
+    }
+    game_retained_init(game);
+
+    if evt.event_type == EventType.Press {
+        game.touch_active = true;
+        game.suppress_tap = false;
+        game.touch_start = Point{ x: local.x, y: local.y };
+        game.touch_last = Point{ x: local.x, y: local.y };
+        return;
+    }
+
+    if evt.event_type == EventType.DragStart || evt.event_type == EventType.Drag {
+        game.touch_last = Point{ x: local.x, y: local.y };
+        return;
+    }
+
+    if evt.event_type == EventType.Release || evt.event_type == EventType.DragEnd {
+        if game.touch_active {
+            const moved: bool = game_try_move_from_delta(
+                game,
+                local.x as i32 - game.touch_start.x as i32,
+                local.y as i32 - game.touch_start.y as i32
+            );
+            game.suppress_tap = moved;
+        }
+        game.touch_active = false;
+        game.touch_last = Point{ x: local.x, y: local.y };
+        return;
+    }
+
+    if evt.event_type == EventType.SwipeLeft {
+        _ = game_retained_move(game, GameMoveDir.Left);
+        game.touch_active = false;
+        game.suppress_tap = true;
+        return;
+    }
+    if evt.event_type == EventType.SwipeRight {
+        _ = game_retained_move(game, GameMoveDir.Right);
+        game.touch_active = false;
+        game.suppress_tap = true;
+        return;
+    }
+    if evt.event_type == EventType.SwipeUp {
+        _ = game_retained_move(game, GameMoveDir.Up);
+        game.touch_active = false;
+        game.suppress_tap = true;
+        return;
+    }
+    if evt.event_type == EventType.SwipeDown {
+        _ = game_retained_move(game, GameMoveDir.Down);
+        game.touch_active = false;
+        game.suppress_tap = true;
+        return;
+    }
+
+    if evt.event_type != EventType.Click {
+        return;
+    }
+    if game.suppress_tap {
+        game.suppress_tap = false;
+        return;
+    }
+    const layout: GameDemoLayout = game_layout(0, 0);
+    if game_point_in_rect(local, layout.restart_x, layout.restart_y, layout.restart_w, layout.restart_h) {
+        game_retained_reset(game);
+    }
+}
+
+/// 对 `game_retained` 执行一次移动操作。
+export fn game_retained_move(game: &Game2048Retained, dir: GameMoveDir) bool {
+    if game == null {
+        return false;
+    }
+    game_retained_init(game);
+    if game.game_over {
+        return false;
+    }
+
+    var moved: bool = false;
+    var line: i32 = 0;
+    while line < GAME_GRID_SIZE {
+        var source: [i32: 4] = [];
+        var compact: [i32: 4] = [];
+        var merged: [i32: 4] = [];
+        var compact_count: i32 = 0;
+
+        var slot: i32 = 0;
+        while slot < GAME_GRID_SIZE {
+            const value: i32 = game_board_line_get(game, dir, line, slot);
+            source[slot as usize] = value;
+            if value != 0 {
+                compact[compact_count as usize] = value;
+                compact_count = compact_count + 1;
+            }
+            slot = slot + 1;
+        }
+
+        var read_idx: i32 = 0;
+        var write_idx: i32 = 0;
+        while read_idx < compact_count {
+            var out_value: i32 = compact[read_idx as usize];
+            if read_idx + 1 < compact_count && compact[read_idx as usize] == compact[(read_idx + 1) as usize] {
+                out_value = compact[read_idx as usize] * 2;
+                game.score = game.score + out_value;
+                game_track_tile(game, out_value);
+                read_idx = read_idx + 2;
+            } else {
+                read_idx = read_idx + 1;
+            }
+            merged[write_idx as usize] = out_value;
+            write_idx = write_idx + 1;
+        }
+
+        slot = 0;
+        while slot < GAME_GRID_SIZE {
+            if source[slot as usize] != merged[slot as usize] {
+                moved = true;
+            }
+            game_board_line_set(game, dir, line, slot, merged[slot as usize]);
+            slot = slot + 1;
+        }
+
+        line = line + 1;
+    }
+
+    if moved {
+        game.move_count = game.move_count + 1;
+        _ = game_retained_spawn_random_tile(game);
+    }
+    game.game_over = !game_retained_has_moves(game);
+    return moved;
+}
+
+fn game_color_tile_fill(value: i32) Color {
+    if value <= 0 {
+        return Color{ r: 224, g: 216, b: 201, a: 255 };
+    }
+    if value == 2 {
+        return Color{ r: 240, g: 228, b: 217, a: 255 };
+    }
+    if value == 4 {
+        return Color{ r: 236, g: 221, b: 202, a: 255 };
+    }
+    if value == 8 {
+        return Color{ r: 236, g: 170, b: 110, a: 255 };
+    }
+    if value == 16 {
+        return Color{ r: 229, g: 146, b: 96, a: 255 };
+    }
+    if value == 32 {
+        return Color{ r: 221, g: 121, b: 88, a: 255 };
+    }
+    if value == 64 {
+        return Color{ r: 207, g: 97, b: 74, a: 255 };
+    }
+    if value == 128 {
+        return Color{ r: 216, g: 178, b: 84, a: 255 };
+    }
+    if value == 256 {
+        return Color{ r: 206, g: 164, b: 71, a: 255 };
+    }
+    if value == 512 {
+        return Color{ r: 192, g: 148, b: 58, a: 255 };
+    }
+    if value == 1024 {
+        return Color{ r: 169, g: 126, b: 44, a: 255 };
+    }
+    return Color{ r: 138, g: 99, b: 37, a: 255 };
+}
+
+fn game_color_tile_text(value: i32) Color {
+    if value <= 4 {
+        return Color{ r: 103, g: 80, b: 58, a: 255 };
+    }
+    return Color{ r: 250, g: 246, b: 239, a: 255 };
+}
+
+fn game_color_tile_border(value: i32) Color {
+    if value <= 0 {
+        return Color{ r: 212, g: 203, b: 186, a: 255 };
+    }
+    if value < 128 {
+        return Color{ r: 238, g: 230, b: 219, a: 120 };
+    }
+    return Color{ r: 255, g: 241, b: 200, a: 150 };
+}
+
+fn game_draw_cstr(ctx: &RenderCtx, x: i16, y: i16, text: &const byte, font: &Font, color: Color) void {
+    draw_text(ctx, x, y, text, game_cstr_len(text), font, color);
+}
+
+fn game_draw_centered_text(ctx: &RenderCtx, rect: Rect, text: &const byte, font: &Font, color: Color) void {
+    if ctx == null || text == null || font == null {
+        return;
+    }
+    const len: usize = game_cstr_len(text);
+    if len == 0usize {
+        return;
+    }
+    const text_w: i16 = text_width(text, len, font);
+    const text_x: i16 = rect.x + ((rect.w as i32 - text_w as i32) / 2) as i16;
+    const text_y: i16 = rect.y + ((rect.h as i32 - font.line_height as i32) / 2) as i16;
+    draw_text(ctx, text_x, text_y, text, len, font, color);
+}
+
+fn game_draw_stat_card(ctx: &RenderCtx, x: i16, y: i16, w: u16, h: u16, label: &const byte, value: i32, accent: Color) void {
+    var value_buf: [byte: 24] = [];
+    _ = snprintf(&value_buf[0], 24usize, "%d" as &const byte, value);
+    ctx.fill_round_rect(Rect{ x: x, y: y, w: w, h: h }, sim_layout_font(18u8), Color{ r: 251, g: 244, b: 233, a: 255 });
+    ctx.draw_round_rect(Rect{ x: x, y: y, w: w, h: h }, sim_layout_font(18u8), Color{ r: accent.r, g: accent.g, b: accent.b, a: 120 }, 1u8);
+    game_draw_cstr(ctx, x + sim_layout_x(14), y + sim_layout_y(12), label, game_font_stat_label(), Color{ r: 128, g: 101, b: 74, a: 255 });
+    game_draw_cstr(ctx, x + sim_layout_x(14), y + sim_layout_y(34), &value_buf[0], game_font_stat_value(), Color{ r: 72, g: 49, b: 35, a: 255 });
+}
+
+fn game_draw_button(ctx: &RenderCtx, x: i16, y: i16, w: u16, h: u16, text: &const byte) void {
+    ctx.fill_linear_gradient(
+        Rect{ x: x, y: y, w: w, h: h },
+        Color{ r: 193, g: 121, b: 54, a: 255 },
+        Color{ r: 158, g: 93, b: 42, a: 255 },
+        false
+    );
+    ctx.draw_round_rect(Rect{ x: x, y: y, w: w, h: h }, sim_layout_font(16u8), Color{ r: 243, g: 212, b: 164, a: 200 }, 1u8);
+    game_draw_centered_text(ctx, Rect{ x: x, y: y, w: w, h: h }, text, game_font_body(), Color{ r: 255, g: 247, b: 239, a: 255 });
+}
+
+fn game_status_text(game: &Game2048Retained) &const byte {
+    if game.game_over {
+        return "棋盘已满，点右侧按钮再来一局" as &const byte;
+    }
+    if game.won {
+        return "已经合成 2048，继续冲更高分" as &const byte;
+    }
+    return "方向键或拖动滑块，让数字继续长大" as &const byte;
+}
+
+fn game_overlay_title(game: &Game2048Retained) &const byte {
+    if game.game_over {
+        return "本局结束" as &const byte;
+    }
+    return "2048 达成" as &const byte;
+}
+
+fn game_overlay_subtitle(game: &Game2048Retained) &const byte {
+    if game.game_over {
+        return "再点一次新游戏，马上重开" as &const byte;
+    }
+    return "你可以继续合并，挑战更大的数字" as &const byte;
+}
+
+fn game_draw_tile(ctx: &RenderCtx, x: i16, y: i16, value: i32) void {
+    const tile_size: u16 = sim_layout_square(GAME_CELL_SIZE);
+    const rect_x: i16 = x;
+    const rect_y: i16 = y;
+    ctx.fill_round_rect(Rect{ x: rect_x, y: rect_y, w: tile_size, h: tile_size }, sim_layout_font(16u8), game_color_tile_fill(value));
+    ctx.draw_round_rect(Rect{ x: rect_x, y: rect_y, w: tile_size, h: tile_size }, sim_layout_font(16u8), game_color_tile_border(value), 1u8);
+    if value == 0 {
+        return;
+    }
+
+    var value_buf: [byte: 16] = [];
+    _ = snprintf(&value_buf[0], 16usize, "%d" as &const byte, value);
+    const font: &Font = game_font_tile(value);
+    game_draw_centered_text(ctx, Rect{ x: rect_x, y: rect_y, w: tile_size, h: tile_size }, &value_buf[0], font, game_color_tile_text(value));
+}
+
+fn game_draw_board_canvas(canvas: &Canvas, game: &Game2048Retained) void {
+    if canvas == null || game == null {
+        return;
+    }
+    const layout: GameDemoLayout = game_layout(0, 0);
+    const board_w: u16 = layout.board_w;
+    const board_h: u16 = layout.board_h;
+    const cell_gap: i16 = layout.cell_gap;
+    const cell_size: i16 = (layout.cell_size as! i16).value;
+    canvas.begin_draw().clear(Color{ r: 181, g: 156, b: 126, a: 255 });
+    canvas.begin_draw().draw_round_rect(Rect{ x: 0, y: 0, w: board_w, h: board_h }, sim_layout_font(30u8), Color{ r: 151, g: 122, b: 91, a: 255 }, 1u8);
+
+    var row: i32 = 0;
+    while row < GAME_GRID_SIZE {
+        var col: i32 = 0;
+        while col < GAME_GRID_SIZE {
+            const x: i16 = cell_gap + col as i16 * (cell_size + cell_gap);
+            const y: i16 = cell_gap + row as i16 * (cell_size + cell_gap);
+            game_draw_tile(canvas.begin_draw(), x, y, game.board[game_board_index(row, col)]);
+            col = col + 1;
+        }
+        row = row + 1;
+    }
+
+    if game.won || game.game_over {
+        canvas.begin_draw().fill_round_rect(Rect{ x: 0, y: 0, w: board_w, h: board_h }, 30u8, Color{ r: 39, g: 23, b: 14, a: 138 });
+        game_draw_centered_text(
+            canvas.begin_draw(),
+            Rect{ x: 0, y: sim_layout_y(106), w: board_w, h: sim_layout_h(40u16) },
+            game_overlay_title(game),
+            game_font_overlay(),
+            Color{ r: 252, g: 245, b: 235, a: 255 }
+        );
+        game_draw_centered_text(
+            canvas.begin_draw(),
+            Rect{ x: sim_layout_x(20), y: sim_layout_y(150), w: board_w - sim_layout_w(40u16), h: sim_layout_h(28u16) },
+            game_overlay_subtitle(game),
+            game_font_body(),
+            Color{ r: 241, g: 221, b: 194, a: 255 }
+        );
+    }
+    canvas.end_draw();
+}
+
+fn game_board_changed(a: &GamePageRetained, game: &Game2048Retained) bool {
+    if a == null || game == null {
+        return false;
+    }
+    if a.won_snapshot != game.won || a.game_over_snapshot != game.game_over {
+        return true;
+    }
+    var i: i32 = 0;
+    while i < GAME_BOARD_CELLS {
+        if a.board_snapshot[i as usize] != game.board[i as usize] {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn game_snapshot_board(a: &GamePageRetained, game: &Game2048Retained) void {
+    if a == null || game == null {
+        return;
+    }
+    var i: i32 = 0;
+    while i < GAME_BOARD_CELLS {
+        a.board_snapshot[i as usize] = game.board[i as usize];
+        i = i + 1;
+    }
+    a.won_snapshot = game.won;
+    a.game_over_snapshot = game.game_over;
+}
+
+/// 创建默认的 `GamePageRetained` 实例。
+export fn game_page_retained_new() GamePageRetained {
+    return GamePageRetained{
+        tree: obj_tree_new(),
+        page: Page.new("GamePage"),
+        board_canvas: Canvas.new(),
+        side_panel: Panel.new(),
+        title: Label.new("2048"),
+        subtitle: Label.new("把暖色卡片一路合成到 2048"),
+        score_title: Label.new("SCORE"),
+        score_value: Label.new("0"),
+        best_title: Label.new("BEST"),
+        best_value: Label.new("0"),
+        moves_title: Label.new("MOVES"),
+        moves_value: Label.new("0"),
+        status_title: Label.new("状态"),
+        status_value: Label.new(""),
+        restart_btn: Button.filled("新游戏"),
+        hint_title: Label.new("提示"),
+        hint_line1: Label.new("键盘: ↑↓←→"),
+        hint_line2: Label.new("触摸: 按住后拖动"),
+        board_pixels: null,
+        score_buf: [],
+        best_buf: [],
+        moves_buf: [],
+        ready: false,
+        board_snapshot: [],
+        won_snapshot: false,
+        game_over_snapshot: false,
+    };
+}
+
+/// 初始化 `game_page_retained` 的内部状态。
+export fn game_page_retained_init(page_state: &GamePageRetained, game: &Game2048Retained) void {
+    if page_state == null || page_state.ready {
+        return;
+    }
+    game_retained_init(game);
+    const layout: GameDemoLayout = game_layout(0, 0);
+
+    page_state.page.widget.at(0, 0);
+    page_state.page.widget.size(GAME_DEMO_W, GAME_DEMO_H);
+    page_state.page.widget.base.style.set_color(StyleProp.BgColor, Color{ r: 243, g: 233, b: 217, a: 255 });
+
+    page_state.title.widget.at(sim_layout_x(40), sim_layout_y(30));
+    page_state.title.widget.size(sim_layout_w(180), sim_layout_h(28));
+    page_state.title.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(30u8) as u32);
+    page_state.title.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 88, g: 58, b: 36, a: 255 });
+    page_state.subtitle.widget.at(sim_layout_x(40), sim_layout_y(66));
+    page_state.subtitle.widget.size(sim_layout_w(300), sim_layout_h(18));
+    page_state.subtitle.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(14u8) as u32);
+    page_state.subtitle.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 132, g: 102, b: 76, a: 255 });
+
+    if page_state.board_pixels == null {
+        const bytes_len: usize = framebuffer_required_bytes(layout.board_w, layout.board_h, PixelFormat.ARGB8888);
+        page_state.board_pixels = malloc(bytes_len) as &byte;
+    }
+    if page_state.board_pixels != null {
+        page_state.board_canvas.attach_buffer(page_state.board_pixels, layout.board_w, layout.board_h, layout.board_w * 4u16, PixelFormat.ARGB8888);
+    }
+    page_state.board_canvas.widget.at(layout.board_x, layout.board_y);
+    page_state.board_canvas.widget.size(layout.board_w, layout.board_h);
+    page_state.board_canvas.widget.base.style.set_color(StyleProp.BgColor, Color{ r: 0, g: 0, b: 0, a: 0 });
+    page_state.board_canvas.widget.base.style.set_color(StyleProp.BorderColor, Color{ r: 0, g: 0, b: 0, a: 0 });
+    page_state.board_canvas.widget.base.style.set_u32(StyleProp.BorderWidth, 0u32);
+
+    page_state.side_panel.widget.at(layout.panel_x, layout.panel_y);
+    page_state.side_panel.widget.size(layout.panel_w, layout.panel_h);
+    page_state.side_panel.widget.base.style.set_color(StyleProp.BgColor, Color{ r: 248, g: 240, b: 228, a: 255 });
+    page_state.side_panel.widget.base.style.set_color(StyleProp.BorderColor, Color{ r: 207, g: 175, b: 133, a: 255 });
+    page_state.side_panel.widget.base.style.set_u32(StyleProp.Radius, 26u32);
+
+    page_state.score_title.widget.at(sim_layout_x(16), sim_layout_y(20));
+    page_state.score_title.widget.size(sim_layout_w(72), sim_layout_h(16));
+    page_state.score_title.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(13u8) as u32);
+    page_state.score_title.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 128, g: 101, b: 74, a: 255 });
+    page_state.score_value.widget.at(sim_layout_x(16), sim_layout_y(40));
+    page_state.score_value.widget.size(sim_layout_w(72), sim_layout_h(28));
+    page_state.score_value.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(24u8) as u32);
+    page_state.score_value.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 72, g: 49, b: 35, a: 255 });
+
+    page_state.best_title.widget.at(sim_layout_x(108), sim_layout_y(20));
+    page_state.best_title.widget.size(sim_layout_w(72), sim_layout_h(16));
+    page_state.best_title.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(13u8) as u32);
+    page_state.best_title.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 128, g: 101, b: 74, a: 255 });
+    page_state.best_value.widget.at(sim_layout_x(108), sim_layout_y(40));
+    page_state.best_value.widget.size(sim_layout_w(72), sim_layout_h(28));
+    page_state.best_value.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(24u8) as u32);
+    page_state.best_value.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 72, g: 49, b: 35, a: 255 });
+
+    page_state.moves_title.widget.at(sim_layout_x(16), sim_layout_y(100));
+    page_state.moves_title.widget.size(sim_layout_w(84), sim_layout_h(16));
+    page_state.moves_title.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(13u8) as u32);
+    page_state.moves_title.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 128, g: 101, b: 74, a: 255 });
+    page_state.moves_value.widget.at(sim_layout_x(16), sim_layout_y(120));
+    page_state.moves_value.widget.size(sim_layout_w(120), sim_layout_h(28));
+    page_state.moves_value.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(24u8) as u32);
+    page_state.moves_value.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 72, g: 49, b: 35, a: 255 });
+
+    page_state.status_title.widget.at(sim_layout_x(16), sim_layout_y(188));
+    page_state.status_title.widget.size(sim_layout_w(64), sim_layout_h(16));
+    page_state.status_title.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(13u8) as u32);
+    page_state.status_title.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 118, g: 93, b: 69, a: 255 });
+    page_state.status_value.widget.at(sim_layout_x(16), sim_layout_y(212));
+    page_state.status_value.widget.size(sim_layout_w(176), sim_layout_h(48));
+    page_state.status_value.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(16u8) as u32);
+    page_state.status_value.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 90, g: 64, b: 44, a: 255 });
+
+    page_state.restart_btn.widget.at(sim_layout_x(16), sim_layout_y(272));
+    page_state.restart_btn.widget.size(layout.restart_w, layout.restart_h);
+    page_state.restart_btn.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(16u8) as u32);
+
+    page_state.hint_title.widget.at(sim_layout_x(16), sim_layout_y(340));
+    page_state.hint_title.widget.size(sim_layout_w(64), sim_layout_h(16));
+    page_state.hint_title.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(13u8) as u32);
+    page_state.hint_title.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 118, g: 93, b: 69, a: 255 });
+    page_state.hint_line1.widget.at(sim_layout_x(16), sim_layout_y(362));
+    page_state.hint_line1.widget.size(sim_layout_w(150), sim_layout_h(16));
+    page_state.hint_line1.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(16u8) as u32);
+    page_state.hint_line1.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 90, g: 64, b: 44, a: 255 });
+    page_state.hint_line2.widget.at(sim_layout_x(16), sim_layout_y(384));
+    page_state.hint_line2.widget.size(sim_layout_w(170), sim_layout_h(16));
+    page_state.hint_line2.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(16u8) as u32);
+    page_state.hint_line2.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 90, g: 64, b: 44, a: 255 });
+
+    page_state.page.add(page_state.title.obj());
+    page_state.page.add(page_state.subtitle.obj());
+    page_state.page.add(page_state.board_canvas.obj());
+    page_state.page.add(page_state.side_panel.obj());
+    page_state.side_panel.add(page_state.score_title.obj());
+    page_state.side_panel.add(page_state.score_value.obj());
+    page_state.side_panel.add(page_state.best_title.obj());
+    page_state.side_panel.add(page_state.best_value.obj());
+    page_state.side_panel.add(page_state.moves_title.obj());
+    page_state.side_panel.add(page_state.moves_value.obj());
+    page_state.side_panel.add(page_state.status_title.obj());
+    page_state.side_panel.add(page_state.status_value.obj());
+    page_state.side_panel.add(page_state.restart_btn.obj());
+    page_state.side_panel.add(page_state.hint_title.obj());
+    page_state.side_panel.add(page_state.hint_line1.obj());
+    page_state.side_panel.add(page_state.hint_line2.obj());
+    page_state.tree.set_root(0, page_state.page.obj());
+    page_state.ready = true;
+}
+
+/// 将外部状态同步到 `game_page_retained`。
+export fn game_page_retained_sync(page_state: &GamePageRetained, game: &Game2048Retained) void {
+    if page_state == null || game == null {
+        return;
+    }
+    game_page_retained_init(page_state, game);
+
+    _ = snprintf(&page_state.score_buf[0], 24usize, "%d" as &const byte, game.score);
+    _ = page_state.score_value.set_text(&page_state.score_buf[0]);
+    _ = snprintf(&page_state.best_buf[0], 24usize, "%d" as &const byte, game.best_tile);
+    _ = page_state.best_value.set_text(&page_state.best_buf[0]);
+    _ = snprintf(&page_state.moves_buf[0], 24usize, "%d" as &const byte, game.move_count);
+    _ = page_state.moves_value.set_text(&page_state.moves_buf[0]);
+    _ = page_state.status_value.set_text(game_status_text(game));
+
+    if game_board_changed(page_state, game) {
+        game_snapshot_board(page_state, game);
+        game_draw_board_canvas(&page_state.board_canvas, game);
+    }
+}
+
+/// 按 retained 状态参数将 `game` demo 渲染到指定上下文。
+export fn render_demo_game_retained_state(page_state: &GamePageRetained, game: &Game2048Retained, ctx: &RenderCtx, origin_x: i16, origin_y: i16) void {
+    if page_state == null || game == null || ctx == null {
+        return;
+    }
+    game_page_retained_sync(page_state, game);
+    page_state.page.widget.at(origin_x, origin_y);
+    page_state.page.render(ctx);
+}
+
+/// 按显式状态参数将 `game` demo 渲染到指定上下文。
+export fn render_demo_game_state(game: &Game2048Retained, ctx: &RenderCtx, origin_x: i16, origin_y: i16) void {
+    if game == null || ctx == null {
+        return;
+    }
+    game_retained_init(game);
+    const layout: GameDemoLayout = game_layout(origin_x, origin_y);
+
+    const full_rect: Rect = Rect{ x: origin_x, y: origin_y, w: GAME_DEMO_W, h: GAME_DEMO_H };
+    ctx.fill_linear_gradient(full_rect, Color{ r: 243, g: 233, b: 217, a: 255 }, Color{ r: 232, g: 202, b: 160, a: 255 }, false);
+    ctx.fill_radial_gradient(
+        Rect{ x: origin_x + sim_layout_x(398), y: origin_y + sim_layout_y(24), w: sim_layout_square(200u16), h: sim_layout_square(200u16) },
+        Color{ r: 255, g: 232, b: 182, a: 96 },
+        Color{ r: 243, g: 233, b: 217, a: 0 }
+    );
+    ctx.fill_radial_gradient(
+        Rect{ x: origin_x + sim_layout_x(24), y: origin_y + sim_layout_y(276), w: sim_layout_w(220u16), h: sim_layout_h(180u16) },
+        Color{ r: 193, g: 121, b: 54, a: 44 },
+        Color{ r: 243, g: 233, b: 217, a: 0 }
+    );
+
+    ctx.fill_round_rect(
+        Rect{ x: layout.board_x - sim_layout_x(8), y: layout.board_y - sim_layout_y(8), w: layout.board_w + sim_layout_square(16u16), h: layout.board_h + sim_layout_square(16u16) },
+        28u8,
+        Color{ r: 126, g: 83, b: 46, a: 26 }
+    );
+    ctx.fill_round_rect(
+        Rect{ x: layout.panel_x, y: layout.panel_y, w: layout.panel_w, h: layout.panel_h },
+        26u8,
+        Color{ r: 248, g: 240, b: 228, a: 255 }
+    );
+    ctx.draw_round_rect(
+        Rect{ x: layout.panel_x, y: layout.panel_y, w: layout.panel_w, h: layout.panel_h },
+        26u8,
+        Color{ r: 207, g: 175, b: 133, a: 255 },
+        1u8
+    );
+
+    game_draw_cstr(ctx, origin_x + sim_layout_x(40), origin_y + sim_layout_y(30), "2048", game_font_title(), Color{ r: 88, g: 58, b: 36, a: 255 });
+    game_draw_cstr(ctx, origin_x + sim_layout_x(40), origin_y + sim_layout_y(66), "把暖色卡片一路合成到 2048", game_font_subtitle(), Color{ r: 132, g: 102, b: 76, a: 255 });
+
+    game_draw_stat_card(ctx, origin_x + sim_layout_x(414), origin_y + sim_layout_y(114), sim_layout_w(84u16), sim_layout_h(74u16), "SCORE", game.score, Color{ r: 193, g: 121, b: 54, a: 255 });
+    game_draw_stat_card(ctx, origin_x + sim_layout_x(506), origin_y + sim_layout_y(114), sim_layout_w(84u16), sim_layout_h(74u16), "BEST", game.best_tile, Color{ r: 150, g: 97, b: 39, a: 255 });
+    game_draw_stat_card(ctx, origin_x + sim_layout_x(414), origin_y + sim_layout_y(198), sim_layout_w(176u16), sim_layout_h(72u16), "MOVES", game.move_count, Color{ r: 197, g: 150, b: 74, a: 255 });
+
+    game_draw_cstr(ctx, origin_x + sim_layout_x(414), origin_y + sim_layout_y(286), "状态", game_font_stat_label(), Color{ r: 118, g: 93, b: 69, a: 255 });
+    game_draw_cstr(ctx, origin_x + sim_layout_x(414), origin_y + sim_layout_y(326), game_status_text(game), game_font_body(), Color{ r: 90, g: 64, b: 44, a: 255 });
+    game_draw_button(ctx, layout.restart_x, layout.restart_y, layout.restart_w, layout.restart_h, "新游戏");
+    game_draw_cstr(ctx, origin_x + sim_layout_x(414), origin_y + sim_layout_y(386), "提示", game_font_stat_label(), Color{ r: 118, g: 93, b: 69, a: 255 });
+    game_draw_cstr(ctx, origin_x + sim_layout_x(414), origin_y + sim_layout_y(408), "键盘: ↑↓←→", game_font_body(), Color{ r: 90, g: 64, b: 44, a: 255 });
+    game_draw_cstr(ctx, origin_x + sim_layout_x(414), origin_y + sim_layout_y(430), "触摸: 按住后拖动", game_font_body(), Color{ r: 90, g: 64, b: 44, a: 255 });
+
+    const board_x: i16 = layout.board_x;
+    const board_y: i16 = layout.board_y;
+    ctx.fill_round_rect(Rect{ x: board_x, y: board_y, w: layout.board_w, h: layout.board_h }, sim_layout_font(30u8), Color{ r: 181, g: 156, b: 126, a: 255 });
+    ctx.draw_round_rect(Rect{ x: board_x, y: board_y, w: layout.board_w, h: layout.board_h }, sim_layout_font(30u8), Color{ r: 151, g: 122, b: 91, a: 255 }, 1u8);
+
+    var row: i32 = 0;
+    while row < GAME_GRID_SIZE {
+        var col: i32 = 0;
+        while col < GAME_GRID_SIZE {
+            const x: i16 = board_x + layout.cell_gap + col as i16 * (layout.cell_size as i16 + layout.cell_gap);
+            const y: i16 = board_y + layout.cell_gap + row as i16 * (layout.cell_size as i16 + layout.cell_gap);
+            game_draw_tile(ctx, x, y, game.board[game_board_index(row, col)]);
+            col = col + 1;
+        }
+        row = row + 1;
+    }
+
+    if game.won || game.game_over {
+        ctx.fill_round_rect(Rect{ x: board_x, y: board_y, w: layout.board_w, h: layout.board_h }, 30u8, Color{ r: 39, g: 23, b: 14, a: 138 });
+        game_draw_centered_text(
+            ctx,
+            Rect{ x: board_x, y: board_y + sim_layout_y(106), w: layout.board_w, h: sim_layout_h(40u16) },
+            game_overlay_title(game),
+            game_font_overlay(),
+            Color{ r: 252, g: 245, b: 235, a: 255 }
+        );
+        game_draw_centered_text(
+            ctx,
+            Rect{ x: board_x + sim_layout_x(20), y: board_y + sim_layout_y(150), w: layout.board_w - sim_layout_w(40u16), h: sim_layout_h(28u16) },
+            game_overlay_subtitle(game),
+            game_font_body(),
+            Color{ r: 241, g: 221, b: 194, a: 255 }
+        );
+    }
+}
+
+/// 将 `game` demo 渲染到指定上下文。
+export fn render_demo_game(ctx: &RenderCtx, origin_x: i16, origin_y: i16) void {
+    var game: Game2048Retained = game_retained_new();
+    render_demo_game_state(&game, ctx, origin_x, origin_y);
+}
+
+/// 运行 `game` demo 并返回退出码。
+export fn run_demo_game() i32 {
+    const bytes_len: usize = framebuffer_required_bytes(SIM_DEFAULT_RES_WIDTH, SIM_DEFAULT_RES_HEIGHT, PixelFormat.ARGB8888);
+    const bytes: &byte = malloc(bytes_len) as &byte;
+    if bytes == null {
+        return 2;
+    }
+    defer {
+        free(bytes as &void);
+    }
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(bytes, SIM_DEFAULT_RES_WIDTH, SIM_DEFAULT_RES_HEIGHT, SIM_DEFAULT_RES_WIDTH * 4u16, PixelFormat.ARGB8888));
+    ctx.clear(Color{ r: 243, g: 233, b: 217, a: 255 });
+    var game: Game2048Retained = game_retained_new();
+    render_demo_game_state(&game, &ctx, 0, 0);
+    if ctx.stats.text_ops == 0u32 || ctx.stats.rect_ops == 0u32 || game.best_tile <= 0 {
+        return 1;
+    }
+    return 0;
+}
+
+/// 创建默认的 `Game2048Retained` 实例。
+export fn game_retained_new() Game2048Retained {
+    return Game2048Retained{
+        ready: false,
+        board: [],
+        score: 0,
+        best_tile: 0,
+        move_count: 0,
+        rng_state: 0u32,
+        won: false,
+        game_over: false,
+        touch_active: false,
+        suppress_tap: false,
+        touch_start: POINT_ZERO,
+        touch_last: POINT_ZERO,
+    };
+}

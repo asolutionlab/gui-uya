@@ -3,10 +3,26 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-UYA_BIN="${UYA:-$ROOT_DIR/uya/bin/uya}"
+find_uya_bin() {
+    if [ -n "${UYA:-}" ]; then
+        printf '%s\n' "$UYA"
+        return 0
+    fi
+    if command -v uya >/dev/null 2>&1; then
+        command -v uya
+        return 0
+    fi
+    if [ -x "$ROOT_DIR/uya/bin/uya" ]; then
+        printf '%s\n' "$ROOT_DIR/uya/bin/uya"
+        return 0
+    fi
+    printf '%s\n' "$ROOT_DIR/uya/bin/uya"
+}
+
+UYA_BIN="$(find_uya_bin)"
 EMCC_BIN="${EMCC:-emcc}"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build/web}"
-APP="${APP:-$ROOT_DIR/gui/sim_web_main.uya}"
+APP="${APP:-}"
 OUT_NAME="${OUT_NAME:-gui_uya_web}"
 OUT_C="$BUILD_DIR/${OUT_NAME}.c"
 OUT_GEN_O="$BUILD_DIR/${OUT_NAME}.generated.o"
@@ -15,7 +31,7 @@ OUT_OPENAI_WEB_O="$BUILD_DIR/${OUT_NAME}.openai_web_host.o"
 OUT_HTML="$BUILD_DIR/index.html"
 OUT_JS="$BUILD_DIR/index.js"
 OUT_CIMPORT_SIDECAR="${OUT_C}imports.sh"
-SHELL_FILE="${SHELL_FILE:-$ROOT_DIR/gui/platform/web/shell.html}"
+SHELL_FILE="${SHELL_FILE:-$ROOT_DIR/src/gui/platform/web/shell.html}"
 MODE="${MODE:-debug}"
 WEB_STACK_SIZE="${WEB_STACK_SIZE:-8388608}"
 WEB_INITIAL_MEMORY="${WEB_INITIAL_MEMORY:-33554432}"
@@ -28,9 +44,21 @@ VENDORED_WEB_CJK_FONT_SRC="$ROOT_DIR/third_party/fonts/wqy/wqy-microhei.ttc"
 WEB_CJK_FONT_SRC="${WEB_CJK_FONT_SRC:-$VENDORED_WEB_CJK_FONT_SRC}"
 WEB_MINIFY_HTML="${WEB_MINIFY_HTML:-auto}"
 WQY_BITMAP_STAGE_DIR="$BUILD_DIR/gui/render/generated"
-WQY_BITMAP_SRC_DIR="$ROOT_DIR/gui/render/generated"
+WQY_BITMAP_SRC_DIR="$ROOT_DIR/src/gui/render/generated"
 WQY_BITMAP_FONT_SIZES=(10 11 12 13 14 15 16 17 18 20 22 24 25 26 29 31 35)
 WEB_OPENAI_CONFIG_JS="$BUILD_DIR/openai_config.js"
+
+if [ -z "$APP" ]; then
+    UYA_STAGE_DIR="${UYA_STAGE_DIR:-$BUILD_DIR/uya_stage}"
+    python3 "$ROOT_DIR/tools/stage_uya_sources.py" --root "$ROOT_DIR" --stage "$UYA_STAGE_DIR"
+    APP="$UYA_STAGE_DIR/apps/sim_web_main.uya"
+fi
+
+if ! command -v "$UYA_BIN" >/dev/null 2>&1; then
+    echo "error: Uya compiler not found: $UYA_BIN" >&2
+    echo "hint : install 'uya' on PATH or set UYA=/path/to/uya." >&2
+    exit 127
+fi
 
 pick_emcc_stack_flag() {
     local probe_dir probe_c probe_js
@@ -246,7 +274,7 @@ sed -i '/@syscall C99 backend: supported targets/d' "$OUT_C"
 sed -i 's/^int32_t main(int32_t argc, char \*\*argv) {$/__attribute__((used, visibility("default"))) int32_t main(int32_t argc, char **argv) {/' "$OUT_C"
 
 "$EMCC_BIN" -std=c99 "$EMCC_OPT" -fno-builtin -w \
-    -include "$ROOT_DIR/gui/platform/web/posix_decl_shim.h" \
+    -include "$ROOT_DIR/src/gui/platform/web/posix_decl_shim.h" \
     -include fcntl.h \
     -include sys/uio.h \
     -include sys/mman.h \
@@ -254,11 +282,11 @@ sed -i 's/^int32_t main(int32_t argc, char \*\*argv) {$/__attribute__((used, vis
     -o "$OUT_GEN_O"
 
 "$EMCC_BIN" -std=gnu99 "$EMCC_OPT" -Wall -Wextra -pedantic -fvisibility=hidden \
-    -c "$ROOT_DIR/gui/platform/web/web_host.c" \
+    -c "$ROOT_DIR/src/gui/platform/web/web_host.c" \
     -o "$OUT_WEB_O"
 
 "$EMCC_BIN" -std=gnu99 "$EMCC_OPT" -Wall -Wextra -pedantic -fvisibility=hidden \
-    -c "$ROOT_DIR/gui/platform/web/openai_web_host.c" \
+    -c "$ROOT_DIR/src/gui/platform/web/openai_web_host.c" \
     -o "$OUT_OPENAI_WEB_O"
 
 declare -a CIMPORT_OBJECTS=()

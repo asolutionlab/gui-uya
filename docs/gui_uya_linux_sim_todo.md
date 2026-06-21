@@ -26,19 +26,19 @@
 
 | 条目 | 状态 | 说明 |
 |------|------|------|
-| 显示/帧缓冲抽象 | [x] 已有基线 | `gui/platform/disp.uya` 已提供 `FrameBuffer`、`DisplayCtx`、像素格式与读写接口 |
-| 输入抽象与事件队列 | [x] 已有基线 | `gui/platform/indev.uya` 已有 `IInputDev`、`TouchDriver`、`MouseDriver`、`KeyDriver`、`EncoderDriver` |
-| Linux 计时接口 | [x] 已有基线 | `gui/platform/tick.uya` 已提供 `get_tick_ms`、`get_tick_us`、`sleep_ms` |
-| 渲染上下文 | [x] 已有基线 | `gui/render/ctx.uya` 已可对 framebuffer 做基础绘制 |
-| 资源与文件系统 | [x] 已有基线 | `gui/res/fs.uya`、`gui/res/cache.uya` 已有 Phase 4 入口 |
-| Phase 4 I/O 回归 | [x] 已覆盖 | `gui/tests/test_phase4_io.uya` 已验证 tick / host fs / async read / cache |
-| Smoke / demo 入口 | [x] 已有离屏版本 | `gui/phase4_smoke.uya`、`gui/phase6_smoke.uya` 已可作为模拟器接入目标 |
-| SDL2 显示后端 | [x] 已实现 | 已新增 `gui/platform/sdl2/{disp_sdl.uya,sdl_host.c}` |
+| 显示/帧缓冲抽象 | [x] 已有基线 | `src/gui/platform/disp.uya` 已提供 `FrameBuffer`、`DisplayCtx`、像素格式与读写接口 |
+| 输入抽象与事件队列 | [x] 已有基线 | `src/gui/platform/indev.uya` 已有 `IInputDev`、`TouchDriver`、`MouseDriver`、`KeyDriver`、`EncoderDriver` |
+| Linux 计时接口 | [x] 已有基线 | `src/gui/platform/tick.uya` 已提供 `get_tick_ms`、`get_tick_us`、`sleep_ms` |
+| 渲染上下文 | [x] 已有基线 | `src/gui/render/ctx.uya` 已可对 framebuffer 做基础绘制 |
+| 资源与文件系统 | [x] 已有基线 | `src/gui/res/fs.uya`、`src/gui/res/cache.uya` 已有 Phase 4 入口 |
+| Phase 4 I/O 回归 | [x] 已覆盖 | `tests/test_phase4_io.uya` 已验证 tick / host fs / async read / cache |
+| Smoke / demo 入口 | [x] 已有离屏版本 | `apps/phase4_smoke.uya`、`apps/phase6_smoke.uya` 已可作为模拟器接入目标 |
+| SDL2 显示后端 | [x] 已实现 | 已新增 `src/gui/platform/sdl2/{disp_sdl.uya,sdl_host.c}` |
 | SDL2 OpenGL ES 2.0 后端 | [x] 已实现 | 已支持 `--gpu auto|software|gles2`，并在 `--gpu gles2 --cpu-render batch` 下直连 GLES2 batch 绘制 |
 | CPU 渲染后端切换 | [x] 已实现 | 已支持 `--cpu-render immediate|batch`，默认 `immediate` |
-| SDL2 输入后端 | [x] 已实现 | 已新增 `gui/platform/sdl2/indev_sdl.uya` |
-| Linux 模拟器主循环 | [x] 已实现 | 已新增 `gui/sim/{main,runner,app,config}.uya` 与 `gui/sim_main.uya` 构建入口 |
-| 截图/录制/Profiler 工具 | [x] 已实现 | 已新增 `gui/sim/{screenshot,recorder,profiler}.uya` |
+| SDL2 输入后端 | [x] 已实现 | 已新增 `src/gui/platform/sdl2/indev_sdl.uya` |
+| Linux 模拟器主循环 | [x] 已实现 | 已新增 `src/gui/sim/{main,runner,app,config}.uya` 与 `apps/sim_main.uya` 构建入口 |
+| 截图/录制/Profiler 工具 | [x] 已实现 | 已新增 `src/gui/sim/{screenshot,recorder,profiler}.uya` |
 | 模拟器构建命令 | [x] 已实现 | `Makefile` 已新增 `sim-build` / `sim-run` / `sim-debug` |
 
 ## 关键决策
@@ -47,9 +47,9 @@
   - 原因: 最容易先做出窗口、输入、缩放和跨平台开发体验。
 - 次方案: Linux Framebuffer
   - 只在 SDL2 MVP 稳定后再做，主要用于更贴近嵌入式环境的验证。
-- 默认接入目标: 先 `gui/phase4_smoke.uya`，后 `gui/phase6_smoke.uya`
+- 默认接入目标: 先 `apps/phase4_smoke.uya`，后 `apps/phase6_smoke.uya`
   - 原因: `Phase 4` 已覆盖 tick / fs / async cache / input 基线，更适合作为模拟器 MVP 的第一目标。
-- 抽象策略: 复用现有 `gui/platform/{disp,indev,tick}.uya`
+- 抽象策略: 复用现有 `src/gui/platform/{disp,indev,tick}.uya`
   - 除非现有接口明显不够，否则不新增一套 `platform/interface/*` 平行层。
 
 ## 里程碑总览
@@ -75,16 +75,16 @@
 ### TODO
 
 - [x] 创建目录骨架
-  - [x] `gui/platform/sdl2/`
-  - [x] `gui/platform/fb/`
-  - [x] `gui/sim/`
+  - [x] `src/gui/platform/sdl2/`
+  - [x] `src/gui/platform/fb/`
+  - [x] `src/gui/sim/`
 - [x] 盘点模拟器最小依赖接口
   - [x] 显示: framebuffer 获取、present/flush、窗口标题、缩放
   - [x] 输入: 非阻塞轮询、鼠标/键盘/滚轮事件映射
   - [x] 时钟: 毫秒/微秒 tick 与睡眠
   - [x] 文件系统: host fs 路径读取
 - [x] 评估现有 `DisplayCtx` 与模拟器 present 流程之间的胶水层
-- [x] 决定 MVP 默认入口使用 `gui/phase4_smoke.uya`
+- [x] 决定 MVP 默认入口使用 `apps/phase4_smoke.uya`
 - [x] 明确 `phase6_smoke` 为第二阶段接入目标，而不是首个阻塞项
 
 ### 验收
@@ -103,7 +103,7 @@
 
 ### TODO
 
-- [x] `gui/platform/sdl2/disp_sdl.uya`
+- [x] `src/gui/platform/sdl2/disp_sdl.uya`
   - [x] SDL2 初始化与窗口创建
   - [x] renderer / texture 创建
   - [x] 把 `FrameBuffer` 内容上传到 SDL texture
@@ -111,14 +111,14 @@
   - [x] 支持窗口标题
   - [x] 基础全屏切换
   - [x] 支持全刷；脏区刷新当前退化为整帧 present
-- [x] `gui/platform/sdl2/indev_sdl.uya`
+- [x] `src/gui/platform/sdl2/indev_sdl.uya`
   - [x] 鼠标左键映射到 touch press/release
   - [x] 鼠标移动映射到 touch/mouse move
   - [x] 键盘映射到 `KeyDriver`
   - [x] 滚轮映射到 `EncoderDriver`
   - [x] 退出事件映射到模拟器主循环停止条件
 - [x] 计时策略
-  - [x] 优先复用 `gui/platform/tick.uya`
+  - [x] 优先复用 `src/gui/platform/tick.uya`
   - [x] 仅在确有必要时补 SDL2 专用适配，不单独分叉一套 tick 实现
 
 ### 验收
@@ -146,7 +146,7 @@
 
 ### TODO
 
-- [x] `gui/sim/main.uya`
+- [x] `src/gui/sim/main.uya`
 - [x] 初始化 display / input / tick / fs / cache
 - [x] 增加基础配置项
   - [x] demo 入口
@@ -159,8 +159,8 @@
   - [x] render 到 back buffer
   - [x] present 到 SDL2 窗口
   - [x] 控制退出与清理
-- [x] 先接 `gui/phase4_smoke.uya`
-- [x] 再接 `gui/phase6_smoke.uya`
+- [x] 先接 `apps/phase4_smoke.uya`
+- [x] 再接 `apps/phase6_smoke.uya`
 - [x] 评估是否需要在模拟器层补一个简易 HUD
   - [x] FPS
   - [x] frame time
@@ -182,14 +182,14 @@
 
 ### TODO
 
-- [x] `gui/sim/screenshot.uya`
+- [x] `src/gui/sim/screenshot.uya`
   - [x] 导出当前 framebuffer
   - [x] 支持原始像素导出与 `BMP` / `PNG` 编码
-- [x] `gui/sim/profiler.uya`
+- [x] `src/gui/sim/profiler.uya`
   - [x] 统计 frame time
   - [x] 统计 update/render/present 时间分布
   - [x] 输出文本摘要
-- [x] `gui/sim/recorder.uya`
+- [x] `src/gui/sim/recorder.uya`
   - [x] 录制鼠标/键盘/滚轮输入
   - [x] 回放固定输入序列
 - [ ] Inspector 作为 backlog
@@ -211,8 +211,8 @@
 
 ### TODO
 
-- [x] 复用 `gui/res/fs.uya` 现有 host fs / rom fs 基线
-- [x] 复用 `gui/tests/test_phase4_io.uya` 现有 I/O 回归
+- [x] 复用 `src/gui/res/fs.uya` 现有 host fs / rom fs 基线
+- [x] 复用 `tests/test_phase4_io.uya` 现有 I/O 回归
 - [x] 约定模拟器运行时资源根目录
 - [x] 明确示例资源路径解析规则
 - [x] 若 `phase6_smoke` 需要额外资源，补齐缺失映射
@@ -268,8 +268,8 @@
 
 ### TODO
 
-- [x] `gui/platform/fb/disp_fb.uya`
-- [x] `gui/platform/fb/indev_fb.uya`
+- [x] `src/gui/platform/fb/disp_fb.uya`
+- [x] `src/gui/platform/fb/indev_fb.uya`
   - [x] 先补控制终端键盘热键与方向键
   - [x] 补 `evdev` 指针/触摸/滚轮最小接入
   - [ ] 多点手势与校准链路后续按需扩展
@@ -359,8 +359,8 @@ make sim-run SIM_ARGS="--max-frames 3 --screenshot build/sim/makerun.bmp"
 ## 相关文件
 
 - 全局开发 TODO: `docs/gui_uya_todo.md`
-- 平台显示基线: `gui/platform/disp.uya`
-- 平台输入基线: `gui/platform/indev.uya`
-- 平台时钟基线: `gui/platform/tick.uya`
-- Phase 4 I/O 测试: `gui/tests/test_phase4_io.uya`
-- Smoke 入口: `gui/phase4_smoke.uya`、`gui/phase6_smoke.uya`
+- 平台显示基线: `src/gui/platform/disp.uya`
+- 平台输入基线: `src/gui/platform/indev.uya`
+- 平台时钟基线: `src/gui/platform/tick.uya`
+- Phase 4 I/O 测试: `tests/test_phase4_io.uya`
+- Smoke 入口: `apps/phase4_smoke.uya`、`apps/phase6_smoke.uya`

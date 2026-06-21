@@ -1,0 +1,55 @@
+use gui.render.batch.DrawBatch;
+use gui.render.batch.DrawCmd;
+use gui.render.batch.DrawCmdKind;
+use gui.render.ctx.RenderCtx;
+use gui.render.ctx.RenderMode;
+use gui.render.img.draw_image;
+use gui.render.img.draw_image_clipped;
+
+export enum CpuRenderBackendKind {
+    Immediate,
+    Batch,
+}
+
+/// 返回 CPU 渲染后端的显示名称。
+export fn cpu_render_backend_name(kind: CpuRenderBackendKind) &const byte {
+    if kind == CpuRenderBackendKind.Batch {
+        return "batch" as &const byte;
+    }
+    return "immediate" as &const byte;
+}
+
+/// 使用 CPU 渲染路径执行一批绘制命令。
+export fn cpu_render_batch_execute(ctx: &RenderCtx, batch: &DrawBatch) void {
+    if ctx == null || batch == null {
+        return;
+    }
+
+    const prev_mode: RenderMode = ctx.mode;
+    if prev_mode == RenderMode.Batch {
+        ctx.mode = RenderMode.Immediate;
+    }
+    defer {
+        ctx.mode = prev_mode;
+    }
+
+    var i: i32 = 0;
+    while i < batch.count as i32 {
+        const cmd: DrawCmd = batch.cmds[i];
+        if cmd.kind == DrawCmdKind.FillRect {
+            ctx.fill_rect(cmd.rect, cmd.color);
+        } else if cmd.kind == DrawCmdKind.DrawRect {
+            ctx.draw_rect(cmd.rect, cmd.color, cmd.width);
+        } else if cmd.kind == DrawCmdKind.Line {
+            ctx.draw_line(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.color, cmd.width);
+        } else if cmd.kind == DrawCmdKind.Image {
+            if cmd.has_src {
+                draw_image_clipped(ctx, cmd.rect, &cmd.image, cmd.src_rect);
+            } else {
+                draw_image(ctx, cmd.rect.x, cmd.rect.y, &cmd.image);
+            }
+        }
+        i = i + 1;
+    }
+    ctx.stats.batch_flushes = ctx.stats.batch_flushes + 1u32;
+}

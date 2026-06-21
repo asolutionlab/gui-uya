@@ -1,0 +1,8 @@
+use std.runtime.entry;
+
+use gui.sim.dashboard_compare.run_dashboard_compare;
+
+/// 模块入口，运行 dashboard 对照程序。
+export fn main() i32 {
+    return run_dashboard_compare();
+}

@@ -1,0 +1,542 @@
+use gui.core.color.Color;
+use gui.core.event.Event;
+use gui.core.event.EventType;
+use gui.core.event.InputDev;
+use gui.core.event.event_point;
+use gui.core.event_dispatch.EventDispatcher;
+use gui.core.event_dispatch.event_dispatcher_new;
+use gui.core.obj.GuiObj;
+use gui.core.obj.gui_obj_default;
+use gui.core.obj.gui_obj_register;
+use gui.core.obj.gui_obj_reset_registry;
+use gui.core.obj_tree.ObjTree;
+use gui.core.obj_tree.obj_tree_new;
+use gui.core.point.Point;
+use gui.core.rect.Rect;
+use libc.strncmp;
+use gui.platform.disp.PixelFormat;
+use gui.platform.disp.framebuffer_new;
+use gui.render.ctx.RenderCtx;
+use gui.render.ctx.ctx_pixel;
+use gui.render.ctx.render_ctx_new;
+use gui.render.scheduler.RenderFrameResult;
+use gui.render.scheduler.RenderPresentMode;
+use gui.render.scheduler.render_schedule_tree_frame;
+use std.testing.assert_eq_bool;
+use std.testing.assert_eq_i32;
+use gui.platform.text_host.rich_text_host_active_session;
+use gui.style.StyleProp;
+use gui.widget.base.WIDGET_TYPE_RICH_TOOLBAR;
+use gui.widget.base.widget_inner_rect;
+use gui.widget.base.widget_text_len;
+use gui.widget.panel.Panel;
+use gui.widget.rich_text_input.RichCommand;
+use gui.widget.rich_text_input.RichCommandKind;
+use gui.widget.rich_text_input.RichTextInput;
+use gui.widget.rich_text_input.RichTextFormatState;
+use gui.widget.rich_toolbar.RichToolbar;
+use gui.widget.rich_toolbar.RichFormatRegistry;
+use gui.widget.rich_toolbar.rich_format_registry_new;
+use gui.richtext.document.RICH_MARK_BOLD;
+use gui.richtext.document.RichBlockType;
+use gui.richtext.selection.RichPos;
+
+export const TEST_RICH_TOOLBAR_MODULE: i32 = 1;
+
+fn rich_toolbar_smoke_click_x(index: i32) i16 {
+    return 18i16 + (index as i16) * 50i16;
+}
+
+fn rich_toolbar_assert_click_html(index: i32, expected_html: &const byte) !void {
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    try input.set_plain_text("hello" as &const byte);
+    try assert_eq_bool(input.exec(RichCommand{
+        kind: RichCommandKind.SelectAll,
+        text_ptr: null,
+        text_len: 0usize,
+    }), true);
+
+    var toolbar: RichToolbar = RichToolbar.new(&input);
+    toolbar.widget.at(0, 0);
+    toolbar.widget.size(420, 38);
+
+    var click_evt: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        1,
+        (index as! u32).value + 1u32,
+        Point{ x: rich_toolbar_smoke_click_x(index), y: 18i16 },
+    );
+    try assert_eq_bool(toolbar.handle_event(&click_evt), true);
+
+    var html: [byte: 128] = [];
+    const written: usize = input.export_html(&html[0], 128usize);
+    const expected_len: usize = widget_text_len(expected_html);
+    try assert_eq_i32(written as i32, expected_len as i32);
+    try assert_eq_bool(strncmp(&html[0] as *const byte, expected_html as *const byte, expected_len) == 0, true);
+}
+
+test "rich toolbar drives editor marks and block formats" {
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    try input.set_plain_text("hello" as &const byte);
+    try assert_eq_bool(input.exec(RichCommand{
+        kind: RichCommandKind.SelectAll,
+        text_ptr: null,
+        text_len: 0usize,
+    }), true);
+
+    var toolbar: RichToolbar = RichToolbar.new(&input);
+    toolbar.widget.at(0, 0);
+    toolbar.widget.size(420, 38);
+    try assert_eq_i32(toolbar.widget.base.type_tag as i32, WIDGET_TYPE_RICH_TOOLBAR as i32);
+    try assert_eq_i32(toolbar.format_count() as i32, 8);
+
+    var bold_click: Event = event_point(EventType.Click, InputDev.Touch, 1, 1u32, Point{ x: 18, y: 18 });
+    try assert_eq_bool(toolbar.handle_event(&bold_click), true);
+    try assert_eq_bool(input.format_has_mark(RICH_MARK_BOLD), true);
+
+    var h1_click: Event = event_point(EventType.Click, InputDev.Touch, 1, 2u32, Point{ x: 268, y: 18 });
+    try assert_eq_bool(toolbar.handle_event(&h1_click), true);
+    try assert_eq_bool(input.format_block_type() == RichBlockType.Heading1, true);
+
+    const fmt_state: RichTextFormatState = input.format_state();
+    try assert_eq_bool((fmt_state.marks.bits & RICH_MARK_BOLD) != 0u16, true);
+    try assert_eq_bool(fmt_state.block_type == RichBlockType.Heading1, true);
+    try assert_eq_bool(fmt_state.can_mention && fmt_state.can_image && fmt_state.can_embed, true);
+}
+
+test "rich toolbar registry reserves extension slots" {
+    var registry: RichFormatRegistry = rich_format_registry_new();
+    try assert_eq_bool(registry.mention_reserved, true);
+    try assert_eq_bool(registry.image_reserved, true);
+    try assert_eq_bool(registry.embed_reserved, true);
+    _ = registry.reserve_mention(false);
+    _ = registry.reserve_image(false);
+    _ = registry.reserve_embed(false);
+    try assert_eq_bool(registry.mention_reserved, false);
+    try assert_eq_bool(registry.image_reserved, false);
+    try assert_eq_bool(registry.embed_reserved, false);
+}
+
+test "rich toolbar renders inside panel dispatch" {
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    var toolbar: RichToolbar = RichToolbar.new(&input);
+    toolbar.widget.at(0, 0);
+    toolbar.widget.size(220, 38);
+
+    var panel: Panel = Panel.new();
+    panel.widget.at(0, 0);
+    panel.widget.size(240, 48);
+    panel.widget.base.style.set_u32(StyleProp.PaddingLeft, 0u32);
+    panel.widget.base.style.set_u32(StyleProp.PaddingRight, 0u32);
+    panel.widget.base.style.set_u32(StyleProp.PaddingTop, 0u32);
+    panel.widget.base.style.set_u32(StyleProp.PaddingBottom, 0u32);
+    _ = panel.add(toolbar.obj());
+
+    var bytes: [byte: 49152] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 128, 96, 512, PixelFormat.ARGB8888));
+    ctx.clear(Color{ r: 0, g: 0, b: 0, a: 255 });
+    panel.render(&ctx);
+    const inner: Rect = widget_inner_rect(&toolbar.widget);
+    try assert_eq_bool(ctx_pixel(&ctx, inner.x + 2i16, inner.y + 2i16) != Color{ r: 0, g: 0, b: 0, a: 255 }, true);
+}
+
+test "rich toolbar active state tracks inline and block commands" {
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    try input.set_plain_text("hello" as &const byte);
+
+    var toolbar: RichToolbar = RichToolbar.new(&input);
+    toolbar.widget.at(0, 0);
+    toolbar.widget.size(420, 38);
+
+    try assert_eq_bool(toolbar.widget.base.style.get_color_or(StyleProp.BgFocusColor, Color{ r: 0, g: 0, b: 0, a: 0 }) == Color{ r: 37, g: 99, b: 235, a: 255 }, true);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[0]), false);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[5]), false);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[6]), false);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[7]), false);
+
+    var bold_evt: Event = event_point(EventType.Click, InputDev.Touch, 1, 100u32, Point{ x: rich_toolbar_smoke_click_x(0), y: 18i16 });
+    try assert_eq_bool(toolbar.handle_event(&bold_evt), true);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[0]), true);
+
+    var h1_evt: Event = event_point(EventType.Click, InputDev.Touch, 1, 101u32, Point{ x: rich_toolbar_smoke_click_x(5), y: 18i16 });
+    try assert_eq_bool(toolbar.handle_event(&h1_evt), true);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[5]), true);
+
+    var quote_evt: Event = event_point(EventType.Click, InputDev.Touch, 1, 102u32, Point{ x: rich_toolbar_smoke_click_x(6), y: 18i16 });
+    try assert_eq_bool(toolbar.handle_event(&quote_evt), true);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[6]), true);
+
+    var list_evt: Event = event_point(EventType.Click, InputDev.Touch, 1, 103u32, Point{ x: rich_toolbar_smoke_click_x(7), y: 18i16 });
+    try assert_eq_bool(toolbar.handle_event(&list_evt), true);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[7]), true);
+}
+
+test "rich toolbar state follows current cursor block family" {
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    try input.set_plain_text("alpha\nbeta" as &const byte);
+
+    var toolbar: RichToolbar = RichToolbar.new(&input);
+    _ = toolbar.obj();
+
+    const heading_pos: RichPos = try input.doc.linear_offset_to_pos(0u32);
+    try assert_eq_bool(input.collapse_to(heading_pos), true);
+    try assert_eq_bool(input.exec(RichCommand{
+        kind: RichCommandKind.SetHeading2,
+        text_ptr: null,
+        text_len: 0usize,
+    }), true);
+
+    const list_pos: RichPos = try input.doc.linear_offset_to_pos(6u32);
+    try assert_eq_bool(input.collapse_to(list_pos), true);
+    try assert_eq_bool(input.exec(RichCommand{
+        kind: RichCommandKind.ToggleOrderedList,
+        text_ptr: null,
+        text_len: 0usize,
+    }), true);
+
+    toolbar.widget.base.flags.invalid = false;
+    toolbar.widget.base.flags.dirty = false;
+    toolbar.widget.base.self_invalid = false;
+    toolbar.widget.base.invalid_area = Rect{ x: 0, y: 0, w: 0, h: 0 };
+
+    try assert_eq_bool(input.collapse_to(heading_pos), true);
+    try assert_eq_bool(toolbar.widget.base.flags.invalid, true);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[5]), true);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[7]), false);
+
+    toolbar.widget.base.flags.invalid = false;
+    toolbar.widget.base.flags.dirty = false;
+    toolbar.widget.base.self_invalid = false;
+    toolbar.widget.base.invalid_area = Rect{ x: 0, y: 0, w: 0, h: 0 };
+
+    try assert_eq_bool(input.collapse_to(list_pos), true);
+    try assert_eq_bool(toolbar.widget.base.flags.invalid, true);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[5]), false);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[7]), true);
+}
+
+test "rich toolbar click smoke covers every visible button" {
+    try rich_toolbar_assert_click_html(0, "<p><strong>hello</strong></p>" as &const byte);
+    try rich_toolbar_assert_click_html(1, "<p><em>hello</em></p>" as &const byte);
+    try rich_toolbar_assert_click_html(2, "<p><u>hello</u></p>" as &const byte);
+    try rich_toolbar_assert_click_html(3, "<p><s>hello</s></p>" as &const byte);
+    try rich_toolbar_assert_click_html(4, "<p><code>hello</code></p>" as &const byte);
+    try rich_toolbar_assert_click_html(5, "<h1>hello</h1>" as &const byte);
+    try rich_toolbar_assert_click_html(6, "<blockquote>hello</blockquote>" as &const byte);
+    try rich_toolbar_assert_click_html(7, "<ul><li>hello</li></ul>" as &const byte);
+}
+
+test "rich toolbar release does not toggle format a second time" {
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    try input.set_plain_text("hello" as &const byte);
+    try assert_eq_bool(input.exec(RichCommand{
+        kind: RichCommandKind.SelectAll,
+        text_ptr: null,
+        text_len: 0usize,
+    }), true);
+
+    var toolbar: RichToolbar = RichToolbar.new(&input);
+    toolbar.widget.at(0, 0);
+    toolbar.widget.size(420, 38);
+
+    var click_evt: Event = event_point(EventType.Click, InputDev.Touch, 1, 200u32, Point{ x: rich_toolbar_smoke_click_x(0), y: 18i16 });
+    var release_evt: Event = event_point(EventType.Release, InputDev.Touch, 1, 201u32, Point{ x: rich_toolbar_smoke_click_x(0), y: 18i16 });
+    try assert_eq_bool(toolbar.handle_event(&click_evt), true);
+    _ = toolbar.handle_event(&release_evt);
+
+    var html: [byte: 64] = [];
+    const written: usize = input.export_html(&html[0], 64usize);
+    const expected_html: &const byte = "<p><strong>hello</strong></p>" as &const byte;
+    const expected_len: usize = widget_text_len(expected_html);
+    try assert_eq_i32(written as i32, expected_len as i32);
+    try assert_eq_bool(strncmp(&html[0] as *const byte, expected_html as *const byte, expected_len) == 0, true);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[0]), true);
+}
+
+test "rich toolbar click keeps editor focus and selection range" {
+    gui_obj_reset_registry();
+
+    var root: GuiObj = gui_obj_default();
+    root.set_area(Rect{ x: 0, y: 0, w: 480, h: 160 });
+
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    input.widget.at(0, 48);
+    input.widget.size(180, 72);
+    try input.set_plain_text("hello" as &const byte);
+
+    var toolbar: RichToolbar = RichToolbar.new(&input);
+    toolbar.widget.at(0, 0);
+    toolbar.widget.size(420, 38);
+
+    _ = gui_obj_register(0, &root);
+    _ = gui_obj_register(1, toolbar.obj());
+    _ = gui_obj_register(2, input.obj());
+
+    var tree: ObjTree = obj_tree_new();
+    tree.set_root(0, &root);
+    tree.attach(0, 1);
+    tree.attach(0, 2);
+
+    var dispatcher: EventDispatcher = event_dispatcher_new();
+    _ = dispatcher.dispatch(event_point(EventType.Press, InputDev.Touch, -1, 10u32, Point{ x: 10, y: 60 }), &tree);
+    _ = dispatcher.dispatch(event_point(EventType.Click, InputDev.Touch, -1, 11u32, Point{ x: 10, y: 60 }), &tree);
+    try assert_eq_i32(dispatcher.get_focus(), 2);
+    try assert_eq_bool(input.widget.state == WidgetState.Focused, true);
+
+    try assert_eq_bool(input.exec(RichCommand{
+        kind: RichCommandKind.SelectAll,
+        text_ptr: null,
+        text_len: 0usize,
+    }), true);
+    const anchor_before: i32 = ((try input.doc.pos_to_linear_offset(input.selection().anchor)) as! i32).value;
+    const focus_before: i32 = ((try input.doc.pos_to_linear_offset(input.selection().focus)) as! i32).value;
+
+    _ = dispatcher.dispatch(event_point(EventType.Press, InputDev.Touch, -1, 20u32, Point{ x: rich_toolbar_smoke_click_x(0), y: 18i16 }), &tree);
+    try assert_eq_i32(dispatcher.get_focus(), 2);
+
+    _ = dispatcher.dispatch(event_point(EventType.Click, InputDev.Touch, -1, 21u32, Point{ x: rich_toolbar_smoke_click_x(0), y: 18i16 }), &tree);
+    try assert_eq_i32(dispatcher.get_focus(), 2);
+    try assert_eq_bool(input.widget.state == WidgetState.Focused, true);
+    try assert_eq_i32((try input.doc.pos_to_linear_offset(input.selection().anchor)) as i32, anchor_before);
+    try assert_eq_i32((try input.doc.pos_to_linear_offset(input.selection().focus)) as i32, focus_before);
+
+    var html: [byte: 64] = [];
+    const written: usize = input.export_html(&html[0], 64usize);
+    const expected_html: &const byte = "<p><strong>hello</strong></p>" as &const byte;
+    const expected_len: usize = widget_text_len(expected_html);
+    try assert_eq_i32(written as i32, expected_len as i32);
+    try assert_eq_bool(strncmp(&html[0] as *const byte, expected_html as *const byte, expected_len) == 0, true);
+}
+
+test "rich toolbar observes editor format changes after direct construction" {
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    var toolbar: RichToolbar = RichToolbar.new(&input);
+    _ = toolbar.obj();
+
+    toolbar.widget.base.flags.invalid = false;
+    toolbar.widget.base.flags.dirty = false;
+    toolbar.widget.base.self_invalid = false;
+    toolbar.widget.base.invalid_area = Rect{ x: 0, y: 0, w: 0, h: 0 };
+
+    try assert_eq_bool(input.exec(RichCommand{
+        kind: RichCommandKind.ToggleBold,
+        text_ptr: null,
+        text_len: 0usize,
+    }), true);
+    try assert_eq_bool(toolbar.widget.base.flags.invalid, true);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[0]), true);
+}
+
+test "rich toolbar observes editor format changes after bind_editor" {
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    var toolbar: RichToolbar = RichToolbar.new(null);
+    _ = toolbar.bind_editor(&input);
+    _ = toolbar.obj();
+
+    toolbar.widget.base.flags.invalid = false;
+    toolbar.widget.base.flags.dirty = false;
+    toolbar.widget.base.self_invalid = false;
+    toolbar.widget.base.invalid_area = Rect{ x: 0, y: 0, w: 0, h: 0 };
+
+    try assert_eq_bool(input.exec(RichCommand{
+        kind: RichCommandKind.ToggleBold,
+        text_ptr: null,
+        text_len: 0usize,
+    }), true);
+    try assert_eq_bool(toolbar.widget.base.flags.invalid, true);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[0]), true);
+}
+
+test "rich toolbar click immediately restores editor host focus" {
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    input.widget.at(0, 48);
+    input.widget.size(180, 72);
+    try input.set_plain_text("hello" as &const byte);
+    try assert_eq_bool(input.exec(RichCommand{
+        kind: RichCommandKind.SelectAll,
+        text_ptr: null,
+        text_len: 0usize,
+    }), true);
+
+    var toolbar: RichToolbar = RichToolbar.new(&input);
+    toolbar.widget.at(0, 0);
+    toolbar.widget.size(420, 38);
+
+    try assert_eq_bool(toolbar.trigger_format(0), true);
+    try assert_eq_bool(input.widget.state == WidgetState.Focused, true);
+    try assert_eq_i32(rich_text_host_active_session() as i32, input.session_id as i32);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[0]), true);
+}
+
+test "rich toolbar release after press toggles format when click is absent" {
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    try input.set_plain_text("hello" as &const byte);
+    try assert_eq_bool(input.exec(RichCommand{
+        kind: RichCommandKind.SelectAll,
+        text_ptr: null,
+        text_len: 0usize,
+    }), true);
+
+    var toolbar: RichToolbar = RichToolbar.new(&input);
+    toolbar.widget.at(0, 0);
+    toolbar.widget.size(420, 38);
+
+    var press_evt: Event = event_point(EventType.Press, InputDev.Touch, 1, 300u32, Point{ x: rich_toolbar_smoke_click_x(0), y: 18i16 });
+    var release_evt: Event = event_point(EventType.Release, InputDev.Touch, 1, 301u32, Point{ x: rich_toolbar_smoke_click_x(0), y: 18i16 });
+    try assert_eq_bool(toolbar.handle_event(&press_evt), true);
+    try assert_eq_bool(toolbar.handle_event(&release_evt), true);
+    try assert_eq_bool(input.format_has_mark(RICH_MARK_BOLD), true);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[0]), true);
+}
+
+test "rich toolbar dirty render updates active button in same frame" {
+    gui_obj_reset_registry();
+
+    var root: Panel = Panel.new();
+    root.widget.at(0, 0);
+    root.widget.size(480, 160);
+    root.widget.base.style.set_u32(StyleProp.PaddingLeft, 0u32);
+    root.widget.base.style.set_u32(StyleProp.PaddingRight, 0u32);
+    root.widget.base.style.set_u32(StyleProp.PaddingTop, 0u32);
+    root.widget.base.style.set_u32(StyleProp.PaddingBottom, 0u32);
+
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    input.widget.at(0, 48);
+    input.widget.size(180, 72);
+    try input.set_plain_text("hello" as &const byte);
+
+    var toolbar: RichToolbar = RichToolbar.new(&input);
+    toolbar.widget.at(0, 0);
+    toolbar.widget.size(420, 38);
+
+    _ = gui_obj_register(0, root.obj());
+    _ = gui_obj_register(1, toolbar.obj());
+    _ = gui_obj_register(2, input.obj());
+    _ = root.add(toolbar.obj());
+    _ = root.add(input.obj());
+
+    var tree: ObjTree = obj_tree_new();
+    tree.set_root(0, root.obj());
+
+    var bytes: [byte: 307200] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 480, 160, 1920, PixelFormat.ARGB8888));
+
+    var full_result: RenderFrameResult = render_schedule_tree_frame(
+        &ctx,
+        &tree,
+        Rect{ x: 0, y: 0, w: 480, h: 160 },
+        true,
+        Color{ r: 0, g: 0, b: 0, a: 255 },
+        null,
+        null,
+        null
+    );
+    try assert_eq_i32(full_result.present_mode as i32, RenderPresentMode.Full as i32);
+    try assert_eq_bool(ctx_pixel(&ctx, 12, 11) == Color{ r: 255, g: 255, b: 255, a: 255 }, true);
+
+    var dispatcher: EventDispatcher = event_dispatcher_new();
+    _ = dispatcher.dispatch(event_point(EventType.Click, InputDev.Touch, -1, 1u32, Point{ x: rich_toolbar_smoke_click_x(0), y: 18i16 }), &tree);
+
+    const dirty_result: RenderFrameResult = render_schedule_tree_frame(
+        &ctx,
+        &tree,
+        Rect{ x: 0, y: 0, w: 480, h: 160 },
+        false,
+        Color{ r: 0, g: 0, b: 0, a: 255 },
+        null,
+        null,
+        null
+    );
+    try assert_eq_i32(dirty_result.present_mode as i32, RenderPresentMode.Dirty as i32);
+    try assert_eq_bool(ctx_pixel(&ctx, 12, 11) == Color{ r: 37, g: 99, b: 235, a: 255 }, true);
+}
+
+test "rich toolbar hover move keeps active button state" {
+    gui_obj_reset_registry();
+
+    var root: Panel = Panel.new();
+    root.widget.at(0, 0);
+    root.widget.size(480, 160);
+    root.widget.base.style.set_u32(StyleProp.PaddingLeft, 0u32);
+    root.widget.base.style.set_u32(StyleProp.PaddingRight, 0u32);
+    root.widget.base.style.set_u32(StyleProp.PaddingTop, 0u32);
+    root.widget.base.style.set_u32(StyleProp.PaddingBottom, 0u32);
+
+    var input: RichTextInput = RichTextInput.new("" as &const byte);
+    defer input.dispose();
+    input.widget.at(0, 48);
+    input.widget.size(180, 72);
+    try input.set_plain_text("hello" as &const byte);
+
+    var toolbar: RichToolbar = RichToolbar.new(&input);
+    toolbar.widget.at(0, 0);
+    toolbar.widget.size(420, 38);
+
+    _ = gui_obj_register(0, root.obj());
+    _ = gui_obj_register(1, toolbar.obj());
+    _ = gui_obj_register(2, input.obj());
+    _ = root.add(toolbar.obj());
+    _ = root.add(input.obj());
+
+    var tree: ObjTree = obj_tree_new();
+    tree.set_root(0, root.obj());
+
+    var bytes: [byte: 307200] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 480, 160, 1920, PixelFormat.ARGB8888));
+
+    _ = render_schedule_tree_frame(
+        &ctx,
+        &tree,
+        Rect{ x: 0, y: 0, w: 480, h: 160 },
+        true,
+        Color{ r: 0, g: 0, b: 0, a: 255 },
+        null,
+        null,
+        null
+    );
+
+    var dispatcher: EventDispatcher = event_dispatcher_new();
+    _ = dispatcher.dispatch(event_point(EventType.Click, InputDev.Touch, -1, 1u32, Point{ x: rich_toolbar_smoke_click_x(0), y: 18i16 }), &tree);
+
+    const click_dirty_result: RenderFrameResult = render_schedule_tree_frame(
+        &ctx,
+        &tree,
+        Rect{ x: 0, y: 0, w: 480, h: 160 },
+        false,
+        Color{ r: 0, g: 0, b: 0, a: 255 },
+        null,
+        null,
+        null
+    );
+    try assert_eq_i32(click_dirty_result.present_mode as i32, RenderPresentMode.Dirty as i32);
+    try assert_eq_bool(ctx_pixel(&ctx, 12, 11) == Color{ r: 37, g: 99, b: 235, a: 255 }, true);
+
+    _ = dispatcher.process_hover(&tree, Point{ x: rich_toolbar_smoke_click_x(2), y: 18i16 }, 2u32);
+
+    const hover_dirty_result: RenderFrameResult = render_schedule_tree_frame(
+        &ctx,
+        &tree,
+        Rect{ x: 0, y: 0, w: 480, h: 160 },
+        false,
+        Color{ r: 0, g: 0, b: 0, a: 255 },
+        null,
+        null,
+        null
+    );
+    try assert_eq_i32(hover_dirty_result.present_mode as i32, RenderPresentMode.Dirty as i32);
+    try assert_eq_bool(ctx_pixel(&ctx, 12, 11) == Color{ r: 37, g: 99, b: 235, a: 255 }, true);
+    try assert_eq_bool(toolbar.format_active(toolbar.registry.formats[0]), true);
+}

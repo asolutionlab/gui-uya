@@ -3,7 +3,7 @@
 ## 系统架构图
 
 ```text
-App / Demo
+apps/* / examples/*
   -> Widget Layer
     -> Core / Layout / Anim / Style
       -> Render
@@ -27,12 +27,13 @@ InputDev
 ## 模块依赖图
 
 ```text
-widget/*  -> core/*, render/*, style/*
-layout/*  -> core/obj, core/rect, style/prop
-anim/*    -> core/obj, style/prop
-render/*  -> core/{rect,color,dirty_region}, platform/disp
-res/*     -> render/img, std async/libc
-platform/*-> core/event, core/point, core/rect
+examples/* -> src/gui/widget/*, src/gui/core/*, src/gui/render/*
+src/gui/widget/*  -> src/gui/core/*, src/gui/render/*, src/gui/style/*
+src/gui/layout/*  -> src/gui/core/obj, src/gui/core/rect, src/gui/style/prop
+src/gui/anim/*    -> src/gui/core/obj, src/gui/style/prop
+src/gui/render/*  -> src/gui/core/{rect,color,dirty_region}, src/gui/platform/disp
+src/gui/res/*     -> src/gui/render/img, std async/libc
+src/gui/platform/*-> src/gui/core/event, src/gui/core/point, src/gui/core/rect
 ```
 
 ## 内存布局图

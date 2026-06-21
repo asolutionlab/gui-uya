@@ -1,0 +1,1139 @@
+use gui.core.event.Event;
+use gui.core.event.EventType;
+use gui.core.event.InputDev;
+use gui.core.event.event_key;
+use gui.core.event.event_key_repeat;
+use gui.core.event.event_text_input;
+use gui.core.event.event_point;
+use gui.core.color.Color;
+use gui.core.point.Point;
+use gui.core.rect.Rect;
+use gui.platform.disp.FrameBuffer;
+use gui.platform.disp.PixelFormat;
+use gui.platform.disp.framebuffer_copy;
+use gui.platform.disp.framebuffer_new;
+use gui.platform.disp.framebuffer_required_bytes;
+use gui.render.batch.DrawBatch;
+use gui.render.batch.draw_batch_new;
+use gui.render.cpu_backend.CpuRenderBackendKind;
+use gui.render.ctx.RenderCtx;
+use gui.render.ctx.RenderMode;
+use gui.render.ctx.render_ctx_attach_batch;
+use gui.render.ctx.ctx_pixel;
+use gui.render.ctx.render_ctx_set_mode;
+use gui.render.ctx.render_ctx_new;
+use examples.demo_animation.animation_demo_replay_rect;
+use examples.demo_animation.animation_demo_section_rect;
+use examples.demo_animation.animation_demo_toggle_rect;
+use examples.demo_widgets.WidgetsRetained;
+use examples.demo_widgets.render_demo_widgets_retained_state;
+use examples.demo_widgets.widgets_retained_new;
+use examples.demo_game.game_retained_new;
+use gui.sim.app.SimApp;
+use gui.sim.app.sim_app_alloc;
+use gui.sim.app.sim_app_free;
+use gui.sim.common.SIM_DEFAULT_RES_HEIGHT;
+use gui.sim.common.SIM_DEFAULT_RES_WIDTH;
+use gui.sim.common.sim_layout_x;
+use gui.sim.common.sim_layout_y;
+use gui.sim.common.sim_cstr_eq;
+use gui.sim.common.SIM_KEY_F11;
+use gui.sim.common.SIM_KEY_LEFT;
+use gui.sim.common.SIM_KEY_SPACE;
+use gui.sim.config.SimConfig;
+use gui.sim.config.SimDemoKind;
+use gui.sim.config.SimGpuKind;
+use gui.sim.config.sim_cpu_backend_name;
+use gui.sim.config.sim_config_default;
+use gui.sim.config.sim_gpu_name;
+use gui.sim.recorder.RecordedEvent;
+use gui.sim.recorder.RecorderEventKind;
+use std.testing.assert_eq_bool;
+use std.testing.assert_eq_i32;
+
+extern fn malloc(size: usize) &void;
+extern fn free(ptr: &void) void;
+
+export const TEST_SIM_APP_MODULE: i32 = 1;
+
+fn sim_expect_frame_equal(lhs: &byte, rhs: &byte, len: usize) !void {
+    var i: usize = 0usize;
+    while i < len {
+        try assert_eq_i32(lhs[i] as i32, rhs[i] as i32);
+        i = i + 1usize;
+    }
+}
+
+test "sim config defaults to auto gpu and exposes names" {
+    const cfg: SimConfig = sim_config_default();
+    try assert_eq_i32(cfg.gpu as i32, SimGpuKind.Auto as i32);
+    try assert_eq_i32(cfg.cpu_backend as i32, CpuRenderBackendKind.Immediate as i32);
+    try assert_eq_i32(cfg.width as i32, SIM_DEFAULT_RES_WIDTH as i32);
+    try assert_eq_i32(cfg.height as i32, SIM_DEFAULT_RES_HEIGHT as i32);
+    try assert_eq_i32(cfg.target_fps as i32, 60);
+    try assert_eq_bool(cfg.vsync_enabled, true);
+    try assert_eq_bool(cfg.adaptive_frame_pacing, true);
+    try assert_eq_bool(cfg.show_dirty_regions, false);
+    try assert_eq_bool(sim_cstr_eq(sim_gpu_name(SimGpuKind.Auto), "auto"), true);
+    try assert_eq_bool(sim_cstr_eq(sim_gpu_name(SimGpuKind.Software), "software"), true);
+    try assert_eq_bool(sim_cstr_eq(sim_gpu_name(SimGpuKind.Gles2), "gles2"), true);
+    try assert_eq_bool(sim_cstr_eq(sim_cpu_backend_name(CpuRenderBackendKind.Immediate), "immediate"), true);
+    try assert_eq_bool(sim_cstr_eq(sim_cpu_backend_name(CpuRenderBackendKind.Batch), "batch"), true);
+}
+
+test "sim app batch cpu backend can render direct frame" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Dashboard;
+    cfg.width = SIM_DEFAULT_RES_WIDTH;
+    cfg.height = SIM_DEFAULT_RES_HEIGHT;
+    try assert_eq_bool(app.init(cfg), true);
+
+    const pixels_len: usize = framebuffer_required_bytes(cfg.width, cfg.height, PixelFormat.ARGB8888);
+    const pixels: &byte = malloc(pixels_len) as &byte;
+    if pixels == null {
+        try assert_eq_bool(false, true);
+        return;
+    }
+    defer {
+        free(pixels as &void);
+    }
+
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(pixels, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+    var batch: DrawBatch = draw_batch_new();
+    render_ctx_attach_batch(&ctx, &batch);
+    render_ctx_set_mode(&ctx, RenderMode.Batch);
+    app.render(&ctx);
+
+    try assert_eq_bool(ctx.stats.batch_flushes > 0u32, true);
+    try assert_eq_bool(ctx.stats.text_ops > 0u32, true);
+    try assert_eq_bool(ctx.stats.line_ops > 0u32, true);
+}
+
+test "sim app renders and reacts to playback-style input" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    cfg.width = 320;
+    cfg.height = 240;
+    try assert_eq_bool(app.init(cfg), true);
+
+    var down: RecordedEvent = RecordedEvent{
+        frame_offset: 0u32,
+        kind: RecorderEventKind.TouchDown,
+        x: 40,
+        y: 80,
+        value: 0,
+        key_code: 0u16,
+        reserved: 0u16,
+    };
+    var up: RecordedEvent = RecordedEvent{
+        frame_offset: 60u32,
+        kind: RecorderEventKind.TouchUp,
+        x: 40,
+        y: 80,
+        value: 0,
+        key_code: 0u16,
+        reserved: 0u16,
+    };
+    app.handle_recorded_event(&down, 100u32);
+    app.handle_recorded_event(&up, 160u32);
+    try assert_eq_i32(app.tap_count, 1);
+
+    var wheel: RecordedEvent = RecordedEvent{
+        frame_offset: 100u32,
+        kind: RecorderEventKind.Wheel,
+        x: 40,
+        y: 80,
+        value: 2,
+        key_code: 0u16,
+        reserved: 0u16,
+    };
+    app.handle_recorded_event(&wheel, 200u32);
+    try assert_eq_bool(app.slider.get_value() > 42, true);
+
+    var key_evt: RecordedEvent = RecordedEvent{
+        frame_offset: 140u32,
+        kind: RecorderEventKind.KeyDown,
+        x: 0,
+        y: 0,
+        value: 0,
+        key_code: SIM_KEY_F11,
+        reserved: 0u16,
+    };
+    app.handle_recorded_event(&key_evt, 240u32);
+    try assert_eq_bool(app.consume_fullscreen_toggle(), true);
+
+    var pixels: [byte: 307200] = [];
+    const fb: FrameBuffer = framebuffer_new(&pixels[0], cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888);
+    var ctx: RenderCtx = render_ctx_new(fb);
+    app.render(&ctx);
+    try assert_eq_bool(ctx.stats.text_ops > 0u32, true);
+    try assert_eq_bool(ctx.stats.image_ops > 0u32, true);
+}
+
+test "phase page text input captures shortcut letters once focused" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Phase4;
+    try assert_eq_bool(app.init(cfg), true);
+
+    const input_area: Rect = app.text_input.widget.base.screen_area();
+    const input_center: Point = Point{
+        x: input_area.x + input_area.w as i16 / 2,
+        y: input_area.y + input_area.h as i16 / 2,
+    };
+    var press_evt: Event = event_point(EventType.Press, InputDev.Touch, -1, 10u32, input_center);
+    var release_evt: Event = event_point(
+        EventType.Release,
+        InputDev.Touch,
+        -1,
+        11u32,
+        Point{ x: input_center.x, y: input_center.y }
+    );
+    app.handle_translated_event(&press_evt);
+    app.handle_translated_event(&release_evt);
+
+    var key_evt: Event = event_key(EventType.KeyDown, InputDev.Keypad, -1, 12u32, 'm' as u16);
+    var repeat_evt: Event = event_key_repeat(EventType.KeyDown, InputDev.Keypad, -1, 13u32, 'm' as u16, true);
+    app.handle_translated_event(&key_evt);
+    app.handle_translated_event(&repeat_evt);
+
+    try assert_eq_i32(app.config.demo as i32, SimDemoKind.Phase4 as i32);
+    try assert_eq_bool(app.text_input.text()[0] == 'm' as byte, true);
+    try assert_eq_bool(app.text_input.text()[1] == 'm' as byte, true);
+}
+
+test "phase page text input accepts utf8 text events once focused" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Phase4;
+    try assert_eq_bool(app.init(cfg), true);
+
+    const input_area: Rect = app.text_input.widget.base.screen_area();
+    const input_center: Point = Point{
+        x: input_area.x + input_area.w as i16 / 2,
+        y: input_area.y + input_area.h as i16 / 2,
+    };
+    var press_evt: Event = event_point(
+        EventType.Press,
+        InputDev.Touch,
+        -1,
+        30u32,
+        Point{ x: input_center.x, y: input_center.y }
+    );
+    var release_evt: Event = event_point(
+        EventType.Release,
+        InputDev.Touch,
+        -1,
+        31u32,
+        Point{ x: input_center.x, y: input_center.y }
+    );
+    app.handle_translated_event(&press_evt);
+    app.handle_translated_event(&release_evt);
+
+    var text_evt: Event = event_text_input(InputDev.Text, -1, 32u32, "中文" as &const byte, 6usize);
+    app.handle_translated_event(&text_evt);
+
+    try assert_eq_i32(app.config.demo as i32, SimDemoKind.Phase4 as i32);
+    try assert_eq_bool(app.text_input.text()[0] != 0u8, true);
+}
+
+test "richtext demo editor captures typing instead of home shortcuts" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.RichText;
+    cfg.width = SIM_DEFAULT_RES_WIDTH;
+    cfg.height = SIM_DEFAULT_RES_HEIGHT;
+    try assert_eq_bool(app.init(cfg), true);
+
+    app.sync_richtext_demo();
+    try app.richtext_demo.editor.set_plain_text("" as &const byte);
+    const editor_area: Rect = app.richtext_demo.editor.widget.base.screen_area();
+    const editor_center: Point = Point{
+        x: editor_area.x + editor_area.w as i16 / 2,
+        y: editor_area.y + editor_area.h as i16 / 2,
+    };
+    var press_evt: Event = event_point(EventType.Press, InputDev.Touch, -1, 40u32, editor_center);
+    var release_evt: Event = event_point(
+        EventType.Release,
+        InputDev.Touch,
+        -1,
+        41u32,
+        Point{ x: editor_center.x, y: editor_center.y }
+    );
+    app.handle_translated_event(&press_evt);
+    app.handle_translated_event(&release_evt);
+
+    var key_evt: Event = event_key(EventType.KeyDown, InputDev.Keypad, -1, 42u32, 'd' as u16);
+    app.handle_translated_event(&key_evt);
+
+    var out: [byte: 8] = [];
+    const written: usize = app.richtext_demo.editor.plain_text(&out[0], 8usize);
+    try assert_eq_i32(app.config.demo as i32, SimDemoKind.RichText as i32);
+    try assert_eq_i32(written as i32, 1);
+    try assert_eq_bool(out[0] == 'd' as byte, true);
+}
+
+test "repeated global shortcut keydown does not retrigger toggle actions" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Phase4;
+    try assert_eq_bool(app.init(cfg), true);
+
+    var key_evt: Event = event_key(EventType.KeyDown, InputDev.Keypad, -1, 20u32, 'r' as u16);
+    var repeat_evt: Event = event_key_repeat(EventType.KeyDown, InputDev.Keypad, -1, 21u32, 'r' as u16, true);
+    app.handle_translated_event(&key_evt);
+    app.handle_translated_event(&repeat_evt);
+
+    try assert_eq_bool(app.recorder.recording, true);
+    try assert_eq_i32(app.recorder.event_count as i32, 1);
+    try assert_eq_i32(app.recorder.events[0].key_code as i32, 'r' as i32);
+    try assert_eq_i32(app.recorder.events[0].reserved as i32, 1);
+}
+
+test "sim app retained render repaints only affected phase widgets" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Phase4;
+    cfg.width = 320;
+    cfg.height = 240;
+    try assert_eq_bool(app.init(cfg), true);
+    try assert_eq_bool(app.supports_dirty_render(), true);
+
+    const pixels_len: usize = framebuffer_required_bytes(cfg.width, cfg.height, PixelFormat.ARGB8888);
+    const partial_bytes: &byte = malloc(pixels_len) as &byte;
+    const expected_bytes: &byte = malloc(pixels_len) as &byte;
+    const frame_a_bytes: &byte = malloc(pixels_len) as &byte;
+    if partial_bytes == null || expected_bytes == null || frame_a_bytes == null {
+        if partial_bytes != null {
+            free(partial_bytes as &void);
+        }
+        if expected_bytes != null {
+            free(expected_bytes as &void);
+        }
+        if frame_a_bytes != null {
+            free(frame_a_bytes as &void);
+        }
+        try assert_eq_bool(false, true);
+        return;
+    }
+    defer {
+        free(partial_bytes as &void);
+        free(expected_bytes as &void);
+        free(frame_a_bytes as &void);
+    }
+
+    app.refresh_status_label("状态 A");
+    var frame_a_ctx: RenderCtx = render_ctx_new(framebuffer_new(frame_a_bytes, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+    _ = app.render_retained(&frame_a_ctx, true);
+
+    var partial_copy_fb: FrameBuffer = framebuffer_new(partial_bytes, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888);
+    try assert_eq_bool(framebuffer_copy(&partial_copy_fb, &frame_a_ctx.fb), true);
+    app.refresh_status_label("状态 B");
+    var partial_ctx: RenderCtx = render_ctx_new(framebuffer_new(partial_bytes, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+    _ = app.render_retained(&partial_ctx, false);
+
+    const expected_app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(expected_app != null, true);
+    defer {
+        sim_app_free(expected_app);
+    }
+    try assert_eq_bool(expected_app.init(cfg), true);
+    expected_app.refresh_status_label("状态 A");
+    var warm_expected_ctx: RenderCtx = render_ctx_new(framebuffer_new(frame_a_bytes, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+    _ = expected_app.render_retained(&warm_expected_ctx, true);
+    expected_app.refresh_status_label("状态 B");
+    var expected_ctx: RenderCtx = render_ctx_new(framebuffer_new(expected_bytes, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+    _ = expected_app.render_retained(&expected_ctx, true);
+
+    try sim_expect_frame_equal(partial_bytes, expected_bytes, pixels_len);
+    try assert_eq_bool(partial_ctx.stats.image_ops == 0u32, true);
+    try assert_eq_bool(expected_ctx.stats.image_ops > 0u32, true);
+    try assert_eq_bool(partial_ctx.stats.text_ops < expected_ctx.stats.text_ops, true);
+}
+
+test "sim app can render standalone dashboard demo mode" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    const width: u16 = SIM_DEFAULT_RES_WIDTH;
+    const height: u16 = SIM_DEFAULT_RES_HEIGHT;
+    cfg.demo = SimDemoKind.Dashboard;
+    cfg.width = width;
+    cfg.height = height;
+    try assert_eq_bool(app.init(cfg), true);
+
+    const pixels_len: usize = framebuffer_required_bytes(width, height, PixelFormat.ARGB8888);
+    const pixels: &byte = malloc(pixels_len) as &byte;
+    if pixels == null {
+        try assert_eq_bool(false, true);
+        return;
+    }
+    defer {
+        free(pixels as &void);
+    }
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(pixels, width, height, width * 4u16, PixelFormat.ARGB8888));
+    app.render(&ctx);
+    try assert_eq_bool(ctx.stats.text_ops > 0u32, true);
+    try assert_eq_bool(ctx.stats.line_ops > 0u32, true);
+}
+
+test "standalone music demo reacts to touch click" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Music;
+    cfg.width = SIM_DEFAULT_RES_WIDTH;
+    cfg.height = SIM_DEFAULT_RES_HEIGHT;
+    try assert_eq_bool(app.init(cfg), true);
+    try assert_eq_bool(app.music_playing, false);
+
+    var click_evt: Event = event_point(EventType.Click, InputDev.Touch, -1, 40u32, Point{ x: sim_layout_x(64), y: sim_layout_y(260) });
+    app.handle_translated_event(&click_evt);
+    try assert_eq_bool(app.music_playing, true);
+}
+
+test "standalone animation demo renders and toggles playback" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Animation;
+    cfg.width = SIM_DEFAULT_RES_WIDTH;
+    cfg.height = SIM_DEFAULT_RES_HEIGHT;
+    try assert_eq_bool(app.init(cfg), true);
+    try assert_eq_bool(app.animation_demo.playing, true);
+
+    const pixels_len: usize = framebuffer_required_bytes(cfg.width, cfg.height, PixelFormat.ARGB8888);
+    const pixels: &byte = malloc(pixels_len) as &byte;
+    if pixels == null {
+        try assert_eq_bool(false, true);
+        return;
+    }
+    defer {
+        free(pixels as &void);
+    }
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(pixels, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+    app.render(&ctx);
+    try assert_eq_bool(ctx.stats.text_ops > 0u32, true);
+    try assert_eq_bool(ctx.stats.rect_ops > 0u32, true);
+
+    const transition_rect: Rect = animation_demo_section_rect(2);
+    var transition_click: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        -1,
+        32u32,
+        Point{
+            x: app.current_demo_origin_x() + transition_rect.x + transition_rect.w as i16 / 2,
+            y: app.current_demo_origin_y() + transition_rect.y + transition_rect.h as i16 / 2,
+        }
+    );
+    app.handle_translated_event(&transition_click);
+    try assert_eq_i32(app.animation_demo.current_view, 2);
+
+    const toggle_rect: Rect = animation_demo_toggle_rect();
+    var toggle_click: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        -1,
+        40u32,
+        Point{
+            x: app.current_demo_origin_x() + toggle_rect.x + toggle_rect.w as i16 / 2,
+            y: app.current_demo_origin_y() + toggle_rect.y + toggle_rect.h as i16 / 2,
+        }
+    );
+    app.handle_translated_event(&toggle_click);
+    try assert_eq_bool(app.animation_demo.playing, false);
+
+    const paused_x: i32 = app.animation_demo.easing_pills[0].widget.base.x as i32;
+    app.update(32u32, 132u32);
+    try assert_eq_i32(app.animation_demo.easing_pills[0].widget.base.x as i32, paused_x);
+
+    app.handle_translated_event(&toggle_click);
+    try assert_eq_bool(app.animation_demo.playing, true);
+    app.update(32u32, 164u32);
+    try assert_eq_bool(app.animation_demo.easing_pills[0].widget.base.x as i32 != paused_x, true);
+
+    const replay_rect: Rect = animation_demo_replay_rect();
+    var replay_click: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        -1,
+        196u32,
+        Point{
+            x: app.current_demo_origin_x() + replay_rect.x + replay_rect.w as i16 / 2,
+            y: app.current_demo_origin_y() + replay_rect.y + replay_rect.h as i16 / 2,
+        }
+    );
+    app.handle_translated_event(&replay_click);
+    try assert_eq_i32(app.animation_demo.cycle_count, 1);
+
+    const easing_rect: Rect = animation_demo_section_rect(0);
+    var easing_click: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        -1,
+        212u32,
+        Point{
+            x: app.current_demo_origin_x() + easing_rect.x + easing_rect.w as i16 / 2,
+            y: app.current_demo_origin_y() + easing_rect.y + easing_rect.h as i16 / 2,
+        }
+    );
+    app.handle_translated_event(&easing_click);
+    try assert_eq_i32(app.animation_demo.current_view, 0);
+}
+
+test "standalone dashboard and 2048 demos react to touch and playback taps" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Dashboard;
+    cfg.width = SIM_DEFAULT_RES_WIDTH;
+    cfg.height = SIM_DEFAULT_RES_HEIGHT;
+    try assert_eq_bool(app.init(cfg), true);
+
+    const pixels_len: usize = framebuffer_required_bytes(cfg.width, cfg.height, PixelFormat.ARGB8888);
+    const pixels: &byte = malloc(pixels_len) as &byte;
+    if pixels == null {
+        try assert_eq_bool(false, true);
+        return;
+    }
+    defer {
+        free(pixels as &void);
+    }
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(pixels, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+    app.render(&ctx);
+
+    const net_area: Rect = app.dashboard_retained.net.widget.base.screen_area();
+    var dashboard_click: Event = event_point(EventType.Click, InputDev.Touch, -1, 40u32, Point{ x: net_area.x + net_area.w as i16 / 2, y: net_area.y + net_area.h as i16 / 2 });
+    app.handle_translated_event(&dashboard_click);
+    try assert_eq_i32(app.dashboard_metric, 1);
+
+    app.switch_demo(SimDemoKind.Game, "test");
+    app.game_demo = game_retained_new();
+    app.game_demo.ready = true;
+    app.game_demo.rng_state = 11u32;
+    app.game_demo.board[0] = 2;
+    app.game_demo.board[1] = 2;
+
+    app.handle_key_event(SIM_KEY_LEFT, true, 50u32, false, false);
+    try assert_eq_i32(app.game_demo.board[0], 4);
+    try assert_eq_i32(app.game_demo.score, 4);
+
+    app.game_demo = game_retained_new();
+    app.game_demo.ready = true;
+    app.game_demo.rng_state = 19u32;
+    app.game_demo.board[0] = 2;
+    app.game_demo.board[4] = 2;
+    var press_evt: Event = event_point(EventType.Press, InputDev.Touch, -1, 60u32, Point{ x: 160, y: 260 });
+    var release_evt: Event = event_point(EventType.Release, InputDev.Touch, -1, 72u32, Point{ x: 160, y: 180 });
+    app.handle_translated_event(&press_evt);
+    app.handle_translated_event(&release_evt);
+    try assert_eq_i32(app.game_demo.board[0], 4);
+    try assert_eq_i32(app.game_demo.score, 4);
+
+    app.game_demo = game_retained_new();
+    app.game_demo.ready = true;
+    app.game_demo.rng_state = 27u32;
+    app.game_demo.board[0] = 2;
+    app.game_demo.board[4] = 2;
+    var down: RecordedEvent = RecordedEvent{
+        frame_offset: 0u32,
+        kind: RecorderEventKind.TouchDown,
+        x: 160,
+        y: 260,
+        value: 0,
+        key_code: 0u16,
+        reserved: 0u16,
+    };
+    var up: RecordedEvent = RecordedEvent{
+        frame_offset: 10u32,
+        kind: RecorderEventKind.TouchUp,
+        x: 160,
+        y: 180,
+        value: 0,
+        key_code: 0u16,
+        reserved: 0u16,
+    };
+    app.handle_recorded_event(&down, 100u32);
+    app.handle_recorded_event(&up, 110u32);
+    try assert_eq_i32(app.game_demo.board[0], 4);
+    try assert_eq_i32(app.game_demo.score, 4);
+}
+
+test "standalone doudizhu demo reacts to bid click" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Doudizhu;
+    cfg.width = SIM_DEFAULT_RES_WIDTH;
+    cfg.height = SIM_DEFAULT_RES_HEIGHT;
+    try assert_eq_bool(app.init(cfg), true);
+
+    var bid_click: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        -1,
+        40u32,
+        Point{
+            x: sim_layout_x(156) + sim_layout_w(76u16) as i16 / 2 + sim_layout_x(84),
+            y: sim_layout_y(304) + sim_layout_h(34u16) as i16 / 2,
+        }
+    );
+    app.handle_translated_event(&bid_click);
+    try assert_eq_i32(app.doudizhu_page.game.bid_turns, 1);
+    try assert_eq_i32(app.doudizhu_page.game.highest_bid, 1);
+    try assert_eq_i32(app.doudizhu_page.game.current_player, 1);
+}
+
+test "standalone doudizhu demo resolves topmost bid before lower controls" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Doudizhu;
+    cfg.width = SIM_DEFAULT_RES_WIDTH;
+    cfg.height = SIM_DEFAULT_RES_HEIGHT;
+    try assert_eq_bool(app.init(cfg), true);
+
+    var bid_click: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        -1,
+        40u32,
+        Point{
+            x: sim_layout_x(156) + sim_layout_w(76u16) as i16 / 2 + sim_layout_x(84) * 3,
+            y: sim_layout_y(304) + sim_layout_h(34u16) as i16 / 2,
+        }
+    );
+    app.handle_translated_event(&bid_click);
+
+    try assert_eq_i32(app.doudizhu_page.game.bid_turns, 1);
+    try assert_eq_i32(app.doudizhu_page.game.highest_bid, 3);
+    try assert_eq_i32(app.doudizhu_page.game.landlord, 0);
+    try assert_eq_i32(app.doudizhu_page.game.current_player, 0);
+}
+
+test "standalone doudizhu demo stays centered in larger window" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Doudizhu;
+    cfg.width = SIM_DEFAULT_RES_WIDTH + 160u16;
+    cfg.height = SIM_DEFAULT_RES_HEIGHT + 120u16;
+    try assert_eq_bool(app.init(cfg), true);
+
+    const pixels_len: usize = framebuffer_required_bytes(cfg.width, cfg.height, PixelFormat.ARGB8888);
+    const pixels: &byte = malloc(pixels_len) as &byte;
+    if pixels == null {
+        try assert_eq_bool(false, true);
+        return;
+    }
+    defer {
+        free(pixels as &void);
+    }
+
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(pixels, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+    app.render(&ctx);
+
+    const outer_bg: Color = Color{ r: 226, g: 232, b: 240, a: 255 };
+    try assert_eq_bool(ctx_pixel(&ctx, 4, 4) == outer_bg, true);
+
+    const origin_x: i16 = (((cfg.width as i32 - SIM_DEFAULT_RES_WIDTH as i32) / 2) as! i16).value;
+    const origin_y: i16 = (((cfg.height as i32 - SIM_DEFAULT_RES_HEIGHT as i32) / 2) as! i16).value;
+    try assert_eq_bool(ctx_pixel(&ctx, origin_x + 4, origin_y + 4) == outer_bg, false);
+}
+
+test "standalone novel demo exposes 10k+ chinese text and supports scrolling" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Novel;
+    cfg.width = SIM_DEFAULT_RES_WIDTH;
+    cfg.height = SIM_DEFAULT_RES_HEIGHT;
+    try assert_eq_bool(app.init(cfg), true);
+
+    const pixels_len: usize = framebuffer_required_bytes(cfg.width, cfg.height, PixelFormat.ARGB8888);
+    const pixels: &byte = malloc(pixels_len) as &byte;
+    if pixels == null {
+        try assert_eq_bool(false, true);
+        return;
+    }
+    defer {
+        free(pixels as &void);
+    }
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(pixels, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+    app.render(&ctx);
+    try assert_eq_bool(ctx.stats.text_ops > 0u32, true);
+    try assert_eq_bool(app.novel_demo.char_count > 10000, true);
+    try assert_eq_bool(app.novel_demo.line_count > 200, true);
+
+    const scroll_before: i32 = app.novel_demo.scroll_y;
+    app.handle_wheel_event(-2, 80u32, false);
+    try assert_eq_bool(app.novel_demo.scroll_y > scroll_before, true);
+
+    try assert_eq_bool(app.novel_demo.auto_scroll, false);
+    app.handle_key_event(SIM_KEY_SPACE, true, 100u32, false, false);
+    try assert_eq_bool(app.novel_demo.auto_scroll, true);
+}
+
+test "standalone widgets and custom demos render showcase content" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Widgets;
+    cfg.width = SIM_DEFAULT_RES_WIDTH;
+    cfg.height = SIM_DEFAULT_RES_HEIGHT;
+    try assert_eq_bool(app.init(cfg), true);
+
+    const pixels_len: usize = framebuffer_required_bytes(cfg.width, cfg.height, PixelFormat.ARGB8888);
+    const pixels: &byte = malloc(pixels_len) as &byte;
+    if pixels == null {
+        try assert_eq_bool(false, true);
+        return;
+    }
+    defer {
+        free(pixels as &void);
+    }
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(pixels, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+    app.render(&ctx);
+    try assert_eq_bool(ctx.stats.text_ops > 0u32, true);
+    try assert_eq_bool(ctx.stats.image_ops > 0u32, true);
+
+    app.switch_demo(SimDemoKind.Custom, "test");
+    ctx.clear(Color{ r: 0, g: 0, b: 0, a: 255 });
+    app.render(&ctx);
+    try assert_eq_bool(ctx.stats.text_ops > 0u32, true);
+    try assert_eq_bool(ctx.stats.image_ops > 0u32, true);
+}
+
+test "widgets demo back to home keeps phase controls clickable" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Widgets;
+    cfg.width = SIM_DEFAULT_RES_WIDTH;
+    cfg.height = SIM_DEFAULT_RES_HEIGHT;
+    try assert_eq_bool(app.init(cfg), true);
+
+    const back: Rect = app.standalone_back_button_rect();
+    var back_click: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        -1,
+        40u32,
+        Point{
+            x: back.x + back.w as i16 / 2,
+            y: back.y + back.h as i16 / 2,
+        }
+    );
+    app.handle_translated_event(&back_click);
+    try assert_eq_i32(app.config.demo as i32, SimDemoKind.Phase4 as i32);
+
+    const action: Rect = app.action_button.widget.base.screen_area();
+    var press_evt: Event = event_point(
+        EventType.Press,
+        InputDev.Touch,
+        -1,
+        60u32,
+        Point{
+            x: action.x + action.w as i16 / 2,
+            y: action.y + action.h as i16 / 2,
+        }
+    );
+    var release_evt: Event = event_point(
+        EventType.Release,
+        InputDev.Touch,
+        -1,
+        72u32,
+        Point{
+            x: action.x + action.w as i16 / 2,
+            y: action.y + action.h as i16 / 2,
+        }
+    );
+    var click_evt: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        -1,
+        73u32,
+        Point{
+            x: action.x + action.w as i16 / 2,
+            y: action.y + action.h as i16 / 2,
+        }
+    );
+    app.handle_translated_event(&press_evt);
+    app.handle_translated_event(&release_evt);
+    app.handle_translated_event(&click_evt);
+    try assert_eq_i32(app.tap_count, 1);
+}
+
+test "widgets retained click matches full redraw for outlined selection" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Widgets;
+    cfg.width = SIM_DEFAULT_RES_WIDTH;
+    cfg.height = SIM_DEFAULT_RES_HEIGHT;
+    try assert_eq_bool(app.init(cfg), true);
+    try assert_eq_bool(app.supports_dirty_render(), true);
+
+    const pixels_len: usize = framebuffer_required_bytes(cfg.width, cfg.height, PixelFormat.ARGB8888);
+    const partial_bytes: &byte = malloc(pixels_len) as &byte;
+    const expected_bytes: &byte = malloc(pixels_len) as &byte;
+    const frame_a_bytes: &byte = malloc(pixels_len) as &byte;
+    if partial_bytes == null || expected_bytes == null || frame_a_bytes == null {
+        if partial_bytes != null {
+            free(partial_bytes as &void);
+        }
+        if expected_bytes != null {
+            free(expected_bytes as &void);
+        }
+        if frame_a_bytes != null {
+            free(frame_a_bytes as &void);
+        }
+        try assert_eq_bool(false, true);
+        return;
+    }
+    defer {
+        free(partial_bytes as &void);
+        free(expected_bytes as &void);
+        free(frame_a_bytes as &void);
+    }
+
+    var frame_a_ctx: RenderCtx = render_ctx_new(framebuffer_new(frame_a_bytes, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+    _ = app.render_retained(&frame_a_ctx, true);
+
+    var partial_fb: FrameBuffer = framebuffer_new(partial_bytes, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888);
+    try assert_eq_bool(framebuffer_copy(&partial_fb, &frame_a_ctx.fb), true);
+
+    const click_x: i16 = app.current_demo_origin_x() + sim_layout_x(20) + sim_layout_x(148) + sim_layout_w(122u16) as i16 / 2;
+    const click_y: i16 = app.current_demo_origin_y() + sim_layout_y(96) + sim_layout_y(48) + sim_layout_h(40u16) as i16 / 2;
+    var outlined_click: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        -1,
+        48u32,
+        Point{ x: click_x, y: click_y }
+    );
+    app.handle_translated_event(&outlined_click);
+
+    var partial_ctx: RenderCtx = render_ctx_new(partial_fb);
+    _ = app.render_retained(&partial_ctx, false);
+
+    const expected_app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(expected_app != null, true);
+    defer {
+        sim_app_free(expected_app);
+    }
+    try assert_eq_bool(expected_app.init(cfg), true);
+    expected_app.widgets_control_idx = 1;
+    expected_app.refresh_status_label("Outlined 按钮已触发");
+    var expected_ctx: RenderCtx = render_ctx_new(framebuffer_new(expected_bytes, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+    _ = expected_app.render_retained(&expected_ctx, true);
+
+    try sim_expect_frame_equal(partial_bytes, expected_bytes, pixels_len);
+}
+
+test "widgets demo action buttons keep full bottom borders visible" {
+    const pixels_len: usize = framebuffer_required_bytes(SIM_DEFAULT_RES_WIDTH, SIM_DEFAULT_RES_HEIGHT, PixelFormat.ARGB8888);
+    const pixels: &byte = malloc(pixels_len) as &byte;
+    if pixels == null {
+        try assert_eq_bool(false, true);
+        return;
+    }
+    defer {
+        free(pixels as &void);
+    }
+
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(pixels, SIM_DEFAULT_RES_WIDTH, SIM_DEFAULT_RES_HEIGHT, SIM_DEFAULT_RES_WIDTH * 4u16, PixelFormat.ARGB8888));
+    var widgets: WidgetsRetained = widgets_retained_new();
+    const blue_expect: Color = Color{ r: 33, g: 126, b: 227, a: 255 };
+    const ship_border_expect: Color = Color{ r: 25, g: 95, b: 169, a: 255 };
+
+    ctx.clear(Color{ r: 244, g: 247, b: 251, a: 255 });
+    render_demo_widgets_retained_state(&widgets, &ctx, 0, 0, 0, 72, true, 2, 1, "Widget showcase static preview");
+
+    const archive_area: Rect = widgets.archive_btn.widget.base.screen_area();
+    const archive_center_x: i16 = archive_area.x + archive_area.w as i16 / 2;
+    const archive_bottom_y: i16 = archive_area.y + archive_area.h as i16 - 1;
+    try assert_eq_bool(ctx_pixel(&ctx, archive_center_x, archive_area.y) == blue_expect, true);
+    try assert_eq_bool(ctx_pixel(&ctx, archive_center_x, archive_bottom_y) == blue_expect, true);
+
+    const ship_area: Rect = widgets.ship_btn.widget.base.screen_area();
+    const ship_center_x: i16 = ship_area.x + ship_area.w as i16 / 2;
+    const ship_bottom_y: i16 = ship_area.y + ship_area.h as i16 - 1;
+    try assert_eq_bool(ctx_pixel(&ctx, ship_center_x, ship_bottom_y) == ship_border_expect, true);
+}
+
+test "widgets demo quiet action keeps visible outlined border" {
+    const pixels_len: usize = framebuffer_required_bytes(SIM_DEFAULT_RES_WIDTH, SIM_DEFAULT_RES_HEIGHT, PixelFormat.ARGB8888);
+    const pixels: &byte = malloc(pixels_len) as &byte;
+    if pixels == null {
+        try assert_eq_bool(false, true);
+        return;
+    }
+    defer {
+        free(pixels as &void);
+    }
+
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(pixels, SIM_DEFAULT_RES_WIDTH, SIM_DEFAULT_RES_HEIGHT, SIM_DEFAULT_RES_WIDTH * 4u16, PixelFormat.ARGB8888));
+    var widgets: WidgetsRetained = widgets_retained_new();
+    const blue_expect: Color = Color{ r: 33, g: 126, b: 227, a: 255 };
+
+    ctx.clear(Color{ r: 244, g: 247, b: 251, a: 255 });
+    render_demo_widgets_retained_state(&widgets, &ctx, 0, 0, 0, 72, true, 2, 1, "Widget showcase static preview");
+
+    const quiet_area: Rect = widgets.text_btn.widget.base.screen_area();
+    const quiet_center_x: i16 = quiet_area.x + quiet_area.w as i16 / 2;
+    const quiet_bottom_y: i16 = quiet_area.y + quiet_area.h as i16 - 1;
+    try assert_eq_bool(ctx_pixel(&ctx, quiet_center_x, quiet_area.y) == blue_expect, true);
+    try assert_eq_bool(ctx_pixel(&ctx, quiet_center_x, quiet_bottom_y) == blue_expect, true);
+}
+
+test "home nav buttons and standalone back button switch demos" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    cfg.width = SIM_DEFAULT_RES_WIDTH;
+    cfg.height = SIM_DEFAULT_RES_HEIGHT;
+    try assert_eq_bool(app.init(cfg), true);
+
+    const clock_rect: Rect = app.home_nav_button_rect(0);
+    var open_clock: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        -1,
+        40u32,
+        Point{ x: clock_rect.x + clock_rect.w as i16 / 2, y: clock_rect.y + clock_rect.h as i16 / 2 }
+    );
+    app.handle_translated_event(&open_clock);
+    try assert_eq_i32(app.config.demo as i32, SimDemoKind.Clock as i32);
+
+    const back_rect: Rect = app.standalone_back_button_rect();
+    var back_home: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        -1,
+        72u32,
+        Point{ x: back_rect.x + back_rect.w as i16 / 2, y: back_rect.y + back_rect.h as i16 / 2 }
+    );
+    app.handle_translated_event(&back_home);
+    try assert_eq_i32(app.config.demo as i32, sim_config_default().demo as i32);
+}
+
+test "repeated home dashboard back cycles keep phase home stable" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    cfg.width = SIM_DEFAULT_RES_WIDTH;
+    cfg.height = SIM_DEFAULT_RES_HEIGHT;
+    try assert_eq_bool(app.init(cfg), true);
+
+    const pixels_len: usize = framebuffer_required_bytes(cfg.width, cfg.height, PixelFormat.ARGB8888);
+    const pixels: &byte = malloc(pixels_len) as &byte;
+    if pixels == null {
+        try assert_eq_bool(false, true);
+        return;
+    }
+    defer {
+        free(pixels as &void);
+    }
+
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(pixels, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+    _ = app.render_retained(&ctx, true);
+
+    var cycle: i32 = 0;
+    while cycle < 3 {
+        const dashboard_rect: Rect = app.home_nav_button_rect(3);
+        var open_dashboard: Event = event_point(
+            EventType.Click,
+            InputDev.Touch,
+            -1,
+            (40 + cycle * 40) as u32,
+            Point{ x: dashboard_rect.x + dashboard_rect.w as i16 / 2, y: dashboard_rect.y + dashboard_rect.h as i16 / 2 }
+        );
+        app.handle_translated_event(&open_dashboard);
+        try assert_eq_i32(app.config.demo as i32, SimDemoKind.Dashboard as i32);
+
+        ctx = render_ctx_new(framebuffer_new(pixels, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+        _ = app.render_retained(&ctx, true);
+
+        const back_rect: Rect = app.standalone_back_button_rect();
+        var back_home: Event = event_point(
+            EventType.Click,
+            InputDev.Touch,
+            -1,
+            (72 + cycle * 40) as u32,
+            Point{ x: back_rect.x + back_rect.w as i16 / 2, y: back_rect.y + back_rect.h as i16 / 2 }
+        );
+        app.handle_translated_event(&back_home);
+        try assert_eq_i32(app.config.demo as i32, SimDemoKind.Phase4 as i32);
+
+        ctx = render_ctx_new(framebuffer_new(pixels, cfg.width, cfg.height, cfg.width * 4u16, PixelFormat.ARGB8888));
+        _ = app.render_retained(&ctx, true);
+        cycle = cycle + 1;
+    }
+
+    const action: Rect = app.action_button.widget.base.screen_area();
+    var press_evt: Event = event_point(
+        EventType.Press,
+        InputDev.Touch,
+        -1,
+        240u32,
+        Point{ x: action.x + action.w as i16 / 2, y: action.y + action.h as i16 / 2 }
+    );
+    var release_evt: Event = event_point(
+        EventType.Release,
+        InputDev.Touch,
+        -1,
+        252u32,
+        Point{ x: action.x + action.w as i16 / 2, y: action.y + action.h as i16 / 2 }
+    );
+    var click_evt: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        -1,
+        253u32,
+        Point{ x: action.x + action.w as i16 / 2, y: action.y + action.h as i16 / 2 }
+    );
+    app.handle_translated_event(&press_evt);
+    app.handle_translated_event(&release_evt);
+    app.handle_translated_event(&click_evt);
+    try assert_eq_i32(app.tap_count, 1);
+}
+
+test "widgets and custom demos react to mouse clicks" {
+    const app: &SimApp = sim_app_alloc();
+    try assert_eq_bool(app != null, true);
+    defer {
+        sim_app_free(app);
+    }
+    var cfg: SimConfig = sim_config_default();
+    cfg.demo = SimDemoKind.Widgets;
+    cfg.width = SIM_DEFAULT_RES_WIDTH;
+    cfg.height = SIM_DEFAULT_RES_HEIGHT;
+    try assert_eq_bool(app.init(cfg), true);
+
+    var widgets_slider_click: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        -1,
+        40u32,
+        Point{
+            x: sim_layout_x(20) + sim_layout_x(16) + sim_layout_w(132u16) as i16,
+            y: sim_layout_y(96) + sim_layout_y(148) + sim_layout_h(9u16) as i16,
+        }
+    );
+    app.handle_translated_event(&widgets_slider_click);
+    try assert_eq_bool(app.widgets_volume != 72, true);
+
+    var widgets_list_click: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        -1,
+        56u32,
+        Point{
+            x: sim_layout_x(20) + sim_layout_x(32),
+            y: sim_layout_y(274) + sim_layout_y(72) + 86,
+        }
+    );
+    app.handle_translated_event(&widgets_list_click);
+    try assert_eq_bool(app.widgets_selected_item != 2, true);
+
+    app.switch_demo(SimDemoKind.Custom, "test");
+    var custom_gauge_click: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        -1,
+        72u32,
+        Point{
+            x: sim_layout_x(20) + sim_layout_x(40),
+            y: sim_layout_y(96) + sim_layout_y(84),
+        }
+    );
+    app.handle_translated_event(&custom_gauge_click);
+    try assert_eq_bool(app.custom_gauge_cpu != 32, true);
+
+    var custom_key_click: Event = event_point(
+        EventType.Click,
+        InputDev.Touch,
+        -1,
+        88u32,
+        Point{
+            x: sim_layout_x(316) + sim_layout_x(28),
+            y: sim_layout_y(96) + sim_layout_y(92),
+        }
+    );
+    app.handle_translated_event(&custom_key_click);
+    try assert_eq_bool(app.custom_input_len > 12, true);
+}

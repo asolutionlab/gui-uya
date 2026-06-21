@@ -20,7 +20,7 @@
 - 入口与验证
   - 新增 `phase6_smoke`
   - 新增 `test_phase6_examples`
-  - `make build` 默认 smoke 入口切换到 `gui/phase6_smoke.uya`
+  - `make build` 默认 smoke 入口切换到 `apps/phase6_smoke.uya`
 - CI / 工具
   - 新增 `make docs-api`
   - CI 增加 API 文档生成步骤
@@ -38,13 +38,13 @@
 
 ## 示例入口
 
-- [demo_clock.uya](/home/winger/uya/gui-uya/gui/examples/demo_clock.uya:1)
-- [demo_music.uya](/home/winger/uya/gui-uya/gui/examples/demo_music.uya:1)
-- [demo_settings.uya](/home/winger/uya/gui-uya/gui/examples/demo_settings.uya:1)
-- [demo_dashboard.uya](/home/winger/uya/gui-uya/gui/examples/demo_dashboard.uya:1)
-- [demo_game.uya](/home/winger/uya/gui-uya/gui/examples/demo_game.uya:1)
-- [demo_perf.uya](/home/winger/uya/gui-uya/gui/examples/demo_perf.uya:1)
-- [phase6_smoke.uya](/home/winger/uya/gui-uya/gui/examples/phase6_smoke.uya:1)
+- [demo_clock.uya](/home/winger/uya/gui-uya/examples/demo_clock.uya:1)
+- [demo_music.uya](/home/winger/uya/gui-uya/examples/demo_music.uya:1)
+- [demo_settings.uya](/home/winger/uya/gui-uya/examples/demo_settings.uya:1)
+- [demo_dashboard.uya](/home/winger/uya/gui-uya/examples/demo_dashboard.uya:1)
+- [demo_game.uya](/home/winger/uya/gui-uya/examples/demo_game.uya:1)
+- [demo_perf.uya](/home/winger/uya/gui-uya/examples/demo_perf.uya:1)
+- [phase6_smoke.uya](/home/winger/uya/gui-uya/examples/phase6_smoke.uya:1)
 
 ## 验证结果
 

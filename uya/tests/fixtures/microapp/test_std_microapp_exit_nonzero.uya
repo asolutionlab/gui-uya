@@ -1,5 +1,0 @@
-use std.runtime.entry;
-
-export fn main() i32 {
-    return 7;
-}

@@ -1,0 +1,846 @@
+use gui.core.color.BLACK;
+use gui.core.color.Color;
+use gui.core.color.TRANSPARENT;
+use gui.core.color.WHITE;
+use gui.style.MAX_STYLE_EXT_PROPS;
+use gui.style.StyleProp;
+
+const STYLE_BG_COLOR_FLAG: u64 = 1u64 << 0;
+const STYLE_FG_COLOR_FLAG: u64 = 1u64 << 1;
+const STYLE_BORDER_COLOR_FLAG: u64 = 1u64 << 2;
+const STYLE_SHADOW_COLOR_FLAG: u64 = 1u64 << 3;
+const STYLE_WIDTH_FLAG: u64 = 1u64 << 4;
+const STYLE_HEIGHT_FLAG: u64 = 1u64 << 5;
+const STYLE_MIN_WIDTH_FLAG: u64 = 1u64 << 6;
+const STYLE_MIN_HEIGHT_FLAG: u64 = 1u64 << 7;
+const STYLE_MAX_WIDTH_FLAG: u64 = 1u64 << 8;
+const STYLE_MAX_HEIGHT_FLAG: u64 = 1u64 << 9;
+const STYLE_BORDER_WIDTH_FLAG: u64 = 1u64 << 10;
+const STYLE_RADIUS_FLAG: u64 = 1u64 << 11;
+const STYLE_PADDING_TOP_FLAG: u64 = 1u64 << 12;
+const STYLE_PADDING_RIGHT_FLAG: u64 = 1u64 << 13;
+const STYLE_PADDING_BOTTOM_FLAG: u64 = 1u64 << 14;
+const STYLE_PADDING_LEFT_FLAG: u64 = 1u64 << 15;
+const STYLE_MARGIN_TOP_FLAG: u64 = 1u64 << 16;
+const STYLE_MARGIN_RIGHT_FLAG: u64 = 1u64 << 17;
+const STYLE_MARGIN_BOTTOM_FLAG: u64 = 1u64 << 18;
+const STYLE_MARGIN_LEFT_FLAG: u64 = 1u64 << 19;
+const STYLE_FONT_SIZE_FLAG: u64 = 1u64 << 20;
+const STYLE_OPACITY_FLAG: u64 = 1u64 << 21;
+const STYLE_FONT_FLAG: u64 = 1u64 << 22;
+
+fn style_has_flag(mask: u64, flag: u64) bool {
+    return (mask & flag) != 0u64;
+}
+
+fn style_entry_write_value(entry: &StyleEntry, out_value: &StyleValue) bool {
+    match entry.kind {
+        StyleValueKind.Color => {
+            out_value[0] = StyleValue.color(entry.color);
+            return true;
+        },
+        StyleValueKind.I32 => {
+            out_value[0] = StyleValue.i(entry.i);
+            return true;
+        },
+        StyleValueKind.U32 => {
+            out_value[0] = StyleValue.u(entry.u);
+            return true;
+        },
+        StyleValueKind.Bool => {
+            out_value[0] = StyleValue.b(entry.b);
+            return true;
+        },
+        StyleValueKind.Ptr => {
+            out_value[0] = StyleValue.ptr(entry.ptr);
+            return true;
+        },
+        else => {},
+    };
+    return false;
+}
+
+fn style_entry_from_value(prop: StyleProp, value: StyleValue) StyleEntry {
+    var entry: StyleEntry = StyleEntry{
+        prop: prop,
+        kind: StyleValueKind.Empty,
+        color: TRANSPARENT,
+        i: 0,
+        u: 0u32,
+        b: false,
+        ptr: null,
+    };
+
+    match value {
+        .color(v) => {
+            entry.kind = StyleValueKind.Color;
+            entry.color = v;
+        },
+        .i(v) => {
+            entry.kind = StyleValueKind.I32;
+            entry.i = v;
+        },
+        .u(v) => {
+            entry.kind = StyleValueKind.U32;
+            entry.u = v;
+        },
+        .b(v) => {
+            entry.kind = StyleValueKind.Bool;
+            entry.b = v;
+        },
+        .ptr(v) => {
+            entry.kind = StyleValueKind.Ptr;
+            entry.ptr = v;
+        },
+    };
+    return entry;
+}
+
+fn style_set_ext_entry(self: &Style, entry: &StyleEntry) void {
+    var i: i32 = 0;
+    while i < self.ext_count as i32 {
+        if self.ext_props[i].prop == entry.prop {
+            self.ext_props[i] = entry[0];
+            return;
+        }
+        i = i + 1;
+    }
+
+    if self.ext_count < MAX_STYLE_EXT_PROPS as u8 {
+        const slot: usize = (self.ext_count as! usize).value;
+        if slot < (MAX_STYLE_EXT_PROPS as usize) {
+            self.ext_props[slot] = entry[0];
+            self.ext_count = self.ext_count + 1;
+        }
+    }
+}
+
+fn style_assign_value(dst: &Style, prop: StyleProp, value: StyleValue) void {
+    match value {
+        .color(v) => { dst.set_color(prop, v); },
+        .i(v) => { dst.set_i32(prop, v); },
+        .u(v) => { dst.set_u32(prop, v); },
+        .b(v) => { dst.set_bool(prop, v); },
+        .ptr(v) => { dst.set_ptr(prop, v); },
+    };
+}
+
+fn style_merge_prop(dst: &Style, src: &Style, prop: StyleProp) void {
+    var value: StyleValue = StyleValue.u(0u32);
+    if src.get(prop, &value) {
+        style_assign_value(dst, prop, value);
+    }
+}
+
+export union StyleValue {
+    color: Color,
+    i: i32,
+    u: u32,
+    b: bool,
+    ptr: &void,
+}
+
+export enum StyleValueKind {
+    Empty,
+    Color,
+    I32,
+    U32,
+    Bool,
+    Ptr,
+}
+
+export struct StyleEntry {
+    prop: StyleProp,
+    kind: StyleValueKind,
+    color: Color,
+    i: i32,
+    u: u32,
+    b: bool,
+    ptr: &void,
+}
+
+export struct Style {
+    background: Color,
+    foreground: Color,
+    border: Color,
+    shadow_color: Color,
+    width: u16,
+    height: u16,
+    min_width: u16,
+    min_height: u16,
+    max_width: u16,
+    max_height: u16,
+    border_width: u8,
+    radius: u8,
+    padding_top: u8,
+    padding_right: u8,
+    padding_bottom: u8,
+    padding_left: u8,
+    margin_top: u8,
+    margin_right: u8,
+    margin_bottom: u8,
+    margin_left: u8,
+    font_size: u8,
+    opacity: u8,
+    font: &void,
+    inline_mask: u64,
+    ext_count: u8,
+    ext_props: [StyleEntry: 24],
+}
+
+Style {
+    fn set_color(self: &Self, prop: StyleProp, value: Color) void {
+        match prop {
+            StyleProp.BgColor => {
+                self.background = value;
+                self.inline_mask = self.inline_mask | STYLE_BG_COLOR_FLAG;
+                return;
+            },
+            StyleProp.FgColor => {
+                self.foreground = value;
+                self.inline_mask = self.inline_mask | STYLE_FG_COLOR_FLAG;
+                return;
+            },
+            StyleProp.BorderColor => {
+                self.border = value;
+                self.inline_mask = self.inline_mask | STYLE_BORDER_COLOR_FLAG;
+                return;
+            },
+            StyleProp.ShadowColor => {
+                self.shadow_color = value;
+                self.inline_mask = self.inline_mask | STYLE_SHADOW_COLOR_FLAG;
+                return;
+            },
+            else => {},
+        };
+        const entry: StyleEntry = style_entry_from_value(prop, StyleValue.color(value));
+        style_set_ext_entry(self, &entry);
+    }
+
+    fn set_u32(self: &Self, prop: StyleProp, value: u32) void {
+        match prop {
+            StyleProp.Width => {
+                self.width = value as u16;
+                self.inline_mask = self.inline_mask | STYLE_WIDTH_FLAG;
+                return;
+            },
+            StyleProp.Height => {
+                self.height = value as u16;
+                self.inline_mask = self.inline_mask | STYLE_HEIGHT_FLAG;
+                return;
+            },
+            StyleProp.MinWidth => {
+                self.min_width = value as u16;
+                self.inline_mask = self.inline_mask | STYLE_MIN_WIDTH_FLAG;
+                return;
+            },
+            StyleProp.MinHeight => {
+                self.min_height = value as u16;
+                self.inline_mask = self.inline_mask | STYLE_MIN_HEIGHT_FLAG;
+                return;
+            },
+            StyleProp.MaxWidth => {
+                self.max_width = value as u16;
+                self.inline_mask = self.inline_mask | STYLE_MAX_WIDTH_FLAG;
+                return;
+            },
+            StyleProp.MaxHeight => {
+                self.max_height = value as u16;
+                self.inline_mask = self.inline_mask | STYLE_MAX_HEIGHT_FLAG;
+                return;
+            },
+            StyleProp.BorderWidth => {
+                self.border_width = value as u8;
+                self.inline_mask = self.inline_mask | STYLE_BORDER_WIDTH_FLAG;
+                return;
+            },
+            StyleProp.Radius => {
+                self.radius = value as u8;
+                self.inline_mask = self.inline_mask | STYLE_RADIUS_FLAG;
+                return;
+            },
+            StyleProp.PaddingTop => {
+                self.padding_top = value as u8;
+                self.inline_mask = self.inline_mask | STYLE_PADDING_TOP_FLAG;
+                return;
+            },
+            StyleProp.PaddingRight => {
+                self.padding_right = value as u8;
+                self.inline_mask = self.inline_mask | STYLE_PADDING_RIGHT_FLAG;
+                return;
+            },
+            StyleProp.PaddingBottom => {
+                self.padding_bottom = value as u8;
+                self.inline_mask = self.inline_mask | STYLE_PADDING_BOTTOM_FLAG;
+                return;
+            },
+            StyleProp.PaddingLeft => {
+                self.padding_left = value as u8;
+                self.inline_mask = self.inline_mask | STYLE_PADDING_LEFT_FLAG;
+                return;
+            },
+            StyleProp.MarginTop => {
+                self.margin_top = value as u8;
+                self.inline_mask = self.inline_mask | STYLE_MARGIN_TOP_FLAG;
+                return;
+            },
+            StyleProp.MarginRight => {
+                self.margin_right = value as u8;
+                self.inline_mask = self.inline_mask | STYLE_MARGIN_RIGHT_FLAG;
+                return;
+            },
+            StyleProp.MarginBottom => {
+                self.margin_bottom = value as u8;
+                self.inline_mask = self.inline_mask | STYLE_MARGIN_BOTTOM_FLAG;
+                return;
+            },
+            StyleProp.MarginLeft => {
+                self.margin_left = value as u8;
+                self.inline_mask = self.inline_mask | STYLE_MARGIN_LEFT_FLAG;
+                return;
+            },
+            StyleProp.FontSize => {
+                self.font_size = value as u8;
+                self.inline_mask = self.inline_mask | STYLE_FONT_SIZE_FLAG;
+                return;
+            },
+            StyleProp.Opacity => {
+                self.opacity = value as u8;
+                self.inline_mask = self.inline_mask | STYLE_OPACITY_FLAG;
+                return;
+            },
+            else => {},
+        };
+        const entry: StyleEntry = style_entry_from_value(prop, StyleValue.u(value));
+        style_set_ext_entry(self, &entry);
+    }
+
+    fn set_i32(self: &Self, prop: StyleProp, value: i32) void {
+        const entry: StyleEntry = style_entry_from_value(prop, StyleValue.i(value));
+        style_set_ext_entry(self, &entry);
+    }
+
+    fn set_bool(self: &Self, prop: StyleProp, value: bool) void {
+        const entry: StyleEntry = style_entry_from_value(prop, StyleValue.b(value));
+        style_set_ext_entry(self, &entry);
+    }
+
+    fn set_ptr(self: &Self, prop: StyleProp, value: &void) void {
+        match prop {
+            StyleProp.Font => {
+                self.font = value;
+                self.inline_mask = self.inline_mask | STYLE_FONT_FLAG;
+                return;
+            },
+            else => {},
+        };
+        const entry: StyleEntry = style_entry_from_value(prop, StyleValue.ptr(value));
+        style_set_ext_entry(self, &entry);
+    }
+
+    fn get(self: &Self, prop: StyleProp, out_value: &StyleValue) bool {
+        match prop {
+            StyleProp.BgColor => {
+                if style_has_flag(self.inline_mask, STYLE_BG_COLOR_FLAG) {
+                    out_value[0] = StyleValue.color(self.background);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.FgColor => {
+                if style_has_flag(self.inline_mask, STYLE_FG_COLOR_FLAG) {
+                    out_value[0] = StyleValue.color(self.foreground);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.BorderColor => {
+                if style_has_flag(self.inline_mask, STYLE_BORDER_COLOR_FLAG) {
+                    out_value[0] = StyleValue.color(self.border);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.ShadowColor => {
+                if style_has_flag(self.inline_mask, STYLE_SHADOW_COLOR_FLAG) {
+                    out_value[0] = StyleValue.color(self.shadow_color);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.Width => {
+                if style_has_flag(self.inline_mask, STYLE_WIDTH_FLAG) {
+                    out_value[0] = StyleValue.u(self.width as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.Height => {
+                if style_has_flag(self.inline_mask, STYLE_HEIGHT_FLAG) {
+                    out_value[0] = StyleValue.u(self.height as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.MinWidth => {
+                if style_has_flag(self.inline_mask, STYLE_MIN_WIDTH_FLAG) {
+                    out_value[0] = StyleValue.u(self.min_width as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.MinHeight => {
+                if style_has_flag(self.inline_mask, STYLE_MIN_HEIGHT_FLAG) {
+                    out_value[0] = StyleValue.u(self.min_height as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.MaxWidth => {
+                if style_has_flag(self.inline_mask, STYLE_MAX_WIDTH_FLAG) {
+                    out_value[0] = StyleValue.u(self.max_width as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.MaxHeight => {
+                if style_has_flag(self.inline_mask, STYLE_MAX_HEIGHT_FLAG) {
+                    out_value[0] = StyleValue.u(self.max_height as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.BorderWidth => {
+                if style_has_flag(self.inline_mask, STYLE_BORDER_WIDTH_FLAG) {
+                    out_value[0] = StyleValue.u(self.border_width as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.Radius => {
+                if style_has_flag(self.inline_mask, STYLE_RADIUS_FLAG) {
+                    out_value[0] = StyleValue.u(self.radius as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.PaddingTop => {
+                if style_has_flag(self.inline_mask, STYLE_PADDING_TOP_FLAG) {
+                    out_value[0] = StyleValue.u(self.padding_top as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.PaddingRight => {
+                if style_has_flag(self.inline_mask, STYLE_PADDING_RIGHT_FLAG) {
+                    out_value[0] = StyleValue.u(self.padding_right as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.PaddingBottom => {
+                if style_has_flag(self.inline_mask, STYLE_PADDING_BOTTOM_FLAG) {
+                    out_value[0] = StyleValue.u(self.padding_bottom as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.PaddingLeft => {
+                if style_has_flag(self.inline_mask, STYLE_PADDING_LEFT_FLAG) {
+                    out_value[0] = StyleValue.u(self.padding_left as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.MarginTop => {
+                if style_has_flag(self.inline_mask, STYLE_MARGIN_TOP_FLAG) {
+                    out_value[0] = StyleValue.u(self.margin_top as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.MarginRight => {
+                if style_has_flag(self.inline_mask, STYLE_MARGIN_RIGHT_FLAG) {
+                    out_value[0] = StyleValue.u(self.margin_right as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.MarginBottom => {
+                if style_has_flag(self.inline_mask, STYLE_MARGIN_BOTTOM_FLAG) {
+                    out_value[0] = StyleValue.u(self.margin_bottom as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.MarginLeft => {
+                if style_has_flag(self.inline_mask, STYLE_MARGIN_LEFT_FLAG) {
+                    out_value[0] = StyleValue.u(self.margin_left as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.FontSize => {
+                if style_has_flag(self.inline_mask, STYLE_FONT_SIZE_FLAG) {
+                    out_value[0] = StyleValue.u(self.font_size as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.Opacity => {
+                if style_has_flag(self.inline_mask, STYLE_OPACITY_FLAG) {
+                    out_value[0] = StyleValue.u(self.opacity as u32);
+                    return true;
+                }
+                return false;
+            },
+            StyleProp.Font => {
+                if style_has_flag(self.inline_mask, STYLE_FONT_FLAG) {
+                    out_value[0] = StyleValue.ptr(self.font);
+                    return true;
+                }
+                return false;
+            },
+            else => {},
+        };
+
+        var i: i32 = 0;
+        while i < self.ext_count as i32 {
+            if self.ext_props[i].prop == prop {
+                return style_entry_write_value(&self.ext_props[i], out_value);
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    fn has(self: &Self, prop: StyleProp) bool {
+        var tmp: StyleValue = StyleValue.u(0u32);
+        return self.get(prop, &tmp);
+    }
+
+    fn set(self: &Self, prop: StyleProp, value: StyleValue) void {
+        style_assign_value(self, prop, value);
+    }
+
+    fn merge(self: &Self, other: Style) void {
+        style_merge_prop(self, &other, StyleProp.BgColor);
+        style_merge_prop(self, &other, StyleProp.FgColor);
+        style_merge_prop(self, &other, StyleProp.BorderColor);
+        style_merge_prop(self, &other, StyleProp.ShadowColor);
+        style_merge_prop(self, &other, StyleProp.Width);
+        style_merge_prop(self, &other, StyleProp.Height);
+        style_merge_prop(self, &other, StyleProp.MinWidth);
+        style_merge_prop(self, &other, StyleProp.MinHeight);
+        style_merge_prop(self, &other, StyleProp.MaxWidth);
+        style_merge_prop(self, &other, StyleProp.MaxHeight);
+        style_merge_prop(self, &other, StyleProp.BorderWidth);
+        style_merge_prop(self, &other, StyleProp.Radius);
+        style_merge_prop(self, &other, StyleProp.PaddingTop);
+        style_merge_prop(self, &other, StyleProp.PaddingRight);
+        style_merge_prop(self, &other, StyleProp.PaddingBottom);
+        style_merge_prop(self, &other, StyleProp.PaddingLeft);
+        style_merge_prop(self, &other, StyleProp.MarginTop);
+        style_merge_prop(self, &other, StyleProp.MarginRight);
+        style_merge_prop(self, &other, StyleProp.MarginBottom);
+        style_merge_prop(self, &other, StyleProp.MarginLeft);
+        style_merge_prop(self, &other, StyleProp.FontSize);
+        style_merge_prop(self, &other, StyleProp.Opacity);
+        style_merge_prop(self, &other, StyleProp.Font);
+
+        var i: i32 = 0;
+        while i < other.ext_count as i32 {
+            var value: StyleValue = StyleValue.u(0u32);
+            if style_entry_write_value(&other.ext_props[i], &value) {
+                style_assign_value(self, other.ext_props[i].prop, value);
+            }
+            i = i + 1;
+        }
+    }
+
+    fn clone(self: &Self) Style {
+        var out: Style = style_empty();
+        out.background = self.background;
+        out.foreground = self.foreground;
+        out.border = self.border;
+        out.shadow_color = self.shadow_color;
+        out.width = self.width;
+        out.height = self.height;
+        out.min_width = self.min_width;
+        out.min_height = self.min_height;
+        out.max_width = self.max_width;
+        out.max_height = self.max_height;
+        out.border_width = self.border_width;
+        out.radius = self.radius;
+        out.padding_top = self.padding_top;
+        out.padding_right = self.padding_right;
+        out.padding_bottom = self.padding_bottom;
+        out.padding_left = self.padding_left;
+        out.margin_top = self.margin_top;
+        out.margin_right = self.margin_right;
+        out.margin_bottom = self.margin_bottom;
+        out.margin_left = self.margin_left;
+        out.font_size = self.font_size;
+        out.opacity = self.opacity;
+        out.font = self.font;
+        out.inline_mask = self.inline_mask;
+        out.ext_count = self.ext_count;
+
+        var i: i32 = 0;
+        while i < self.ext_count as i32 {
+            out.ext_props[i] = self.ext_props[i];
+            i = i + 1;
+        }
+        return out;
+    }
+
+    fn get_u32_or(self: &Self, prop: StyleProp, fallback: u32) u32 {
+        var value: StyleValue = StyleValue.u(0u32);
+        if !self.get(prop, &value) {
+            return fallback;
+        }
+        match value {
+            .u(v) => { return v; },
+            .i(v) => { return v as u32; },
+            .b(v) => {
+                if v {
+                    return 1u32;
+                }
+                return 0u32;
+            },
+            else => {},
+        };
+        return fallback;
+    }
+
+    fn get_i32_or(self: &Self, prop: StyleProp, fallback: i32) i32 {
+        var value: StyleValue = StyleValue.i(0);
+        if !self.get(prop, &value) {
+            return fallback;
+        }
+        match value {
+            .u(v) => { return v as i32; },
+            .i(v) => { return v; },
+            .b(v) => {
+                if v {
+                    return 1;
+                }
+                return 0;
+            },
+            else => {},
+        };
+        return fallback;
+    }
+
+    fn get_bool_or(self: &Self, prop: StyleProp, fallback: bool) bool {
+        var value: StyleValue = StyleValue.b(false);
+        if !self.get(prop, &value) {
+            return fallback;
+        }
+        match value {
+            .b(v) => { return v; },
+            .u(v) => { return v != 0u32; },
+            .i(v) => { return v != 0; },
+            else => {},
+        };
+        return fallback;
+    }
+
+    fn get_color_or(self: &Self, prop: StyleProp, fallback: Color) Color {
+        var value: StyleValue = StyleValue.color(fallback);
+        if !self.get(prop, &value) {
+            return fallback;
+        }
+        match value {
+            .color(v) => { return v; },
+            else => {},
+        };
+        return fallback;
+    }
+
+    fn get_ptr_or(self: &Self, prop: StyleProp, fallback: &void) &void {
+        var value: StyleValue = StyleValue.ptr(fallback);
+        if !self.get(prop, &value) {
+            return fallback;
+        }
+        match value {
+            .ptr(v) => { return v; },
+            else => {},
+        };
+        return fallback;
+    }
+}
+
+export struct StyleBuilder {
+    style: Style,
+}
+
+StyleBuilder {
+    fn new() StyleBuilder {
+        return StyleBuilder{ style: style_default() };
+    }
+
+    fn bg_color(self: &Self, color: Color) void {
+        self.style.set_color(StyleProp.BgColor, color);
+    }
+
+    fn fg_color(self: &Self, color: Color) void {
+        self.style.set_color(StyleProp.FgColor, color);
+    }
+
+    fn border(self: &Self, width: u8, color: Color) void {
+        self.style.set_u32(StyleProp.BorderWidth, width as u32);
+        self.style.set_color(StyleProp.BorderColor, color);
+    }
+
+    fn radius(self: &Self, value: u8) void {
+        self.style.set_u32(StyleProp.Radius, value as u32);
+    }
+
+    fn padding(self: &Self, value: u8) void {
+        self.style.set_u32(StyleProp.PaddingTop, value as u32);
+        self.style.set_u32(StyleProp.PaddingRight, value as u32);
+        self.style.set_u32(StyleProp.PaddingBottom, value as u32);
+        self.style.set_u32(StyleProp.PaddingLeft, value as u32);
+    }
+
+    fn margin(self: &Self, value: u8) void {
+        self.style.set_u32(StyleProp.MarginTop, value as u32);
+        self.style.set_u32(StyleProp.MarginRight, value as u32);
+        self.style.set_u32(StyleProp.MarginBottom, value as u32);
+        self.style.set_u32(StyleProp.MarginLeft, value as u32);
+    }
+
+    fn size(self: &Self, width: u16, height: u16) void {
+        self.style.set_u32(StyleProp.Width, width as u32);
+        self.style.set_u32(StyleProp.Height, height as u32);
+    }
+
+    fn min_size(self: &Self, width: u16, height: u16) void {
+        self.style.set_u32(StyleProp.MinWidth, width as u32);
+        self.style.set_u32(StyleProp.MinHeight, height as u32);
+    }
+
+    fn max_size(self: &Self, width: u16, height: u16) void {
+        self.style.set_u32(StyleProp.MaxWidth, width as u32);
+        self.style.set_u32(StyleProp.MaxHeight, height as u32);
+    }
+
+    fn font(self: &Self, ptr: &void) void {
+        self.style.set_ptr(StyleProp.Font, ptr);
+    }
+
+    fn font_size(self: &Self, value: u8) void {
+        self.style.set_u32(StyleProp.FontSize, value as u32);
+    }
+
+    fn opacity(self: &Self, value: u8) void {
+        self.style.set_u32(StyleProp.Opacity, value as u32);
+    }
+
+    fn shadow(self: &Self, offset_x: i16, offset_y: i16, blur: u8, color: Color) void {
+        self.style.set_i32(StyleProp.ShadowOffsetX, offset_x as i32);
+        self.style.set_i32(StyleProp.ShadowOffsetY, offset_y as i32);
+        self.style.set_u32(StyleProp.ShadowBlur, blur as u32);
+        self.style.set_color(StyleProp.ShadowColor, color);
+    }
+
+    fn state_bg(self: &Self, hover: Color, press: Color, focus: Color, disabled: Color) void {
+        self.style.set_color(StyleProp.BgHoverColor, hover);
+        self.style.set_color(StyleProp.BgPressColor, press);
+        self.style.set_color(StyleProp.BgFocusColor, focus);
+        self.style.set_color(StyleProp.BgDisableColor, disabled);
+    }
+
+    fn layout_mode(self: &Self, mode: u32) void {
+        self.style.set_u32(StyleProp.LayoutMode, mode);
+    }
+
+    fn gap(self: &Self, value: u8) void {
+        self.style.set_u32(StyleProp.Gap, value as u32);
+    }
+
+    fn flex(self: &Self, grow: i32, shrink: i32, basis: i32) void {
+        self.style.set_i32(StyleProp.FlexGrow, grow);
+        self.style.set_i32(StyleProp.FlexShrink, shrink);
+        self.style.set_i32(StyleProp.FlexBasis, basis);
+    }
+
+    fn grid_area(self: &Self, column: i32, row: i32, col_span: i32, row_span: i32) void {
+        self.style.set_i32(StyleProp.GridColumn, column);
+        self.style.set_i32(StyleProp.GridRow, row);
+        self.style.set_i32(StyleProp.GridColumnSpan, col_span);
+        self.style.set_i32(StyleProp.GridRowSpan, row_span);
+    }
+
+    fn grid_cell(self: &Self, column: i32, row: i32, col_span: i32, row_span: i32) void {
+        self.grid_area(column, row, col_span, row_span);
+    }
+
+    fn overflow(self: &Self, mode: u32) void {
+        self.style.set_u32(StyleProp.Overflow, mode);
+    }
+
+    fn build(self: &Self) Style {
+        return self.style.clone();
+    }
+}
+
+/// 创建样式构建器实例。
+export fn style_builder_new() StyleBuilder {
+    return StyleBuilder{ style: style_default() };
+}
+
+export const DEFAULT_STYLE: Style = Style{
+    background: Color{ r: 0, g: 0, b: 0, a: 0 },
+    foreground: Color{ r: 0, g: 0, b: 0, a: 255 },
+    border: Color{ r: 255, g: 255, b: 255, a: 255 },
+    shadow_color: Color{ r: 0, g: 0, b: 0, a: 0 },
+    width: 0,
+    height: 0,
+    min_width: 0,
+    min_height: 0,
+    max_width: 0,
+    max_height: 0,
+    border_width: 0,
+    radius: 0,
+    padding_top: 0,
+    padding_right: 0,
+    padding_bottom: 0,
+    padding_left: 0,
+    margin_top: 0,
+    margin_right: 0,
+    margin_bottom: 0,
+    margin_left: 0,
+    font_size: 14,
+    opacity: 255,
+    font: null,
+    inline_mask: 0u64,
+    ext_count: 0,
+    ext_props: [],
+};
+
+/// 返回空样式。
+export fn style_empty() Style {
+    return DEFAULT_STYLE;
+}
+
+/// 返回默认样式。
+export fn style_default() Style {
+    return DEFAULT_STYLE;
+}
+
+/// 按显式参数构造样式值。
+export fn style_make(bg: Color, fg: Color, border_width: u8, border_color: Color, radius: u8, opacity: u8) Style {
+    var builder: StyleBuilder = style_builder_new();
+    builder.bg_color(bg);
+    builder.fg_color(fg);
+    builder.border(border_width, border_color);
+    builder.radius(radius);
+    builder.opacity(opacity);
+    return builder.build();
+}
+
+export mc style(bg: expr, fg: expr, border_width: expr, border_color: expr, radius: expr, opacity: expr) expr {
+    style_make(${bg}, ${fg}, (${border_width}) as u8, ${border_color}, (${radius}) as u8, (${opacity}) as u8);
+}

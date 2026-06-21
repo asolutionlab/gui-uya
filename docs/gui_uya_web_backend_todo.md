@@ -11,7 +11,7 @@
 ## 目标
 
 - 新增 `platform/web/disp_web.uya` 与 `platform/web/indev_web.uya`。
-- 新增 Web 专用入口 `gui/sim_web_main.uya`，让 `sim` 逻辑运行到浏览器 `canvas`。
+- 新增 Web 专用入口 `apps/sim_web_main.uya`，让 `sim` 逻辑运行到浏览器 `canvas`。
 - 不复制一套网页专用 GUI 逻辑，只补宿主显示/输入/主循环差异层。
 - 让 `SDL2` / `Framebuffer` / `Web` 三端尽量共享同一套 `SimRuntimeCore`。
 
@@ -26,16 +26,16 @@
 
 | 条目 | 状态 | 说明 |
 |------|------|------|
-| 显示/帧缓冲抽象 | [x] 已有基线 | `gui/platform/disp.uya` 已提供 `FrameBuffer` / `DisplayCtx` / 像素格式 |
-| 输入抽象与事件队列 | [x] 已有基线 | `gui/platform/indev.uya` 已有 `TouchDriver` / `KeyDriver` / `EncoderDriver` |
-| 渲染上下文 | [x] 已有基线 | `gui/render/ctx.uya` 已能在 framebuffer 上渲染 |
-| retained / dirty render | [x] 已有基线 | `gui/render/scheduler.uya` 与 sim retained 流程已可复用 |
-| SDL2 显示后端 | [x] 已实现 | `gui/platform/sdl2/{disp_sdl.uya,indev_sdl.uya,sdl_host.c}` |
-| Framebuffer 后端 | [x] 已实现 | `gui/platform/fb/{disp_fb.uya,indev_fb.uya,fb_host.c}` |
-| 模拟器配置 | [x] 已实现 | `gui/sim/config.uya` 已支持 backend/demo/size/fps/screenshot 等参数 |
-| 模拟器主循环 | [x] 已实现 | `gui/sim/runner.uya` 已支持 `SDL2` 与 `FB` |
-| 浏览器后端 | [x] 已有 MVP | 已新增 `gui/platform/web/{disp_web.uya,indev_web.uya,web_common.uya,web_host.c}` |
-| 共享 runtime core | [x] 已实现 | 已新增 `gui/sim/runtime_core.uya`，SDL2/FB 已切到共享帧逻辑 |
+| 显示/帧缓冲抽象 | [x] 已有基线 | `src/gui/platform/disp.uya` 已提供 `FrameBuffer` / `DisplayCtx` / 像素格式 |
+| 输入抽象与事件队列 | [x] 已有基线 | `src/gui/platform/indev.uya` 已有 `TouchDriver` / `KeyDriver` / `EncoderDriver` |
+| 渲染上下文 | [x] 已有基线 | `src/gui/render/ctx.uya` 已能在 framebuffer 上渲染 |
+| retained / dirty render | [x] 已有基线 | `src/gui/render/scheduler.uya` 与 sim retained 流程已可复用 |
+| SDL2 显示后端 | [x] 已实现 | `src/gui/platform/sdl2/{disp_sdl.uya,indev_sdl.uya,sdl_host.c}` |
+| Framebuffer 后端 | [x] 已实现 | `src/gui/platform/fb/{disp_fb.uya,indev_fb.uya,fb_host.c}` |
+| 模拟器配置 | [x] 已实现 | `src/gui/sim/config.uya` 已支持 backend/demo/size/fps/screenshot 等参数 |
+| 模拟器主循环 | [x] 已实现 | `src/gui/sim/runner.uya` 已支持 `SDL2` 与 `FB` |
+| 浏览器后端 | [x] 已有 MVP | 已新增 `src/gui/platform/web/{disp_web.uya,indev_web.uya,web_common.uya,web_host.c}` |
+| 共享 runtime core | [x] 已实现 | 已新增 `src/gui/sim/runtime_core.uya`，SDL2/FB 已切到共享帧逻辑 |
 | Web 构建脚本 | [x] 已实现 | 已新增 `tools/build_gui_web.sh` 与 `tools/serve_gui_web.sh` |
 
 ## 关键决策
@@ -64,22 +64,21 @@
 ## 当前实现状态
 
 - 已完成：
-  - 新增 `gui/sim/runtime_core.uya`，统一 SDL2 / FB / Web 的帧循环核心。
-  - 新增 `gui/platform/web/` 目录与 `disp_web.uya` / `indev_web.uya` / `web_common.uya` / `web_host.c`。
-  - 新增 `gui/platform/web/shell.html`，由 host 组装 `Module.arguments`、fit-window、下载导出与 `IDBFS` 挂载。
-  - 新增 `gui/sim/runner_web.uya` 与 `gui/sim_web_main.uya`。
+  - 新增 `src/gui/sim/runtime_core.uya`，统一 SDL2 / FB / Web 的帧循环核心。
+  - 新增 `src/gui/platform/web/` 目录与 `disp_web.uya` / `indev_web.uya` / `web_common.uya` / `web_host.c`。
+  - 新增 `src/gui/platform/web/shell.html`，由 host 组装 `Module.arguments`、fit-window、下载导出与 `IDBFS` 挂载。
+  - 新增 `src/gui/sim/runner_web.uya` 与 `apps/sim_web_main.uya`。
   - `SimConfig` 已支持 `backend=web` 与 `persist_data` 占位开关。
   - 资源根探针已改为 `.uya_sim_root_probe`。
   - Web 默认路径已切到 `/app`、`/tmp/last_frame.png`、`/tmp/last_input.uyarec`。
   - Make 目标与脚本已补齐：`sim-web-build` / `sim-web-run` / `sim-web-serve` / `sim-web-smoke`。
   - Web dirty present、overlay、resize/visibility refresh 与 screenshot host 导出已补齐。
-  - Web 单测已补入 `gui/tests/test_web_backend.uya` / `gui/tests/test_web_config.uya` / `gui/tests/test_web_present_plan.uya`。
+  - Web 单测已补入 `tests/test_web_backend.uya` / `tests/test_web_config.uya` / `tests/test_web_present_plan.uya`。
 - 已新增验证脚本：
   - `tools/smoke_gui_web.sh`
   - `tools/smoke_gui_web.py`
 - 已验证：
-  - `./uya/bin/uya test gui/test_suite.uya -O0 --stack-size 65536` 通过，`208` 个测试全部通过。
-  - `./uya/bin/uya test gui/web_present_plan_suite.uya -O0 --stack-size 65536` 通过，`4` 个测试全部通过。
+  - `make test` 通过，其中 `tests/web_present_plan_suite.uya` 的 `4` 个测试通过。
   - `make sim-web-build` 可真实产出 `build/web/{index.html,index.js,index.wasm,index.data}`。
   - `make sim-web-smoke` 可无头打开页面，跑完 `--max-frames 3` 并校验 `/tmp/last_frame.png`。
 - 当前阻塞：
@@ -96,16 +95,16 @@
 ### TODO
 
 - [x] 确认最终目录布局
-  - [x] `gui/sim_web_main.uya`
-  - [x] `gui/platform/web/disp_web.uya`
-  - [x] `gui/platform/web/indev_web.uya`
-  - [x] `gui/platform/web/web_common.uya`
-  - [x] `gui/platform/web/web_host.c`
-  - [x] `gui/sim/runtime_core.uya`
-  - [x] `gui/sim/runner_web.uya`
+  - [x] `apps/sim_web_main.uya`
+  - [x] `src/gui/platform/web/disp_web.uya`
+  - [x] `src/gui/platform/web/indev_web.uya`
+  - [x] `src/gui/platform/web/web_common.uya`
+  - [x] `src/gui/platform/web/web_host.c`
+  - [x] `src/gui/sim/runtime_core.uya`
+  - [x] `src/gui/sim/runner_web.uya`
   - [x] `tools/build_gui_web.sh`
 - [x] 明确不新增平行 `platform/interface/*` 抽象层
-- [x] 确认 Web 入口改为 `gui/sim_web_main.uya`
+- [x] 确认 Web 入口改为 `apps/sim_web_main.uya`
 - [x] 定稿启动 ownership
   - [x] `main()` / bootstrap 只执行一次
   - [x] host 不负责反向调用 boot
@@ -137,7 +136,7 @@
 
 ### TODO
 
-- [x] 新增 `gui/sim/runtime_core.uya`
+- [x] 新增 `src/gui/sim/runtime_core.uya`
 - [x] 抽离 `runner.uya` 中 backend 无关逻辑
   - [x] app init/finish
   - [x] retained seed frame
@@ -168,8 +167,8 @@
 
 ### TODO
 
-- [x] 创建 `gui/platform/web/`
-- [x] 新增 `gui/platform/web/web_common.uya`
+- [x] 创建 `src/gui/platform/web/`
+- [x] 新增 `src/gui/platform/web/web_common.uya`
   - [x] 定义 `WEB_EVT_*` 常量
   - [x] 定义 `WebHostEvent`
   - [x] 定义 `web_host_event_none()`
@@ -199,7 +198,7 @@
 
 ### TODO
 
-- [x] 新增 `gui/platform/web/disp_web.uya`
+- [x] 新增 `src/gui/platform/web/disp_web.uya`
 - [x] 仿照 `disp_sdl.uya` 实现双缓冲
   - [x] `front_mem`
   - [x] `back_mem`
@@ -237,7 +236,7 @@
 
 ### TODO
 
-- [x] 新增 `gui/platform/web/indev_web.uya`
+- [x] 新增 `src/gui/platform/web/indev_web.uya`
 - [x] host 侧注册浏览器事件
   - [x] mouse down/up/move
   - [x] touch start/end/move/cancel
@@ -278,21 +277,21 @@
 
 ### TODO
 
-- [x] 新增 `gui/sim/runner_web.uya`
-- [x] 新增 `gui/sim_web_main.uya`
+- [x] 新增 `src/gui/sim/runner_web.uya`
+- [x] 新增 `apps/sim_web_main.uya`
   - [x] `main()` 只负责调用 `run_simulator_web_bootstrap()`
 - [x] 设计并实现导出 callback
   - [x] `run_simulator_web_bootstrap()`
   - [x] `sim_web_frame(now_ms)`
   - [x] `sim_web_shutdown()`
-- [x] 新增 `gui/platform/web/web_host.c`
+- [x] 新增 `src/gui/platform/web/web_host.c`
   - [x] 提供 `uya_gui_web_host_start_loop()`
   - [x] 注册 `requestAnimationFrame` 主循环
   - [x] 每帧调用 `sim_web_frame(now_ms)`
   - [x] 收到停止信号后取消主循环
   - [x] `sim_web_shutdown()` 只调用一次
-- [x] 在 `gui/sim/config.uya` 中新增 `backend=web`
-- [x] 保持 `gui/sim/runner.uya` 为桌面 runner
+- [x] 在 `src/gui/sim/config.uya` 中新增 `backend=web`
+- [x] 保持 `src/gui/sim/runner.uya` 为桌面 runner
 - [x] `runner_web.uya` 不允许导入 `runner.uya`
 - [x] 兼容 `--max-frames`
 - [x] 兼容 screenshot request / finish path
@@ -314,7 +313,7 @@
 ### TODO
 
 - [x] 新增 `tools/build_gui_web.sh`
-  - [x] `APP=gui/sim_web_main.uya`
+  - [x] `APP=apps/sim_web_main.uya`
   - [x] `uya build --c99 --no-split-c`
   - [x] `emcc` 编译 generated C
   - [x] `emcc` 编译 `web_host.c`
@@ -417,13 +416,13 @@
 
 ## 文件落点清单
 
-- [x] `gui/platform/web/disp_web.uya`
-- [x] `gui/platform/web/indev_web.uya`
-- [x] `gui/platform/web/web_common.uya`
-- [x] `gui/platform/web/web_host.c`
-- [x] `gui/sim_web_main.uya`
-- [x] `gui/sim/runtime_core.uya`
-- [x] `gui/sim/runner_web.uya`
+- [x] `src/gui/platform/web/disp_web.uya`
+- [x] `src/gui/platform/web/indev_web.uya`
+- [x] `src/gui/platform/web/web_common.uya`
+- [x] `src/gui/platform/web/web_host.c`
+- [x] `apps/sim_web_main.uya`
+- [x] `src/gui/sim/runtime_core.uya`
+- [x] `src/gui/sim/runner_web.uya`
 - [x] `tools/build_gui_web.sh`
 - [x] `tools/serve_gui_web.sh`
 

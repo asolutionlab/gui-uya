@@ -1,0 +1,233 @@
+use libc.strncmp;
+use gui.richtext.delta.RichDelta;
+use gui.richtext.delta.RichOpKind;
+use gui.richtext.delta.apply_delta;
+use gui.richtext.delta.document_to_delta;
+use gui.richtext.delta.rich_delta_new;
+use gui.richtext.delta.rich_insert_break;
+use gui.richtext.delta.rich_set_block_type;
+use gui.richtext.delta.rich_toggle_inline_mark;
+use gui.richtext.delta.rich_insert_text;
+use gui.richtext.document.RICH_MARK_BOLD;
+use gui.richtext.document.RichBlockType;
+use gui.richtext.document.RichDocument;
+use gui.richtext.document.rich_document_new;
+use gui.richtext.document.rich_inline_marks_none;
+use gui.richtext.history.RichHistory;
+use gui.richtext.history.RichHistoryMergeKind;
+use gui.richtext.history.rich_history_new;
+use gui.richtext.selection.RichPos;
+use gui.richtext.selection.RichRange;
+use gui.richtext.selection.rich_range_collapsed;
+use std.testing.assert_eq_bool;
+use std.testing.assert_eq_i32;
+
+export const TEST_RICHTEXT_HISTORY_MODULE: i32 = 1;
+
+fn rich_history_test_clone_doc(source: &RichDocument) !RichDocument {
+    var snapshot: RichDelta = rich_delta_new();
+    defer snapshot.dispose();
+    try document_to_delta(source, &snapshot);
+
+    var clone: RichDocument = rich_document_new();
+    try apply_delta(&clone, &snapshot);
+    return clone;
+}
+
+fn rich_history_test_assert_plain_text(doc: &RichDocument, expected: &const byte, expected_len: usize) !void {
+    var out: [byte: 64] = [];
+    const written: usize = doc.export_plain_text(&out[0], 64usize);
+    try assert_eq_i32(written as i32, expected_len as i32);
+    try assert_eq_bool(strncmp(&out[0] as *const byte, expected as *const byte, expected_len) == 0, true);
+}
+
+fn rich_history_test_assert_snapshot_ops_only(delta: &RichDelta) !void {
+    var op_idx: u32 = 0u32;
+    while op_idx < delta.op_count {
+        const kind: RichOpKind = delta.ops[op_idx as usize].kind;
+        try assert_eq_bool(kind == RichOpKind.InsertText || kind == RichOpKind.InsertBreak, true);
+        op_idx = op_idx + 1u32;
+    }
+}
+
+test "history undo redo restores before and after snapshots" {
+    var before_doc: RichDocument = rich_document_new();
+    defer before_doc.dispose();
+    try before_doc.set_plain_text("ab" as &const byte);
+
+    var after_doc: RichDocument = rich_document_new();
+    defer after_doc.dispose();
+    try after_doc.set_plain_text("ab" as &const byte);
+    _ = try rich_insert_text(&after_doc, rich_range_collapsed(try after_doc.linear_offset_to_pos(2u32)), "c" as &const byte, 1usize, rich_inline_marks_none());
+
+    var history: RichHistory = rich_history_new();
+    defer history.dispose();
+    history.max_merge_span_ms = 1500u32;
+    try history.record(&before_doc, &after_doc, RichHistoryMergeKind.InsertText, 2u32, 3u32, 100u64);
+    try assert_eq_bool(history.can_undo(), true);
+
+    try assert_eq_bool(try history.undo(&after_doc), true);
+    var undone: [byte: 16] = [];
+    const undone_written: usize = after_doc.export_plain_text(&undone[0], 16usize);
+    try assert_eq_i32(undone_written as i32, 2);
+    try assert_eq_bool(strncmp(&undone[0] as *const byte, "ab" as *const byte, 2usize) == 0, true);
+    try assert_eq_bool(history.can_redo(), true);
+
+    try assert_eq_bool(try history.redo(&after_doc), true);
+    var redone: [byte: 16] = [];
+    const redone_written: usize = after_doc.export_plain_text(&redone[0], 16usize);
+    try assert_eq_i32(redone_written as i32, 3);
+    try assert_eq_bool(strncmp(&redone[0] as *const byte, "abc" as *const byte, 3usize) == 0, true);
+}
+
+test "history merges contiguous insert text records inside merge window" {
+    var first_before: RichDocument = rich_document_new();
+    defer first_before.dispose();
+    try first_before.set_plain_text("a" as &const byte);
+
+    var first_after: RichDocument = rich_document_new();
+    defer first_after.dispose();
+    try first_after.set_plain_text("a" as &const byte);
+    _ = try rich_insert_text(&first_after, rich_range_collapsed(try first_after.linear_offset_to_pos(1u32)), "b" as &const byte, 1usize, rich_inline_marks_none());
+
+    var second_after: RichDocument = rich_document_new();
+    defer second_after.dispose();
+    try second_after.set_plain_text("ab" as &const byte);
+    _ = try rich_insert_text(&second_after, rich_range_collapsed(try second_after.linear_offset_to_pos(2u32)), "c" as &const byte, 1usize, rich_inline_marks_none());
+
+    var history: RichHistory = rich_history_new();
+    defer history.dispose();
+    try history.record(&first_before, &first_after, RichHistoryMergeKind.InsertText, 1u32, 2u32, 100u64);
+    try history.record(&first_after, &second_after, RichHistoryMergeKind.InsertText, 2u32, 3u32, 300u64);
+    try assert_eq_i32(history.undo_count as i32, 1);
+
+    try assert_eq_bool(try history.undo(&second_after), true);
+    var undone: [byte: 16] = [];
+    const undone_written: usize = second_after.export_plain_text(&undone[0], 16usize);
+    try assert_eq_i32(undone_written as i32, 1);
+    try assert_eq_bool(strncmp(&undone[0] as *const byte, "a" as *const byte, 1usize) == 0, true);
+
+    try assert_eq_bool(try history.redo(&second_after), true);
+    var redone: [byte: 16] = [];
+    const redone_written: usize = second_after.export_plain_text(&redone[0], 16usize);
+    try assert_eq_i32(redone_written as i32, 3);
+    try assert_eq_bool(strncmp(&redone[0] as *const byte, "abc" as *const byte, 3usize) == 0, true);
+}
+
+test "history splits long typing groups even inside rolling merge window" {
+    var doc: RichDocument = rich_document_new();
+    defer doc.dispose();
+    try doc.set_plain_text("a" as &const byte);
+
+    var history: RichHistory = rich_history_new();
+    defer history.dispose();
+    history.max_merge_span_ms = 1500u32;
+
+    var before_first: RichDocument = try rich_history_test_clone_doc(&doc);
+    defer before_first.dispose();
+    _ = try rich_insert_text(&doc, rich_range_collapsed(try doc.linear_offset_to_pos(1u32)), "b" as &const byte, 1usize, rich_inline_marks_none());
+    try history.record(&before_first, &doc, RichHistoryMergeKind.InsertText, 1u32, 2u32, 100u64);
+
+    var before_second: RichDocument = try rich_history_test_clone_doc(&doc);
+    defer before_second.dispose();
+    _ = try rich_insert_text(&doc, rich_range_collapsed(try doc.linear_offset_to_pos(2u32)), "c" as &const byte, 1usize, rich_inline_marks_none());
+    try history.record(&before_second, &doc, RichHistoryMergeKind.InsertText, 2u32, 3u32, 900u64);
+    try assert_eq_i32(history.undo_count as i32, 1);
+
+    var before_third: RichDocument = try rich_history_test_clone_doc(&doc);
+    defer before_third.dispose();
+    _ = try rich_insert_text(&doc, rich_range_collapsed(try doc.linear_offset_to_pos(3u32)), "d" as &const byte, 1usize, rich_inline_marks_none());
+    try history.record(&before_third, &doc, RichHistoryMergeKind.InsertText, 3u32, 4u32, 1600u64);
+    try assert_eq_i32(history.undo_count as i32, 1);
+
+    var before_fourth: RichDocument = try rich_history_test_clone_doc(&doc);
+    defer before_fourth.dispose();
+    _ = try rich_insert_text(&doc, rich_range_collapsed(try doc.linear_offset_to_pos(4u32)), "e" as &const byte, 1usize, rich_inline_marks_none());
+    try history.record(&before_fourth, &doc, RichHistoryMergeKind.InsertText, 4u32, 5u32, 2300u64);
+    try assert_eq_i32(history.undo_count as i32, 2);
+
+    try assert_eq_bool(try history.undo(&doc), true);
+    try rich_history_test_assert_plain_text(&doc, "abcd" as &const byte, 4usize);
+    try assert_eq_bool(try history.undo(&doc), true);
+    try rich_history_test_assert_plain_text(&doc, "a" as &const byte, 1usize);
+}
+
+test "programmatic richtext editing cycle can be recorded and replayed safely" {
+    var doc: RichDocument = rich_document_new();
+    defer doc.dispose();
+    try doc.set_plain_text("Title" as &const byte);
+
+    var history: RichHistory = rich_history_new();
+    defer history.dispose();
+
+    var before_break: RichDocument = try rich_history_test_clone_doc(&doc);
+    defer before_break.dispose();
+    const break_caret: RichPos = try rich_insert_break(&doc, rich_range_collapsed(try doc.linear_offset_to_pos(5u32)));
+    try history.record(&before_break, &doc, RichHistoryMergeKind.None, 5u32, try doc.pos_to_linear_offset(break_caret), 100u64);
+
+    var before_insert: RichDocument = try rich_history_test_clone_doc(&doc);
+    defer before_insert.dispose();
+    const inserted_caret: RichPos = try rich_insert_text(&doc, rich_range_collapsed(break_caret), "item" as &const byte, 4usize, rich_inline_marks_none());
+    try history.record(&before_insert, &doc, RichHistoryMergeKind.InsertText, 6u32, try doc.pos_to_linear_offset(inserted_caret), 200u64);
+
+    var before_block_type: RichDocument = try rich_history_test_clone_doc(&doc);
+    defer before_block_type.dispose();
+    const typed_range: RichRange = try rich_set_block_type(&doc, rich_range_collapsed(inserted_caret), RichBlockType.BulletItem, 0u8);
+    try history.record(&before_block_type, &doc, RichHistoryMergeKind.None, 10u32, try doc.pos_to_linear_offset(typed_range.focus), 300u64);
+
+    var before_toggle: RichDocument = try rich_history_test_clone_doc(&doc);
+    defer before_toggle.dispose();
+    const toggled_range: RichRange = RichRange{
+        anchor: try doc.linear_offset_to_pos(6u32),
+        focus: try doc.linear_offset_to_pos(10u32),
+    };
+    _ = try rich_toggle_inline_mark(&doc, toggled_range, rich_inline_marks_none(), RICH_MARK_BOLD);
+    try history.record(&before_toggle, &doc, RichHistoryMergeKind.None, 6u32, 10u32, 400u64);
+
+    try rich_history_test_assert_plain_text(&doc, "Title\nitem" as &const byte, 10usize);
+    try assert_eq_i32(doc.block_count as i32, 2);
+    try assert_eq_i32(doc.blocks[0].block_type as i32, RichBlockType.Paragraph as i32);
+    try assert_eq_i32(doc.blocks[1].block_type as i32, RichBlockType.BulletItem as i32);
+    try assert_eq_i32(doc.blocks[1].span_count as i32, 1);
+    try assert_eq_i32(doc.blocks[1].spans[0].marks.bits as i32, RICH_MARK_BOLD as i32);
+
+    var entry_idx: u32 = 0u32;
+    while entry_idx < history.undo_count {
+        try rich_history_test_assert_snapshot_ops_only(&history.undo_entries[entry_idx as usize].before);
+        try rich_history_test_assert_snapshot_ops_only(&history.undo_entries[entry_idx as usize].after);
+        entry_idx = entry_idx + 1u32;
+    }
+
+    try assert_eq_bool(try history.undo(&doc), true);
+    try rich_history_test_assert_plain_text(&doc, "Title\nitem" as &const byte, 10usize);
+    try assert_eq_i32(doc.blocks[1].spans[0].marks.bits as i32, 0);
+
+    try assert_eq_bool(try history.undo(&doc), true);
+    try rich_history_test_assert_plain_text(&doc, "Title\nitem" as &const byte, 10usize);
+    try assert_eq_i32(doc.blocks[1].block_type as i32, RichBlockType.Paragraph as i32);
+
+    try assert_eq_bool(try history.undo(&doc), true);
+    try rich_history_test_assert_plain_text(&doc, "Title\n" as &const byte, 6usize);
+    try assert_eq_i32(doc.block_count as i32, 2);
+    try assert_eq_i32(doc.blocks[1].span_count as i32, 1);
+    try assert_eq_i32(doc.blocks[1].spans[0].text_len as i32, 0);
+
+    try assert_eq_bool(try history.undo(&doc), true);
+    try rich_history_test_assert_plain_text(&doc, "Title" as &const byte, 5usize);
+    try assert_eq_i32(doc.block_count as i32, 1);
+
+    try assert_eq_bool(try history.redo(&doc), true);
+    try assert_eq_bool(try history.redo(&doc), true);
+    try assert_eq_bool(try history.redo(&doc), true);
+    try assert_eq_bool(try history.redo(&doc), true);
+    try rich_history_test_assert_plain_text(&doc, "Title\nitem" as &const byte, 10usize);
+    try assert_eq_i32(doc.block_count as i32, 2);
+    try assert_eq_i32(doc.blocks[1].block_type as i32, RichBlockType.BulletItem as i32);
+    try assert_eq_i32(doc.blocks[1].span_count as i32, 1);
+    try assert_eq_i32(doc.blocks[1].spans[0].marks.bits as i32, RICH_MARK_BOLD as i32);
+
+    var final_snapshot: RichDelta = rich_delta_new();
+    defer final_snapshot.dispose();
+    try document_to_delta(&doc, &final_snapshot);
+    try rich_history_test_assert_snapshot_ops_only(&final_snapshot);
+}

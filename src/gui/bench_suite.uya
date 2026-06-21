@@ -1,0 +1,8 @@
+use std.runtime.entry;
+
+use gui.benchmarks.core_bench.run_core_bench;
+
+/// 模块入口，运行 GUI benchmark 套件。
+export fn main() i32 {
+    return run_core_bench();
+}

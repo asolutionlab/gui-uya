@@ -1,0 +1,79 @@
+use gui.platform.disp.DisplayDriverKind;
+use gui.platform.disp.DisplayDriverProfile;
+use gui.platform.disp.PixelFormat;
+use gui.platform.disp.display_driver_profile;
+use gui.platform.tick.get_tick_ms;
+use gui.platform.tick.get_tick_us;
+use gui.platform.tick.sleep_ms;
+use gui.render.img.ImageData;
+use gui.render.img.image_data_new;
+use gui.res.cache.ImageCache;
+use gui.res.cache.image_cache_new;
+use gui.res.cache.image_cache_put_async;
+use gui.res.fs.FatFileSystem;
+use gui.res.fs.RomFileSystem;
+use gui.res.fs.fat_fs_new;
+use gui.res.fs.fs_read_async;
+use gui.res.fs.rom_fs_new;
+use std.async.block_on;
+use std.testing.assert_eq_bool;
+use std.testing.assert_eq_i32;
+use std.testing.expect;
+
+export const TEST_PHASE4_IO_MODULE: i32 = 1;
+
+test "rom fs and async read succeed" {
+    var rom: RomFileSystem = rom_fs_new();
+    var payload: [byte: 4] = [85, 89, 65, 33];
+    var out: [byte: 8] = [];
+    try assert_eq_bool(rom.add_file("hello.bin", &payload[0] as &const byte, 4usize), true);
+    const n: usize = try rom.read("hello.bin", &out[0], 8usize);
+    try assert_eq_i32(n as i32, 4);
+    try assert_eq_i32(out[0] as i32, 85);
+
+    var out_async: [byte: 8] = [];
+    const async_n: usize = try block_on<usize>(fs_read_async<RomFileSystem>(&rom, "hello.bin", &out_async[0], 8usize));
+    try assert_eq_i32(async_n as i32, 4);
+    try assert_eq_i32(out_async[1] as i32, 89);
+}
+
+test "fat fs host adapter reads repository files" {
+    var fat: FatFileSystem = fat_fs_new(null);
+    try assert_eq_bool(fat.exists("Makefile"), true);
+    var out: [byte: 32] = [];
+    const n: usize = try fat.read("Makefile", &out[0], 32usize);
+    try expect(n > 0usize);
+    try assert_eq_i32(out[0] as i32, 85);
+}
+
+test "image cache async lifecycle and driver profiles work" {
+    var img_bytes: [byte: 12] = [255, 0, 0,   0, 255, 0,   0, 0, 255,   255, 255, 255];
+    var cache: ImageCache = image_cache_new(4, 64u32);
+    const img: ImageData = image_data_new(&img_bytes[0], 2, 2, 6, PixelFormat.RGB888);
+    const loaded: bool = try block_on<bool>(image_cache_put_async(&cache, 7u32, img));
+    try assert_eq_bool(loaded, true);
+    try assert_eq_bool(cache.contains(7u32), true);
+    try assert_eq_bool(cache.is_loading(7u32), false);
+    try assert_eq_bool(cache.retain(7u32), true);
+    try assert_eq_bool(cache.release(7u32), true);
+
+    var out: ImageData = img;
+    try assert_eq_bool(cache.get(7u32, &out), true);
+    try assert_eq_i32(out.size.w as i32, 2);
+
+    const st7789: DisplayDriverProfile = display_driver_profile(DisplayDriverKind.ST7789);
+    const ili9341: DisplayDriverProfile = display_driver_profile(DisplayDriverKind.ILI9341);
+    try assert_eq_i32(st7789.width as i32, 240);
+    try assert_eq_i32(st7789.height as i32, 320);
+    try assert_eq_i32(ili9341.width as i32, 320);
+}
+
+test "tick interface is monotonic enough for phase4" {
+    const start_ms: u32 = get_tick_ms();
+    const start_us: u64 = get_tick_us();
+    sleep_ms(1u32);
+    const end_ms: u32 = get_tick_ms();
+    const end_us: u64 = get_tick_us();
+    try expect(end_ms >= start_ms);
+    try expect(end_us >= start_us);
+}

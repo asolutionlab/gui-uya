@@ -1,0 +1,244 @@
+use gui.core.color.BLACK;
+use gui.core.color.Color;
+use gui.core.color.WHITE;
+use gui.core.obj.GuiObj;
+use gui.style.Style;
+use gui.style.StyleBuilder;
+use gui.style.StyleProp;
+use gui.style.StyleValue;
+use gui.style.style_builder_new;
+
+export const MAX_THEMES: i32 = 8;
+
+const THEME_WIDGET_BUTTON: u32 = 0x1001u32;
+const THEME_WIDGET_LABEL: u32 = 0x1002u32;
+const THEME_WIDGET_IMAGE: u32 = 0x1003u32;
+const THEME_WIDGET_SLIDER: u32 = 0x1004u32;
+const THEME_WIDGET_SWITCH: u32 = 0x1005u32;
+const THEME_WIDGET_PAGE: u32 = 0x1006u32;
+const THEME_WIDGET_PANEL: u32 = 0x1007u32;
+const THEME_WIDGET_LIST: u32 = 0x1008u32;
+const THEME_WIDGET_GRID_VIEW: u32 = 0x1009u32;
+const THEME_WIDGET_CHART: u32 = 0x100Au32;
+const THEME_WIDGET_CANVAS: u32 = 0x100Bu32;
+const THEME_WIDGET_RICH_TEXT_INPUT: u32 = 0x100Du32;
+const THEME_WIDGET_RICH_TOOLBAR: u32 = 0x100Eu32;
+
+export enum ThemeVariant {
+    Light,
+    Dark,
+    System,
+}
+
+export struct Theme {
+    name_ptr: &const byte,
+    variant: ThemeVariant,
+    primary: Color,
+    secondary: Color,
+    accent: Color,
+    surface: Color,
+    surface_alt: Color,
+    text: Color,
+    muted_text: Color,
+    button_style: Style,
+    panel_style: Style,
+    text_style: Style,
+    compact_style: Style,
+    rich_text_style: Style,
+    rich_toolbar_style: Style,
+}
+
+export struct ThemeManager {
+    themes: [Theme: 8],
+    active: [bool: 8],
+    theme_count: u8,
+    current_idx: i32,
+}
+
+fn theme_entry_default() Theme {
+    return Theme{
+        name_ptr: "",
+        variant: ThemeVariant.Light,
+        primary: BLACK,
+        secondary: WHITE,
+        accent: WHITE,
+        surface: WHITE,
+        surface_alt: WHITE,
+        text: BLACK,
+        muted_text: theme_color(0x666666u32),
+        button_style: style_default(),
+        panel_style: style_default(),
+        text_style: style_default(),
+        compact_style: style_default(),
+        rich_text_style: style_default(),
+        rich_toolbar_style: style_default(),
+    };
+}
+
+fn theme_color(hex: u32) Color {
+    return Color{
+        r: ((hex >> 16) & 0xFFu32) as u8,
+        g: ((hex >> 8) & 0xFFu32) as u8,
+        b: (hex & 0xFFu32) as u8,
+        a: 255,
+    };
+}
+
+fn theme_make_style(bg: Color, fg: Color, border_width: u8, border_color: Color, radius: u8, padding: u8, font_size: u8) Style {
+    var builder: StyleBuilder = style_builder_new();
+    builder.bg_color(bg);
+    builder.fg_color(fg);
+    builder.border(border_width, border_color);
+    builder.radius(radius);
+    builder.padding(padding);
+    builder.font_size(font_size);
+    return builder.build();
+}
+
+fn theme_apply_to_obj(theme: &Theme, obj: &GuiObj) void {
+    if obj.type_tag == THEME_WIDGET_BUTTON {
+        obj.style = theme.button_style.clone();
+    } else if obj.type_tag == THEME_WIDGET_LABEL {
+        obj.style = theme.text_style.clone();
+    } else if obj.type_tag == THEME_WIDGET_PANEL || obj.type_tag == THEME_WIDGET_PAGE {
+        obj.style = theme.panel_style.clone();
+    } else if obj.type_tag == THEME_WIDGET_SLIDER
+        || obj.type_tag == THEME_WIDGET_SWITCH
+        || obj.type_tag == THEME_WIDGET_LIST
+        || obj.type_tag == THEME_WIDGET_GRID_VIEW {
+        obj.style = theme.compact_style.clone();
+    } else if obj.type_tag == THEME_WIDGET_RICH_TEXT_INPUT {
+        obj.style = theme.rich_text_style.clone();
+    } else if obj.type_tag == THEME_WIDGET_RICH_TOOLBAR {
+        obj.style = theme.rich_toolbar_style.clone();
+    } else if obj.type_tag == THEME_WIDGET_IMAGE
+        || obj.type_tag == THEME_WIDGET_CHART
+        || obj.type_tag == THEME_WIDGET_CANVAS {
+        obj.style = theme.panel_style.clone();
+    } else if obj.flags.clickable {
+        obj.style = theme.button_style.clone();
+    } else if obj.flags.focusable {
+        obj.style = theme.compact_style.clone();
+    } else if obj.child_count() > 0 {
+        obj.style = theme.panel_style.clone();
+    } else {
+        obj.style = theme.text_style.clone();
+    }
+}
+
+ThemeManager {
+    fn register_theme(self: &Self, theme: Theme) void {
+        if self.theme_count >= MAX_THEMES as u8 {
+            return;
+        }
+        const idx: i32 = self.theme_count as i32;
+        self.themes[idx] = theme;
+        self.active[idx] = true;
+        if self.current_idx < 0 {
+            self.current_idx = idx;
+        }
+        self.theme_count = self.theme_count + 1;
+    }
+
+    fn switch_theme(self: &Self, variant: ThemeVariant) void {
+        var i: i32 = 0;
+        while i < self.theme_count as i32 {
+            if self.active[i] && self.themes[i].variant == variant {
+                self.current_idx = i;
+                return;
+            }
+            i = i + 1;
+        }
+    }
+
+    fn current(self: &Self) &Theme {
+        if self.current_idx < 0 || self.current_idx >= self.theme_count as i32 {
+            return null;
+        }
+        return &self.themes[self.current_idx as usize];
+    }
+
+    fn apply_to_tree(self: &Self, root: &GuiObj) void {
+        const theme: &Theme = self.current();
+        if theme == null || root == null {
+            return;
+        }
+        self.apply_recursive(theme, root);
+    }
+
+    fn apply_recursive(self: &Self, theme: &Theme, obj: &GuiObj) void {
+        _ = self;
+        theme_apply_to_obj(theme, obj);
+
+        var child: &GuiObj = obj.child_head;
+        while child != null {
+            self.apply_recursive(theme, child);
+            child = child.sibling_next;
+        }
+    }
+}
+
+/// 创建主题管理器实例。
+export fn theme_manager_new() ThemeManager {
+    return ThemeManager{
+        themes: [],
+        active: [],
+        theme_count: 0,
+        current_idx: -1,
+    };
+}
+
+/// 返回 Material Light 预设主题。
+export fn material_light_theme() Theme {
+    return Theme{
+        name_ptr: "Material Light",
+        variant: ThemeVariant.Light,
+        primary: theme_color(0x1976D2u32),
+        secondary: theme_color(0x90CAF9u32),
+        accent: theme_color(0x00ACC1u32),
+        surface: theme_color(0xF7F7F7u32),
+        surface_alt: theme_color(0xFFFFFFu32),
+        text: theme_color(0x111111u32),
+        muted_text: theme_color(0x666666u32),
+        button_style: theme_make_style(theme_color(0x1976D2u32), WHITE, 0, theme_color(0x1976D2u32), 8, 8, 14),
+        panel_style: theme_make_style(theme_color(0xFFFFFFu32), theme_color(0x111111u32), 1, theme_color(0xD8D8D8u32), 6, 10, 14),
+        text_style: theme_make_style(theme_color(0xF7F7F7u32), theme_color(0x111111u32), 0, theme_color(0xF7F7F7u32), 0, 0, 14),
+        compact_style: theme_make_style(theme_color(0xF1F5F9u32), theme_color(0x1E293Bu32), 1, theme_color(0xCBD5E1u32), 4, 4, 12),
+        rich_text_style: theme_make_style(theme_color(0xFFFFFFu32), theme_color(0x0F172Au32), 1, theme_color(0xCBD5E1u32), 10, 8, 14),
+        rich_toolbar_style: theme_make_style(theme_color(0xF8FAFCu32), theme_color(0x0F172Au32), 1, theme_color(0xCBD5E1u32), 8, 6, 12),
+    };
+}
+
+/// 返回 Material Dark 预设主题。
+export fn material_dark_theme() Theme {
+    return Theme{
+        name_ptr: "Material Dark",
+        variant: ThemeVariant.Dark,
+        primary: theme_color(0x64B5F6u32),
+        secondary: theme_color(0x1E293Bu32),
+        accent: theme_color(0x26C6DAu32),
+        surface: theme_color(0x101418u32),
+        surface_alt: theme_color(0x1B2430u32),
+        text: theme_color(0xF8FAFCu32),
+        muted_text: theme_color(0x94A3B8u32),
+        button_style: theme_make_style(theme_color(0x2563EBu32), theme_color(0xF8FAFCu32), 0, theme_color(0x2563EBu32), 8, 8, 14),
+        panel_style: theme_make_style(theme_color(0x1B2430u32), theme_color(0xF8FAFCu32), 1, theme_color(0x334155u32), 6, 10, 14),
+        text_style: theme_make_style(theme_color(0x101418u32), theme_color(0xF8FAFCu32), 0, theme_color(0x101418u32), 0, 0, 14),
+        compact_style: theme_make_style(theme_color(0x0F172Au32), theme_color(0xE2E8F0u32), 1, theme_color(0x334155u32), 3, 3, 11),
+        rich_text_style: theme_make_style(theme_color(0x111827u32), theme_color(0xF8FAFCu32), 1, theme_color(0x475569u32), 10, 8, 14),
+        rich_toolbar_style: theme_make_style(theme_color(0x0F172Au32), theme_color(0xE2E8F0u32), 1, theme_color(0x334155u32), 8, 6, 12),
+    };
+}
+
+/// 返回面向资源受限设备的紧凑主题。
+export fn compact_theme() Theme {
+    var theme: Theme = material_light_theme();
+    theme.name_ptr = "Compact";
+    theme.variant = ThemeVariant.System;
+    theme.panel_style = theme_make_style(theme_color(0xEEF2F6u32), theme_color(0x0F172Au32), 1, theme_color(0xCBD5E1u32), 3, 3, 11);
+    theme.button_style = theme.compact_style.clone();
+    theme.text_style.set_u32(StyleProp.FontSize, 11u32);
+    theme.rich_text_style = theme_make_style(theme_color(0xFFFFFFu32), theme_color(0x0F172Au32), 1, theme_color(0xCBD5E1u32), 6, 5, 12);
+    theme.rich_toolbar_style = theme_make_style(theme_color(0xF1F5F9u32), theme_color(0x1E293Bu32), 1, theme_color(0xCBD5E1u32), 5, 4, 11);
+    return theme;
+}

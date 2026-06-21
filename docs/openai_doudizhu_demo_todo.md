@@ -7,14 +7,14 @@
 
 ## 当前进展
 
-- 已新增 `gui/examples/doudizhu/rules.uya`、`gui/examples/doudizhu/ai.uya`、`gui/examples/demo_doudizhu.uya`。
-- 已修改 `gui/sim/config.uya`、`gui/sim/app.uya`，接入 `--demo doudizhu` 和 `Z` 热键。
-- 已新增 `gui/tests/test_doudizhu_rules.uya`、`gui/tests/test_doudizhu_ai.uya`，并接入 `gui/test_suite.uya`。
+- 已新增 `examples/doudizhu/rules.uya`、`examples/doudizhu/ai.uya`、`examples/demo_doudizhu.uya`。
+- 已修改 `src/gui/sim/config.uya`、`src/gui/sim/app.uya`，接入 `--demo doudizhu` 和 `Z` 热键。
+- 已新增 `tests/test_doudizhu_rules.uya`、`tests/test_doudizhu_ai.uya`，并接入 `tests/test_suite.uya`。
 - 已补 `phase6` demo 渲染测试入口。
-- 已真实通过 `./uya/bin/uya test gui/test_suite.uya -O0 --stack-size 65536` 与 `make test`。
+- 已真实通过 `make test`。
 - 已真实通过 `make sim-headless SIM_HEADLESS_ARGS="--demo doudizhu --max-frames 5 --screenshot build/sim/doudizhu.bmp"`，并核对截图内容。
 - 已修复 simulator 窗口路径下 `--max-frames` 依赖 present 次数导致静态 retained 页面不退出的问题，并真实通过 `make sim-run SIM_ARGS="--demo doudizhu --max-frames 3 --screenshot build/sim/doudizhu_simrun_check.bmp"`。
-- 已新增 `gui/platform/openai/chat.uya`、`gui/platform/openai/openai_chat_stub.c`、`gui/platform/openai/openai_chat_host.c`，并接入 `gui/examples/doudizhu/ai.uya`。
+- 已新增 `src/gui/platform/openai/chat.uya`、`src/gui/platform/openai/openai_chat_stub.c`、`src/gui/platform/openai/openai_chat_host.c`，并接入 `examples/doudizhu/ai.uya`。
 - 已支持 `.uya_openai.env`、`openai.env`、`UYA_OPENAI_CONFIG_FILE` 配置文件加载，以及 `UYA_OPENAI_DEBUG=1` 请求调试日志。
 - 已真实验证 OpenAI live 请求可返回合法 `action_id`，示例请求耗时约 `1.4s ~ 1.7s`，未见超时。
 - 当前仍未完成的主要是阶段 A 手工可玩/完整一局验收，以及阶段 B 按 TODO 原口径补齐完整 smoke 收口。
@@ -60,7 +60,7 @@
 
 ### A1. 规则层
 
-- [x] 新建 `gui/examples/doudizhu/rules.uya`。
+- [x] 新建 `examples/doudizhu/rules.uya`。
 - [x] 定义 rank、card、hand、combo、action、game phase、game state。
 - [x] 实现 `ddz_deck_init()`，生成 54 张唯一牌。
 - [x] 实现 `ddz_deck_shuffle()`，使用可重复 seed。
@@ -97,7 +97,7 @@
 
 ### A2. 本地启发式 AI
 
-- [x] 新建 `gui/examples/doudizhu/ai.uya`。
+- [x] 新建 `examples/doudizhu/ai.uya`。
 - [x] 定义 `DdzAiSource`：`Local | Fallback`。
 - [x] 定义离线 AI 决策状态。
 - [x] 实现叫分评分函数。
@@ -124,7 +124,7 @@
 
 ### A3. 离线 UI Demo
 
-- [x] 新建 `gui/examples/demo_doudizhu.uya`。
+- [x] 新建 `examples/demo_doudizhu.uya`。
 - [x] 定义 `DdzPageRetained`。
 - [x] 实现 demo 初始化和资源分配。
 - [x] 实现 Canvas 桌面背景绘制。
@@ -151,12 +151,12 @@
 
 ### A4. 模拟器接入
 
-- [x] 修改 `gui/sim/config.uya`，新增 `SimDemoKind.Doudizhu`。
+- [x] 修改 `src/gui/sim/config.uya`，新增 `SimDemoKind.Doudizhu`。
 - [x] 修改 `sim_demo_name()`，返回 `斗地主`。
 - [x] 修改命令行解析，支持 `--demo doudizhu`。
-- [x] 修改 `gui/sim/app.uya`，添加 retained state。
-- [x] 修改 `gui/sim/app.uya`，接入 render/update。
-- [x] 修改 `gui/sim/app.uya`，接入输入事件。
+- [x] 修改 `src/gui/sim/app.uya`，添加 retained state。
+- [x] 修改 `src/gui/sim/app.uya`，接入 render/update。
+- [x] 修改 `src/gui/sim/app.uya`，接入输入事件。
 - [x] 增加热键 `Z` 切换到斗地主。
 - [x] 更新 simulator help 文案。
 
@@ -168,14 +168,13 @@
 
 ### A5. 测试接入
 
-- [x] 新建 `gui/tests/test_doudizhu_rules.uya`。
-- [x] 新建 `gui/tests/test_doudizhu_ai.uya`。
-- [x] 修改 `gui/test_suite.uya` 聚合新测试。
-- [x] 如需快速 smoke，补 `gui/examples` demo 渲染测试。
+- [x] 新建 `tests/test_doudizhu_rules.uya`。
+- [x] 新建 `tests/test_doudizhu_ai.uya`。
+- [x] 修改 `tests/test_suite.uya` 聚合新测试。
+- [x] 如需快速 smoke，补 `examples` demo 渲染测试。
 
 验收：
 
-- [x] `./uya/bin/uya test gui/test_suite.uya -O0 --stack-size 65536` 通过。
 - [x] `make test` 通过。
 
 ### A6. 文档先写离线路径
@@ -211,7 +210,7 @@
 
 ### B1. OpenAI Uya 封装
 
-- [x] 新建 `gui/platform/openai/chat.uya`。
+- [x] 新建 `src/gui/platform/openai/chat.uya`。
 - [x] 声明 `uya_openai_chat_available()`。
 - [x] 声明 `uya_openai_chat_start()`。
 - [x] 声明 `uya_openai_chat_poll()`。
@@ -228,7 +227,7 @@
 
 ### B2. OpenAI Stub
 
-- [x] 新建 `gui/platform/openai/openai_chat_stub.c`。
+- [x] 新建 `src/gui/platform/openai/openai_chat_stub.c`。
 - [x] 实现 `uya_openai_chat_available()` 返回 0。
 - [x] 实现 `start()` 返回负值。
 - [x] 实现 `poll()` 返回 `-4`。
@@ -241,7 +240,7 @@
 
 ### B3. libcurl Host Bridge
 
-- [x] 新建 `gui/platform/openai/openai_chat_host.c`。
+- [x] 新建 `src/gui/platform/openai/openai_chat_host.c`。
 - [x] 读取 `OPENAI_API_KEY`。
 - [x] 读取 `OPENAI_MODEL`。
 - [x] 读取 `OPENAI_BASE_URL`，默认 `https://api.openai.com/v1`。

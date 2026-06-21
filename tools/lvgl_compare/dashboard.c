@@ -46,7 +46,7 @@ static const char * dashboard_font_paths[] = {
     "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
     "/usr/share/fonts/opentype/source-han-cjk/SourceHanSansSC-Regular.otf",
-    "gui/render/DejaVuSans.ttf",
+    "src/gui/render/DejaVuSans.ttf",
 };
 
 static bool ensure_dir(const char * path)

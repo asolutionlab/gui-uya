@@ -1,0 +1,337 @@
+use gui.core.color.Color;
+use gui.core.obj.GuiObj;
+use gui.core.obj.IContainer;
+use gui.core.obj.IGuiRenderCallback;
+use gui.core.rect.Rect;
+use gui.core.size.Size;
+use gui.render.ctx.RenderCtx;
+use gui.style.StyleProp;
+use gui.widget.btn.Button;
+use gui.widget.base.Widget;
+use gui.widget.base.WIDGET_TYPE_BUTTON;
+use gui.widget.base.WIDGET_TYPE_IMAGE;
+use gui.widget.base.WIDGET_TYPE_LABEL;
+use gui.widget.base.WIDGET_TYPE_PANEL;
+use gui.widget.base.WIDGET_TYPE_GRID_VIEW;
+use gui.widget.base.WIDGET_TYPE_RICH_TEXT_INPUT;
+use gui.widget.base.WIDGET_TYPE_RICH_TOOLBAR;
+use gui.widget.base.widget_bind_callbacks;
+use gui.widget.base.widget_draw_surface;
+use gui.widget.base.widget_inner_rect;
+use gui.widget.base.widget_new;
+use gui.widget.base.widget_render_children;
+use gui.widget.img.Image;
+use gui.widget.lbl.Label;
+use gui.widget.panel.Panel;
+use gui.widget.rich_text_input.RichTextInput;
+use gui.widget.rich_toolbar.RichToolbar;
+
+fn grid_render_obj(obj: &GuiObj, ctx: &RenderCtx) void {
+    if obj == null || obj.user_data == null {
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_BUTTON {
+        const button: &Button = obj.user_data as &Button;
+        if button != null {
+            button.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_LABEL {
+        const label: &Label = obj.user_data as &Label;
+        if label != null {
+            label.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_IMAGE {
+        const image: &Image = obj.user_data as &Image;
+        if image != null {
+            image.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_PANEL {
+        const panel: &Panel = obj.user_data as &Panel;
+        if panel != null {
+            panel.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_RICH_TEXT_INPUT {
+        const input: &RichTextInput = obj.user_data as &RichTextInput;
+        if input != null {
+            input.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_RICH_TOOLBAR {
+        const toolbar: &RichToolbar = obj.user_data as &RichToolbar;
+        if toolbar != null {
+            toolbar.render(ctx);
+        }
+    }
+}
+
+export const MAX_GRID_ITEMS: i32 = 128;
+
+export enum GridCellContentMode {
+    Fill,
+    Center,
+}
+
+export enum GridContentAlign {
+    Start,
+    Center,
+    End,
+}
+
+struct GridViewRenderAdapter : IGuiRenderCallback {}
+
+var GRID_VIEW_RENDER_ADAPTER: IGuiRenderCallback = GridViewRenderAdapter{};
+
+export struct GridView : IContainer {
+    widget: Widget,
+    columns: u8,
+    item_size: Size,
+    row_gap: u8,
+    col_gap: u8,
+    cell_padding: u8,
+    cell_content_mode: GridCellContentMode,
+    content_align_x: GridContentAlign,
+    content_align_y: GridContentAlign,
+    items: [&GuiObj: 128],
+    item_count: u16,
+    scroll_y: i16,
+}
+
+fn grid_aligned_offset(align: GridContentAlign, outer_size: i32, content_size: i32) i16 {
+    const free_space: i32 = outer_size - content_size;
+    if free_space <= 0 {
+        return 0;
+    }
+    if align == GridContentAlign.Center {
+        return (free_space / 2) as i16;
+    }
+    if align == GridContentAlign.End {
+        return free_space as i16;
+    }
+    return 0;
+}
+
+fn grid_layout_child_rect(child: &GuiObj, cell: Rect, area: Rect, cell_padding: u8, cell_content_mode: GridCellContentMode) void {
+    if child == null {
+        return;
+    }
+
+    const cell_pad: i16 = cell_padding as i16;
+    var content_w: i32 = cell.w as i32 - cell_pad as i32 * 2;
+    var content_h: i32 = cell.h as i32 - cell_pad as i32 * 2;
+    if content_w < 0 {
+        content_w = 0;
+    }
+    if content_h < 0 {
+        content_h = 0;
+    }
+
+    var child_rect: Rect = Rect{
+        x: cell.x + cell_pad,
+        y: cell.y + cell_pad,
+        w: (content_w as! u16).value,
+        h: (content_h as! u16).value,
+    };
+    if cell_content_mode == GridCellContentMode.Center {
+        var desired_w: i32 = child.w as i32;
+        var desired_h: i32 = child.h as i32;
+        if desired_w > content_w {
+            desired_w = content_w;
+        }
+        if desired_h > content_h {
+            desired_h = content_h;
+        }
+        if desired_w < 0 {
+            desired_w = 0;
+        }
+        if desired_h < 0 {
+            desired_h = 0;
+        }
+        child_rect = Rect{
+            x: child_rect.x + ((content_w - desired_w) / 2) as i16,
+            y: child_rect.y + ((content_h - desired_h) / 2) as i16,
+            w: (desired_w as! u16).value,
+            h: (desired_h as! u16).value,
+        };
+    }
+
+    child.x = child_rect.x - area.x;
+    child.y = child_rect.y - area.y;
+    child.w = child_rect.w;
+    child.h = child_rect.h;
+}
+
+GridViewRenderAdapter {
+    fn invoke(self: &Self, obj: &GuiObj, ctx: &RenderCtx, user_data: &void) void {
+        _ = self;
+        _ = obj;
+        const grid: &GridView = user_data as &GridView;
+        if grid != null {
+            grid.render(ctx);
+        }
+    }
+}
+
+GridView {
+    fn new() GridView {
+        var widget: Widget = widget_new("GridView", WIDGET_TYPE_GRID_VIEW, false, false);
+        widget.size(200, 160);
+        widget.base.style.set_color(StyleProp.BgColor, Color{ r: 255, g: 255, b: 255, a: 255 });
+        widget.base.style.set_color(StyleProp.BorderColor, Color{ r: 221, g: 226, b: 235, a: 255 });
+        widget.base.style.set_u32(StyleProp.BorderWidth, 1u32);
+        widget.base.style.set_u32(StyleProp.Radius, 8u32);
+        widget.base.style.set_u32(StyleProp.PaddingLeft, 8u32);
+        widget.base.style.set_u32(StyleProp.PaddingRight, 8u32);
+        widget.base.style.set_u32(StyleProp.PaddingTop, 8u32);
+        widget.base.style.set_u32(StyleProp.PaddingBottom, 8u32);
+        return GridView{
+            widget: widget,
+            columns: 3,
+            item_size: Size{ w: 56, h: 56 },
+            row_gap: 0u8,
+            col_gap: 0u8,
+            cell_padding: 0u8,
+            cell_content_mode: GridCellContentMode.Fill,
+            content_align_x: GridContentAlign.Start,
+            content_align_y: GridContentAlign.Start,
+            items: [],
+            item_count: 0,
+            scroll_y: 0,
+        };
+    }
+
+    fn obj(self: &Self) &GuiObj {
+        return widget_bind_callbacks(&self.widget.base, &GRID_VIEW_RENDER_ADAPTER, null, self as &void);
+    }
+
+    fn scroll_to(self: &Self, y: i16) void {
+        const prev_y: i16 = self.scroll_y;
+        self.scroll_y = y;
+        if self.scroll_y < 0 {
+            self.scroll_y = 0;
+        }
+        if self.scroll_y == prev_y {
+            return;
+        }
+        self.widget.base.invalidate();
+    }
+
+    fn render(self: &Self, ctx: &RenderCtx) void {
+        const inner: Rect = widget_draw_surface(&self.widget, ctx);
+        const area: Rect = self.widget.base.screen_area();
+        const cols: i32 = self.columns as i32;
+        if cols <= 0 {
+            return;
+        }
+        const step_x: i32 = self.item_size.w as i32 + self.col_gap as i32;
+        const step_y: i32 = self.item_size.h as i32 + self.row_gap as i32;
+        var row_count: i32 = 0;
+        if cols > 0 && self.item_count > 0u16 {
+            row_count = ((self.item_count as i32) + cols - 1) / cols;
+        }
+        var used_cols: i32 = self.item_count as i32;
+        if used_cols > cols {
+            used_cols = cols;
+        }
+        var content_w: i32 = 0;
+        var content_h: i32 = 0;
+        if used_cols > 0 {
+            content_w = used_cols * self.item_size.w as i32 + (used_cols - 1) * self.col_gap as i32;
+        }
+        if row_count > 0 {
+            content_h = row_count * self.item_size.h as i32 + (row_count - 1) * self.row_gap as i32;
+        }
+        const content_x: i16 = inner.x + grid_aligned_offset(self.content_align_x, inner.w as i32, content_w);
+        const content_y: i16 = inner.y + grid_aligned_offset(self.content_align_y, inner.h as i32, content_h);
+
+        var layout_idx: i32 = 0;
+        while layout_idx < self.item_count as i32 {
+            const row: i32 = layout_idx / cols;
+            const col: i32 = layout_idx % cols;
+            const cell: Rect = Rect{
+                x: content_x + (col * step_x) as i16,
+                y: content_y + (row * step_y - self.scroll_y as i32) as i16,
+                w: self.item_size.w,
+                h: self.item_size.h,
+            };
+            const layout_child: &GuiObj = self.items[layout_idx as usize];
+            if layout_child != null {
+                grid_layout_child_rect(layout_child, cell, area, self.cell_padding, self.cell_content_mode);
+            }
+            layout_idx = layout_idx + 1;
+        }
+
+        ctx.push_clip(inner);
+        var idx: i32 = 0;
+        while idx < self.item_count as i32 {
+            const row: i32 = idx / cols;
+            const col: i32 = idx % cols;
+            const cell_x: i16 = content_x + (col * step_x) as i16;
+            const cell_y: i16 = content_y + (row * step_y - self.scroll_y as i32) as i16;
+            const cell: Rect = Rect{
+                x: cell_x,
+                y: cell_y,
+                w: self.item_size.w,
+                h: self.item_size.h,
+            };
+            const cell_bottom: i16 = cell.y + cell.h as i16;
+            const inner_bottom: i16 = inner.y + inner.h as i16;
+            if cell_bottom < inner.y || cell.y > inner_bottom {
+                idx = idx + 1;
+                continue;
+            }
+            ctx.draw_round_rect(cell, 6, Color{ r: 234, g: 238, b: 245, a: 255 }, 1);
+            idx = idx + 1;
+        }
+        widget_render_children(&self.widget.base, ctx);
+        ctx.pop_clip();
+    }
+
+    fn add_child(self: &Self, child: &GuiObj) void {
+        self.widget.base.add_child(child);
+        if self.item_count < MAX_GRID_ITEMS as u16 {
+            self.items[self.item_count as usize] = child;
+            self.item_count = self.item_count + 1;
+        }
+    }
+
+    fn remove_child(self: &Self, child: &GuiObj) void {
+        self.widget.base.remove_child(child);
+        var found: i32 = -1;
+        var i: i32 = 0;
+        while i < self.item_count as i32 {
+            if self.items[i] == child {
+                found = i;
+                break;
+            }
+            i = i + 1;
+        }
+        if found >= 0 {
+            i = found;
+            while i < self.item_count as i32 - 1 {
+                self.items[i] = self.items[i + 1];
+                i = i + 1;
+            }
+            self.item_count = self.item_count - 1;
+        }
+    }
+
+    fn child_count(self: &Self) i32 {
+        return self.item_count as i32;
+    }
+
+    fn child_at(self: &Self, index: i32) &GuiObj {
+        if index < 0 || index >= self.item_count as i32 {
+            return null;
+        }
+        return self.items[index as usize];
+    }
+}

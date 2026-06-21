@@ -1,0 +1,587 @@
+use gui.core.color.Color;
+use gui.core.event.Event;
+use gui.core.obj.GuiObj;
+use gui.core.obj.IContainer;
+use gui.core.obj.IGuiRenderCallback;
+use gui.core.rect.Rect;
+use gui.core.size.Size;
+use gui.render.ctx.RenderCtx;
+use gui.style.StyleProp;
+use gui.widget.btn.Button;
+use gui.widget.base.Widget;
+use gui.widget.base.WIDGET_TYPE_BUTTON;
+use gui.widget.base.WIDGET_TYPE_CANVAS;
+use gui.widget.base.WIDGET_TYPE_CHART;
+use gui.widget.base.WIDGET_TYPE_GRID_VIEW;
+use gui.widget.base.WIDGET_TYPE_IMAGE;
+use gui.widget.base.WIDGET_TYPE_LABEL;
+use gui.widget.base.WIDGET_TYPE_LIST;
+use gui.widget.base.WIDGET_TYPE_PAGE;
+use gui.widget.base.WIDGET_TYPE_PANEL;
+use gui.widget.base.WIDGET_TYPE_RICH_TEXT_INPUT;
+use gui.widget.base.WIDGET_TYPE_RICH_TOOLBAR;
+use gui.widget.base.WIDGET_TYPE_SLIDER;
+use gui.widget.base.WIDGET_TYPE_SWITCH;
+use gui.widget.base.WIDGET_TYPE_PAGE;
+use gui.widget.base.widget_bind_callbacks;
+use gui.widget.base.widget_draw_surface;
+use gui.widget.base.widget_inner_rect;
+use gui.widget.base.widget_new;
+use gui.widget.base.widget_render_children;
+use gui.widget.base.widget_render_children_translated;
+use gui.widget.canvas.Canvas;
+use gui.widget.chart.Chart;
+use gui.widget.grid_view.GridView;
+use gui.widget.img.Image;
+use gui.widget.lbl.Label;
+use gui.widget.list.ListView;
+use gui.widget.panel.Panel;
+use gui.widget.rich_text_input.RichTextInput;
+use gui.widget.rich_toolbar.RichToolbar;
+use gui.widget.slider.Slider;
+use gui.widget.switch.Switch;
+
+fn page_render_obj(obj: &GuiObj, ctx: &RenderCtx) void {
+    if obj == null || obj.user_data == null {
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_PANEL {
+        const panel: &Panel = obj.user_data as &Panel;
+        if panel != null {
+            panel.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_PAGE {
+        const page: &Page = obj.user_data as &Page;
+        if page != null {
+            page.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_BUTTON {
+        const button: &Button = obj.user_data as &Button;
+        if button != null {
+            button.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_LABEL {
+        const label: &Label = obj.user_data as &Label;
+        if label != null {
+            label.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_IMAGE {
+        const image: &Image = obj.user_data as &Image;
+        if image != null {
+            image.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_SLIDER {
+        const slider: &Slider = obj.user_data as &Slider;
+        if slider != null {
+            slider.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_SWITCH {
+        const sw: &Switch = obj.user_data as &Switch;
+        if sw != null {
+            sw.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_LIST {
+        const list: &ListView = obj.user_data as &ListView;
+        if list != null {
+            list.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_GRID_VIEW {
+        const grid: &GridView = obj.user_data as &GridView;
+        if grid != null {
+            grid.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_CHART {
+        const chart: &Chart = obj.user_data as &Chart;
+        if chart != null {
+            chart.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_CANVAS {
+        const canvas: &Canvas = obj.user_data as &Canvas;
+        if canvas != null {
+            canvas.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_RICH_TEXT_INPUT {
+        const input: &RichTextInput = obj.user_data as &RichTextInput;
+        if input != null {
+            input.render(ctx);
+        }
+        return;
+    }
+    if obj.type_tag == WIDGET_TYPE_RICH_TOOLBAR {
+        const toolbar: &RichToolbar = obj.user_data as &RichToolbar;
+        if toolbar != null {
+            toolbar.render(ctx);
+        }
+    }
+}
+
+fn page_max_i32(a: i32, b: i32) i32 {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+struct PageRenderAdapter : IGuiRenderCallback {}
+
+var PAGE_RENDER_ADAPTER: IGuiRenderCallback = PageRenderAdapter{};
+
+export struct Page : IContainer {
+    widget: Widget,
+    scrollable: bool,
+    scroll_x: i16,
+    scroll_y: i16,
+    content_size: Size,
+}
+
+PageRenderAdapter {
+    fn invoke(self: &Self, obj: &GuiObj, ctx: &RenderCtx, user_data: &void) void {
+        _ = self;
+        _ = obj;
+        const page: &Page = user_data as &Page;
+        if page != null {
+            page.render(ctx);
+        }
+    }
+}
+
+Page {
+    fn new(name: &const byte) Page {
+        var widget: Widget = widget_new(name, WIDGET_TYPE_PAGE, false, false);
+        widget.size(240, 180);
+        widget.base.style.set_color(StyleProp.BgColor, Color{ r: 246, g: 248, b: 251, a: 255 });
+        widget.base.style.set_color(StyleProp.BorderColor, Color{ r: 220, g: 226, b: 235, a: 255 });
+        widget.base.style.set_u32(StyleProp.BorderWidth, 1u32);
+        widget.base.style.set_u32(StyleProp.Radius, 12u32);
+        widget.base.style.set_u32(StyleProp.PaddingLeft, 10u32);
+        widget.base.style.set_u32(StyleProp.PaddingRight, 10u32);
+        widget.base.style.set_u32(StyleProp.PaddingTop, 10u32);
+        widget.base.style.set_u32(StyleProp.PaddingBottom, 10u32);
+        return Page{
+            widget: widget,
+            scrollable: false,
+            scroll_x: 0,
+            scroll_y: 0,
+            content_size: Size{ w: 0, h: 0 },
+        };
+    }
+
+    fn obj(self: &Self) &GuiObj {
+        return widget_bind_callbacks(&self.widget.base, &PAGE_RENDER_ADAPTER, null, self as &void);
+    }
+
+    fn recalc_content_size(self: &Self) void {
+        var max_w: i32 = 0;
+        var max_h: i32 = 0;
+        var child: &GuiObj = self.widget.base.child_head;
+        while child != null {
+            max_w = page_max_i32(max_w, child.x as i32 + child.w as i32);
+            max_h = page_max_i32(max_h, child.y as i32 + child.h as i32);
+            child = child.sibling_next;
+        }
+        self.content_size = Size{
+            w: max_w as u16,
+            h: max_h as u16,
+        };
+    }
+
+    fn add(self: &Self, child: &GuiObj) &GuiObj {
+        self.widget.base.add_child(child);
+        self.recalc_content_size();
+        return child;
+    }
+
+    fn remove(self: &Self, child: &GuiObj) void {
+        self.widget.base.remove_child(child);
+        self.recalc_content_size();
+    }
+
+    fn set_layout(self: &Self, layout_mode: u32) void {
+        self.widget.base.style.set_u32(StyleProp.LayoutMode, layout_mode);
+    }
+
+    fn scroll_to(self: &Self, x: i16, y: i16) void {
+        if !self.scrollable {
+            self.scroll_x = 0;
+            self.scroll_y = 0;
+            return;
+        }
+        const prev_x: i16 = self.scroll_x;
+        const prev_y: i16 = self.scroll_y;
+        const inner: Rect = widget_inner_rect(&self.widget);
+        var max_x: i32 = self.content_size.w as i32 - inner.w as i32;
+        var max_y: i32 = self.content_size.h as i32 - inner.h as i32;
+        if max_x < 0 {
+            max_x = 0;
+        }
+        if max_y < 0 {
+            max_y = 0;
+        }
+        self.scroll_x = x;
+        self.scroll_y = y;
+        if self.scroll_x < 0 {
+            self.scroll_x = 0;
+        } else if self.scroll_x as i32 > max_x {
+            self.scroll_x = max_x as i16;
+        }
+        if self.scroll_y < 0 {
+            self.scroll_y = 0;
+        } else if self.scroll_y as i32 > max_y {
+            self.scroll_y = max_y as i16;
+        }
+        if self.scroll_x == prev_x && self.scroll_y == prev_y {
+            return;
+        }
+        self.widget.base.invalidate();
+    }
+
+    fn render(self: &Self, ctx: &RenderCtx) void {
+        const inner: Rect = widget_draw_surface(&self.widget, ctx);
+        ctx.push_clip(inner);
+        if !self.scrollable {
+            widget_render_children(&self.widget.base, ctx);
+            ctx.pop_clip();
+            return;
+        }
+        widget_render_children_translated(&self.widget.base, ctx, 0i16 - self.scroll_x, 0i16 - self.scroll_y);
+        ctx.pop_clip();
+    }
+
+    fn add_child(self: &Self, child: &GuiObj) void {
+        self.widget.base.add_child(child);
+        self.recalc_content_size();
+    }
+
+    fn remove_child(self: &Self, child: &GuiObj) void {
+        self.widget.base.remove_child(child);
+        self.recalc_content_size();
+    }
+
+    fn child_count(self: &Self) i32 {
+        return self.widget.base.child_count();
+    }
+
+    fn child_at(self: &Self, index: i32) &GuiObj {
+        return self.widget.base.child_at(index);
+    }
+}
+
+fn page_nav_round_i32(v: f32) i32 {
+    if v >= 0.0 {
+        return (v + 0.5) as i32;
+    }
+    return (v - 0.5) as i32;
+}
+
+fn page_nav_apply_transform(obj: &GuiObj, x: i16, y: i16, w: u16, h: u16, opacity: u8) void {
+    if obj == null {
+        return;
+    }
+    obj.move_to(x, y);
+    obj.set_size(w, h);
+    obj.style.set_u32(StyleProp.Opacity, opacity as u32);
+}
+
+fn page_nav_render_transformed(ctx: &RenderCtx, viewport: Rect, obj: &GuiObj, dx: i16, dy: i16, scale: f32, opacity: u8) void {
+    if obj == null {
+        return;
+    }
+
+    const old_x: i16 = obj.x;
+    const old_y: i16 = obj.y;
+    const old_w: u16 = obj.w;
+    const old_h: u16 = obj.h;
+    const old_opacity: u32 = obj.style.get_u32_or(StyleProp.Opacity, 255u32);
+
+    var next_w: u16 = old_w;
+    var next_h: u16 = old_h;
+    var next_x: i16 = old_x + dx;
+    var next_y: i16 = old_y + dy;
+    if scale > 0.0 && scale != 1.0 {
+        next_w = (page_nav_round_i32(old_w as f32 * scale) as! u16).value;
+        next_h = (page_nav_round_i32(old_h as f32 * scale) as! u16).value;
+        next_x = old_x + dx + ((old_w as i32 - next_w as i32) / 2) as i16;
+        next_y = old_y + dy + ((old_h as i32 - next_h as i32) / 2) as i16;
+    }
+
+    page_nav_apply_transform(obj, next_x, next_y, next_w, next_h, opacity);
+    ctx.push_clip(viewport);
+    obj.render(ctx);
+    ctx.pop_clip();
+    page_nav_apply_transform(obj, old_x, old_y, old_w, old_h, old_opacity as u8);
+}
+
+export enum PageTransitionKind {
+    None,
+    SlideLeft,
+    SlideRight,
+    SlideUp,
+    SlideDown,
+    Fade,
+    Scale,
+    Custom,
+}
+
+export interface IPageTransitionCallback {
+    fn invoke(self: &Self, from: &GuiObj, to: &GuiObj, progress: f32, viewport: Rect) void;
+}
+
+export struct PageTransitionState {
+    kind: PageTransitionKind,
+    duration_ms: u32,
+    elapsed_ms: u32,
+    active: bool,
+    popping: bool,
+    from_idx: i32,
+    to_idx: i32,
+    custom_cb: &IPageTransitionCallback,
+}
+
+export const PAGE_STACK_CAPACITY: i32 = 8;
+
+export struct PageNavigator {
+    pages: [&GuiObj: 8],
+    page_count: u8,
+    viewport: Rect,
+    transition: PageTransitionState,
+    edge_swipe_enabled: bool,
+    edge_swipe_zone: u16,
+    default_duration_ms: u32,
+
+    fn set_viewport(self: &Self, viewport: Rect) void {
+        self.viewport = viewport;
+    }
+
+    fn set_custom_transition(self: &Self, cb: &IPageTransitionCallback) void {
+        self.transition.custom_cb = cb;
+    }
+
+    fn top(self: &Self) &GuiObj {
+        if self.page_count == 0 {
+            return null;
+        }
+        return self.pages[(self.page_count as i32 - 1) as usize];
+    }
+
+    fn push(self: &Self, page: &GuiObj, transition: PageTransitionKind, duration_ms: u32) bool {
+        if page == null || self.page_count as i32 >= PAGE_STACK_CAPACITY {
+            return false;
+        }
+        if self.page_count == 0 {
+            self.pages[0] = page;
+            self.page_count = 1;
+            if self.viewport.is_empty() {
+                self.viewport = page.area();
+            }
+            return true;
+        }
+
+        const from_idx: i32 = self.page_count as i32 - 1;
+        const to_idx: i32 = self.page_count as i32;
+        self.pages[to_idx as usize] = page;
+        self.page_count = self.page_count + 1;
+        self.transition = PageTransitionState{
+            kind: transition,
+            duration_ms: duration_ms,
+            elapsed_ms: 0u32,
+            active: transition != PageTransitionKind.None && duration_ms > 0u32,
+            popping: false,
+            from_idx: from_idx,
+            to_idx: to_idx,
+            custom_cb: self.transition.custom_cb,
+        };
+        if !self.transition.active {
+            self.transition.elapsed_ms = duration_ms;
+        }
+        return true;
+    }
+
+    fn pop(self: &Self, transition: PageTransitionKind, duration_ms: u32) bool {
+        if self.page_count <= 1 {
+            return false;
+        }
+        self.transition = PageTransitionState{
+            kind: transition,
+            duration_ms: duration_ms,
+            elapsed_ms: 0u32,
+            active: transition != PageTransitionKind.None && duration_ms > 0u32,
+            popping: true,
+            from_idx: self.page_count as i32 - 1,
+            to_idx: self.page_count as i32 - 2,
+            custom_cb: self.transition.custom_cb,
+        };
+        if !self.transition.active {
+            self.pages[(self.page_count as i32 - 1) as usize] = null;
+            self.page_count = self.page_count - 1;
+        }
+        return true;
+    }
+
+    fn update(self: &Self, dt: u32) void {
+        if !self.transition.active {
+            return;
+        }
+        self.transition.elapsed_ms = self.transition.elapsed_ms + dt;
+        if self.transition.elapsed_ms < self.transition.duration_ms {
+            return;
+        }
+        self.transition.elapsed_ms = self.transition.duration_ms;
+        self.transition.active = false;
+        if self.transition.popping && self.page_count > 0 {
+            self.pages[(self.page_count as i32 - 1) as usize] = null;
+            self.page_count = self.page_count - 1;
+        }
+    }
+
+    fn is_animating(self: &Self) bool {
+        return self.transition.active;
+    }
+
+    fn handle_event(self: &Self, evt: &Event) bool {
+        if !self.edge_swipe_enabled || evt == null || self.page_count <= 1 {
+            return false;
+        }
+        if evt.event_type != EventType.SwipeRight {
+            return false;
+        }
+        if evt.point().x > self.edge_swipe_zone as i16 {
+            return false;
+        }
+        return self.pop(PageTransitionKind.SlideRight, self.default_duration_ms);
+    }
+
+    fn render(self: &Self, ctx: &RenderCtx) void {
+        if self.page_count == 0 {
+            return;
+        }
+        if self.viewport.is_empty() {
+            const top_page: &GuiObj = self.top();
+            if top_page == null {
+                return;
+            }
+            self.viewport = top_page.area();
+        }
+        if !self.transition.active {
+            self.top().render(ctx);
+            return;
+        }
+
+        const from_page: &GuiObj = self.pages[self.transition.from_idx as usize];
+        const to_page: &GuiObj = self.pages[self.transition.to_idx as usize];
+        var progress: f32 = 1.0;
+        if self.transition.duration_ms > 0u32 {
+            progress = self.transition.elapsed_ms as f32 / self.transition.duration_ms as f32;
+        }
+        if progress < 0.0 {
+            progress = 0.0;
+        } else if progress > 1.0 {
+            progress = 1.0;
+        }
+
+        if self.transition.kind == PageTransitionKind.Custom && self.transition.custom_cb != null {
+            self.transition.custom_cb.invoke(from_page, to_page, progress, self.viewport);
+        }
+
+        const vw: i16 = self.viewport.w as i16;
+        const vh: i16 = self.viewport.h as i16;
+        var from_dx: i16 = 0;
+        var from_dy: i16 = 0;
+        var to_dx: i16 = 0;
+        var to_dy: i16 = 0;
+        var from_scale: f32 = 1.0;
+        var to_scale: f32 = 1.0;
+        var from_opacity: u8 = 255;
+        var to_opacity: u8 = 255;
+
+        if self.transition.kind == PageTransitionKind.SlideLeft {
+            if self.transition.popping {
+                from_dx = page_nav_round_i32(vw as f32 * progress) as i16;
+                to_dx = page_nav_round_i32(0.0 - (vw as f32 * 0.25) * (1.0 - progress)) as i16;
+            } else {
+                from_dx = page_nav_round_i32(0.0 - (vw as f32 * 0.25) * progress) as i16;
+                to_dx = page_nav_round_i32(vw as f32 * (1.0 - progress)) as i16;
+            }
+        } else if self.transition.kind == PageTransitionKind.SlideRight {
+            if self.transition.popping {
+                from_dx = page_nav_round_i32(0.0 - vw as f32 * progress) as i16;
+                to_dx = page_nav_round_i32((vw as f32 * 0.25) * (1.0 - progress)) as i16;
+            } else {
+                from_dx = page_nav_round_i32((vw as f32 * 0.25) * progress) as i16;
+                to_dx = page_nav_round_i32(0.0 - vw as f32 * (1.0 - progress)) as i16;
+            }
+        } else if self.transition.kind == PageTransitionKind.SlideUp {
+            from_dy = page_nav_round_i32(0.0 - (vh as f32 * 0.20) * progress) as i16;
+            to_dy = page_nav_round_i32(vh as f32 * (1.0 - progress)) as i16;
+        } else if self.transition.kind == PageTransitionKind.SlideDown {
+            from_dy = page_nav_round_i32((vh as f32 * 0.20) * progress) as i16;
+            to_dy = page_nav_round_i32(0.0 - vh as f32 * (1.0 - progress)) as i16;
+        } else if self.transition.kind == PageTransitionKind.Fade {
+            from_opacity = page_nav_round_i32(255.0 * (1.0 - progress)) as u8;
+            to_opacity = page_nav_round_i32(255.0 * progress) as u8;
+        } else if self.transition.kind == PageTransitionKind.Scale {
+            if self.transition.popping {
+                from_scale = 1.0 - 0.08 * progress;
+                to_scale = 0.92 + 0.08 * progress;
+            } else {
+                from_scale = 1.0 - 0.08 * progress;
+                to_scale = 0.92 + 0.08 * progress;
+            }
+        }
+
+        if from_page != null {
+            page_nav_render_transformed(ctx, self.viewport, from_page, from_dx, from_dy, from_scale, from_opacity);
+        }
+        if to_page != null {
+            page_nav_render_transformed(ctx, self.viewport, to_page, to_dx, to_dy, to_scale, to_opacity);
+        }
+    }
+}
+
+/// 返回空的页面过渡状态。
+export fn page_transition_none() PageTransitionState {
+    return PageTransitionState{
+        kind: PageTransitionKind.None,
+        duration_ms: 0u32,
+        elapsed_ms: 0u32,
+        active: false,
+        popping: false,
+        from_idx: -1,
+        to_idx: -1,
+        custom_cb: null,
+    };
+}
+
+/// 创建页面导航器实例。
+export fn page_navigator_new(viewport: Rect) PageNavigator {
+    return PageNavigator{
+        pages: [],
+        page_count: 0,
+        viewport: viewport,
+        transition: page_transition_none(),
+        edge_swipe_enabled: true,
+        edge_swipe_zone: 24,
+        default_duration_ms: 180u32,
+    };
+}

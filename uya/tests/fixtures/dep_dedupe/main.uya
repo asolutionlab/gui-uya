@@ -1,5 +1,0 @@
-use lib.storage.pager.run;
-
-export fn main() i32 {
-    return run();
-}

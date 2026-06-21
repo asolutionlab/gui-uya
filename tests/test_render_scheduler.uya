@@ -1,0 +1,172 @@
+use gui.core.color.Color;
+use gui.core.obj.GuiObj;
+use gui.core.obj.IGuiRenderCallback;
+use gui.core.obj.gui_obj_default;
+use gui.core.obj.gui_obj_register;
+use gui.core.obj.gui_obj_reset_registry;
+use gui.core.obj_tree.ObjTree;
+use gui.core.obj_tree.obj_tree_new;
+use gui.core.rect.Rect;
+use gui.platform.disp.PixelFormat;
+use gui.platform.disp.framebuffer_new;
+use gui.render.ctx.RenderCtx;
+use gui.render.ctx.ctx_pixel;
+use gui.render.ctx.render_ctx_new;
+use gui.render.scheduler.IRenderScheduleFullCallback;
+use gui.render.scheduler.RenderFramePacer;
+use gui.render.scheduler.RenderFrameResult;
+use gui.render.scheduler.RenderPresentMode;
+use gui.render.scheduler.render_frame_pacer_new;
+use gui.render.scheduler.render_schedule_tree_frame;
+use std.testing.assert_eq_bool;
+use std.testing.assert_eq_i32;
+
+export const TEST_RENDER_SCHEDULER_MODULE: i32 = 1;
+
+struct SolidRenderSpec {
+    color: Color,
+}
+
+struct SolidRenderAdapter : IGuiRenderCallback {}
+
+var SOLID_RENDER_ADAPTER: IGuiRenderCallback = SolidRenderAdapter{};
+
+SolidRenderAdapter {
+    fn invoke(self: &Self, obj: &GuiObj, ctx: &RenderCtx, user_data: &void) void {
+        _ = self;
+        const spec: &SolidRenderSpec = user_data as &SolidRenderSpec;
+        if obj == null || spec == null {
+            return;
+        }
+        ctx.fill_rect(obj.screen_area(), spec.color);
+    }
+}
+
+struct FullFrameSpec {
+    color: Color,
+}
+
+struct FullFrameAdapter : IRenderScheduleFullCallback {}
+
+var FULL_FRAME_ADAPTER: IRenderScheduleFullCallback = FullFrameAdapter{};
+
+FullFrameAdapter {
+    fn invoke(self: &Self, ctx: &RenderCtx, user_data: &void) void {
+        _ = self;
+        const spec: &FullFrameSpec = user_data as &FullFrameSpec;
+        if ctx == null || spec == null {
+            return;
+        }
+        ctx.fill_rect(Rect{ x: 0, y: 0, w: 8, h: 8 }, spec.color);
+    }
+}
+
+test "render scheduler dirty frame preserves sibling z order" {
+    gui_obj_reset_registry();
+
+    var root: GuiObj = gui_obj_default();
+    var lower: GuiObj = gui_obj_default();
+    var upper: GuiObj = gui_obj_default();
+    var lower_leaf: GuiObj = gui_obj_default();
+    var upper_leaf: GuiObj = gui_obj_default();
+    root.set_area(Rect{ x: 0, y: 0, w: 8, h: 8 });
+    lower.set_area(Rect{ x: 1, y: 1, w: 5, h: 5 });
+    upper.set_area(Rect{ x: 3, y: 3, w: 4, h: 4 });
+    lower_leaf.set_area(Rect{ x: 1, y: 1, w: 2, h: 2 });
+    upper_leaf.set_area(Rect{ x: 0, y: 0, w: 2, h: 2 });
+
+    var lower_spec: SolidRenderSpec = SolidRenderSpec{
+        color: Color{ r: 0, g: 96, b: 255, a: 255 },
+    };
+    var upper_spec: SolidRenderSpec = SolidRenderSpec{
+        color: Color{ r: 255, g: 80, b: 80, a: 255 },
+    };
+    lower.render_cb = &SOLID_RENDER_ADAPTER;
+    lower.user_data = &lower_spec as &void;
+    upper.render_cb = &SOLID_RENDER_ADAPTER;
+    upper.user_data = &upper_spec as &void;
+
+    _ = gui_obj_register(0, &root);
+    _ = gui_obj_register(1, &lower);
+    _ = gui_obj_register(2, &upper);
+    _ = gui_obj_register(3, &lower_leaf);
+    _ = gui_obj_register(4, &upper_leaf);
+
+    var tree: ObjTree = obj_tree_new();
+    tree.set_root(0, &root);
+    tree.attach(0, 1);
+    tree.attach(0, 2);
+    tree.attach(1, 3);
+    tree.attach(2, 4);
+    tree.clear_invalid_regions();
+    lower_leaf.invalidate();
+    upper_leaf.invalidate();
+
+    var bytes: [byte: 256] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 8, 8, 32, PixelFormat.ARGB8888));
+    const result: RenderFrameResult = render_schedule_tree_frame(
+        &ctx,
+        &tree,
+        Rect{ x: 0, y: 0, w: 8, h: 8 },
+        false,
+        Color{ r: 0, g: 0, b: 0, a: 255 },
+        null,
+        null,
+        null
+    );
+
+    try assert_eq_i32(result.present_mode as i32, RenderPresentMode.Dirty as i32);
+    try assert_eq_bool(result.rendered, true);
+    try assert_eq_i32(result.pass_count, 2);
+    try assert_eq_i32(result.plan.request_count, 2);
+    try assert_eq_i32(result.plan.requests[0].root.obj_idx, 1);
+    try assert_eq_i32(result.plan.requests[1].root.obj_idx, 2);
+    try assert_eq_bool(ctx_pixel(&ctx, 4, 4) == upper_spec.color, true);
+}
+
+test "render scheduler full frame delegates to explicit callback" {
+    gui_obj_reset_registry();
+
+    var root: GuiObj = gui_obj_default();
+    root.set_area(Rect{ x: 0, y: 0, w: 8, h: 8 });
+    _ = gui_obj_register(0, &root);
+
+    var tree: ObjTree = obj_tree_new();
+    tree.set_root(0, &root);
+
+    var full_spec: FullFrameSpec = FullFrameSpec{
+        color: Color{ r: 20, g: 220, b: 120, a: 255 },
+    };
+    var bytes: [byte: 256] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 8, 8, 32, PixelFormat.ARGB8888));
+    const result: RenderFrameResult = render_schedule_tree_frame(
+        &ctx,
+        &tree,
+        Rect{ x: 0, y: 0, w: 8, h: 8 },
+        true,
+        Color{ r: 0, g: 0, b: 0, a: 255 },
+        &FULL_FRAME_ADAPTER,
+        null,
+        &full_spec as &void
+    );
+
+    try assert_eq_i32(result.present_mode as i32, RenderPresentMode.Full as i32);
+    try assert_eq_bool(result.rendered, true);
+    try assert_eq_bool(ctx_pixel(&ctx, 2, 2) == full_spec.color, true);
+}
+
+test "render frame pacer supports fixed and adaptive pacing" {
+    var fixed: RenderFramePacer = render_frame_pacer_new(60u8, false, false);
+    try assert_eq_i32(fixed.min_interval_ms as i32, 16);
+    try assert_eq_i32(fixed.delay_ms(10u32, true) as i32, 6);
+    try assert_eq_i32(fixed.current_interval_ms as i32, 16);
+
+    var adaptive: RenderFramePacer = render_frame_pacer_new(60u8, false, true);
+    _ = adaptive.delay_ms(0u32, false);
+    _ = adaptive.delay_ms(0u32, false);
+    _ = adaptive.delay_ms(0u32, false);
+    try assert_eq_bool(adaptive.current_interval_ms > adaptive.min_interval_ms, true);
+
+    _ = adaptive.delay_ms(5u32, true);
+    try assert_eq_i32(adaptive.current_interval_ms as i32, adaptive.min_interval_ms as i32);
+}

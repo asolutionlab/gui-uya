@@ -3,10 +3,26 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-UYA_BIN="${UYA:-$ROOT_DIR/uya/bin/uya}"
+find_uya_bin() {
+    if [ -n "${UYA:-}" ]; then
+        printf '%s\n' "$UYA"
+        return 0
+    fi
+    if command -v uya >/dev/null 2>&1; then
+        command -v uya
+        return 0
+    fi
+    if [ -x "$ROOT_DIR/uya/bin/uya" ]; then
+        printf '%s\n' "$ROOT_DIR/uya/bin/uya"
+        return 0
+    fi
+    printf '%s\n' "$ROOT_DIR/uya/bin/uya"
+}
+
+UYA_BIN="$(find_uya_bin)"
 CC_BIN="${CC:-cc}"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build/sim}"
-APP="${APP:-$ROOT_DIR/gui/sim_main.uya}"
+APP="${APP:-}"
 OUT_NAME="${OUT_NAME:-gui_uya_sim}"
 OUT_C="$BUILD_DIR/${OUT_NAME}.c"
 OUT_BIN="$BUILD_DIR/$OUT_NAME"
@@ -16,7 +32,19 @@ OUT_FB_O="$BUILD_DIR/${OUT_NAME}.fb_host.o"
 OUT_CIMPORT_SIDECAR="${OUT_C}imports.sh"
 MODE="${MODE:-debug}"
 
+if [ -z "$APP" ]; then
+    UYA_STAGE_DIR="${UYA_STAGE_DIR:-$BUILD_DIR/uya_stage}"
+    python3 "$ROOT_DIR/tools/stage_uya_sources.py" --root "$ROOT_DIR" --stage "$UYA_STAGE_DIR"
+    APP="$UYA_STAGE_DIR/apps/sim_main.uya"
+fi
+
 mkdir -p "$BUILD_DIR"
+
+if ! command -v "$UYA_BIN" >/dev/null 2>&1; then
+    echo "error: Uya compiler not found: $UYA_BIN" >&2
+    echo "hint : install 'uya' on PATH or set UYA=/path/to/uya." >&2
+    exit 127
+fi
 
 SDL_CFLAGS_STR=""
 SDL_LIBS_STR=""
@@ -42,7 +70,7 @@ fi
 read -r -a SDL_CFLAGS <<<"$SDL_CFLAGS_STR"
 read -r -a SDL_LIBS <<<"$SDL_LIBS_STR"
 
-OPENAI_HOST_C="$ROOT_DIR/gui/platform/openai/openai_chat_host.c"
+OPENAI_HOST_C="$ROOT_DIR/src/gui/platform/openai/openai_chat_host.c"
 OPENAI_OBJ=""
 OPENAI_CFLAGS_STR=""
 OPENAI_LIBS_STR=""
@@ -58,8 +86,8 @@ read -r -a OPENAI_LIBS <<<"$OPENAI_LIBS_STR"
 
 "$UYA_BIN" build "$APP" --c99 --no-split-c "$UYA_OPT" -o "$OUT_C"
 
-HOST_C="$ROOT_DIR/gui/platform/sdl2/sdl_host.c"
-FB_HOST_C="$ROOT_DIR/gui/platform/fb/fb_host.c"
+HOST_C="$ROOT_DIR/src/gui/platform/sdl2/sdl_host.c"
+FB_HOST_C="$ROOT_DIR/src/gui/platform/fb/fb_host.c"
 
 # 生成的 Uya C 代码会携带大量与宿主 libc / compiler 内建相关的噪声 warning，
 # 这里静默编译生成物，只保留我们手写 host glue 的真实 warning。

@@ -6,16 +6,16 @@
 
 ## 本次完成
 
-- `gui/benchmarks/core_bench.uya`
+- `src/gui/benchmarks/core_bench.uya`
   - 补齐 `empty frame` 与 `fullscreen` 两条基准，覆盖“空渲染帧时间 / 全屏刷新时间 / 脏区 / 分配 / 布局 / 事件 / 渲染 / cache / startup / 动画”整套基线
-- `gui/benchmarks/phase5_bench_baseline.json`
+- `src/gui/benchmarks/phase5_bench_baseline.json`
   - 固化仓库内 benchmark snapshot 与回归阈值
 - `tools/check_gui_bench.py`
   - 新增 benchmark 文本解析、JSON 导出和阈值校验
 - `Makefile`
   - 新增 `make bench-json`、`make bench-snapshot`、`make bench-verify`
   - 新增 `make uya-dashboard-compare`、`make lvgl-dashboard-compare-build`、`make dashboard-compare-report`
-- `gui/sim/dashboard_compare.uya` + `gui/dashboard_compare_main.uya`
+- `src/gui/sim/dashboard_compare.uya` + `apps/dashboard_compare_main.uya`
   - 新增最小 Uya dashboard compare runner，固定 `640x480` 输出，并打印启动时间与帧耗时
 - `tools/lvgl_compare/dashboard.c`
   - 新增 `startup` 输出与 `LVGL_DASHBOARD_CAPTURE` 开关，便于统一统计
@@ -28,7 +28,7 @@
 ## 验证结果
 
 - `make bench-verify`
-  - 通过，当前 `23` 项 benchmark 均落在 `gui/benchmarks/phase5_bench_baseline.json` 阈值内
+  - 通过，当前 `23` 项 benchmark 均落在 `src/gui/benchmarks/phase5_bench_baseline.json` 阈值内
 - `make bench-json`
   - 成功生成 `build/phase5_bench.json`
 - `make dashboard-compare-report DASHBOARD_COMPARE_FRAMES=10`

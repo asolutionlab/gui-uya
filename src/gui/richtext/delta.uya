@@ -1,0 +1,1144 @@
+use gui.richtext.document.RichBlock;
+use gui.richtext.document.RichBlockType;
+use gui.richtext.document.RichDocument;
+use gui.richtext.document.RichInlineMarks;
+use gui.richtext.document.RichSpan;
+use gui.richtext.document.rich_document_new_with_allocator;
+use gui.richtext.document.rich_inline_marks_eq;
+use gui.richtext.document.rich_inline_marks_none;
+use gui.richtext.document.rich_utf8_codepoint_count;
+use gui.richtext.document.rich_utf8_next_index;
+use gui.richtext.selection.RichPos;
+use gui.richtext.selection.RichRange;
+use gui.richtext.selection.rich_range_collapsed;
+use gui.richtext.selection.rich_range_normalized;
+use std.mem.allocator.MallocAllocator;
+use std.mem.allocator.g_allocator;
+use std.mem.mem.mem_copy;
+
+error RichDeltaOutOfBounds;
+
+export struct RichBlockAttrs {
+    block_type: RichBlockType,
+    indent: u8,
+}
+
+export struct RichDeltaAttrs {
+    inline_marks: RichInlineMarks,
+    block: RichBlockAttrs,
+    has_inline: bool,
+    has_block: bool,
+    link_url_ptr: &const byte,
+    link_url_len: usize,
+}
+
+export enum RichOpKind {
+    Retain,
+    InsertText,
+    InsertBreak,
+    Delete,
+}
+
+export struct RichDeltaOp {
+    kind: RichOpKind,
+    count: u32,
+    text_ptr: &byte,
+    text_len: usize,
+    text_cap: usize,
+    link_url_ptr: &byte,
+    link_url_len: usize,
+    link_url_cap: usize,
+    attrs: RichDeltaAttrs,
+}
+
+export struct RichDelta {
+    allocator: &MallocAllocator,
+    ops: &RichDeltaOp,
+    op_count: u32,
+    op_cap: u32,
+}
+
+export struct RichInlineToggleResult {
+    range: RichRange,
+    pending_marks: RichInlineMarks,
+}
+
+enum RichLinearAtomKind {
+    Text,
+    Break,
+}
+
+struct RichLinearAtom {
+    kind: RichLinearAtomKind,
+    text_bytes: [byte: 4],
+    text_len: u8,
+    inline_marks: RichInlineMarks,
+    link_url_ptr: &const byte,
+    link_url_len: usize,
+    block_type: RichBlockType,
+    indent: u8,
+}
+
+struct RichLinearAtomBuffer {
+    allocator: &MallocAllocator,
+    atoms: &RichLinearAtom,
+    len: u32,
+    cap: u32,
+}
+
+struct RichLinearRange {
+    start: u32,
+    end: u32,
+}
+
+export fn rich_block_attrs(block_type: RichBlockType, indent: u8) RichBlockAttrs {
+    return RichBlockAttrs{
+        block_type: block_type,
+        indent: indent,
+    };
+}
+
+export fn rich_delta_attrs_none() RichDeltaAttrs {
+    return RichDeltaAttrs{
+        inline_marks: rich_inline_marks_none(),
+        block: rich_block_attrs(RichBlockType.Paragraph, 0u8),
+        has_inline: false,
+        has_block: false,
+        link_url_ptr: null,
+        link_url_len: 0usize,
+    };
+}
+
+export fn rich_delta_attrs_inline(marks: RichInlineMarks) RichDeltaAttrs {
+    var attrs: RichDeltaAttrs = rich_delta_attrs_none();
+    attrs.inline_marks = marks;
+    attrs.has_inline = true;
+    return attrs;
+}
+
+fn rich_delta_attrs_inline_link(marks: RichInlineMarks, link_url: &const byte, link_url_len: usize) RichDeltaAttrs {
+    var attrs: RichDeltaAttrs = rich_delta_attrs_inline(marks);
+    attrs.link_url_ptr = link_url;
+    attrs.link_url_len = link_url_len;
+    return attrs;
+}
+
+export fn rich_delta_attrs_block(block_type: RichBlockType, indent: u8) RichDeltaAttrs {
+    var attrs: RichDeltaAttrs = rich_delta_attrs_none();
+    attrs.block = rich_block_attrs(block_type, indent);
+    attrs.has_block = true;
+    return attrs;
+}
+
+fn rich_block_attrs_eq(a: RichBlockAttrs, b: RichBlockAttrs) bool {
+    return a.block_type == b.block_type && a.indent == b.indent;
+}
+
+fn rich_delta_attrs_eq(a: RichDeltaAttrs, b: RichDeltaAttrs) bool {
+    return a.has_inline == b.has_inline
+        && a.has_block == b.has_block
+        && rich_inline_marks_eq(a.inline_marks, b.inline_marks)
+        && rich_block_attrs_eq(a.block, b.block)
+        && rich_delta_link_url_eq(a.link_url_ptr, a.link_url_len, b.link_url_ptr, b.link_url_len);
+}
+
+fn rich_delta_link_url_eq(a_ptr: &const byte, a_len: usize, b_ptr: &const byte, b_len: usize) bool {
+    if a_len != b_len {
+        return false;
+    }
+    if a_len == 0usize {
+        return true;
+    }
+    if a_ptr == null || b_ptr == null {
+        return false;
+    }
+    var idx: usize = 0usize;
+    while idx < a_len {
+        if a_ptr[idx] != b_ptr[idx] {
+            return false;
+        }
+        idx = idx + 1usize;
+    }
+    return true;
+}
+
+fn rich_delta_op_reset(op: &RichDeltaOp) void {
+    op.kind = RichOpKind.Retain;
+    op.count = 0u32;
+    op.text_ptr = null;
+    op.text_len = 0usize;
+    op.text_cap = 0usize;
+    op.link_url_ptr = null;
+    op.link_url_len = 0usize;
+    op.link_url_cap = 0usize;
+    op.attrs = rich_delta_attrs_none();
+}
+
+fn rich_delta_op_drop(op: &RichDeltaOp, allocator: &MallocAllocator) void {
+    if op.text_ptr != null {
+        allocator.dealloc(op.text_ptr);
+    }
+    if op.link_url_ptr != null {
+        allocator.dealloc(op.link_url_ptr);
+    }
+    rich_delta_op_reset(op);
+}
+
+fn rich_delta_op_ensure_text_capacity(op: &RichDeltaOp, allocator: &MallocAllocator, needed_len: usize) !void {
+    const needed_cap: usize = needed_len + 1usize;
+    if needed_cap <= op.text_cap {
+        return;
+    }
+    var new_cap: usize = op.text_cap;
+    if new_cap == 0usize {
+        new_cap = 8usize;
+    }
+    while new_cap < needed_cap {
+        new_cap = new_cap * 2usize;
+    }
+    if op.text_ptr == null {
+        op.text_ptr = try allocator.alloc(new_cap);
+    } else {
+        op.text_ptr = try allocator.realloc(op.text_ptr, new_cap);
+    }
+    op.text_cap = new_cap;
+}
+
+fn rich_delta_op_set_text(op: &RichDeltaOp, allocator: &MallocAllocator, text: &const byte, text_len: usize) !void {
+    if text_len == 0usize {
+        if op.text_ptr != null {
+            allocator.dealloc(op.text_ptr);
+        }
+        op.text_ptr = null;
+        op.text_len = 0usize;
+        op.text_cap = 0usize;
+        return;
+    }
+    try rich_delta_op_ensure_text_capacity(op, allocator, text_len);
+    var idx: usize = 0usize;
+    while idx < text_len {
+        op.text_ptr[idx] = text[idx];
+        idx = idx + 1usize;
+    }
+    op.text_ptr[text_len] = 0u8;
+    op.text_len = text_len;
+}
+
+fn rich_delta_op_ensure_link_capacity(op: &RichDeltaOp, allocator: &MallocAllocator, needed_len: usize) !void {
+    const needed_cap: usize = needed_len + 1usize;
+    if needed_cap <= op.link_url_cap {
+        return;
+    }
+    var new_cap: usize = op.link_url_cap;
+    if new_cap == 0usize {
+        new_cap = 16usize;
+    }
+    while new_cap < needed_cap {
+        new_cap = new_cap * 2usize;
+    }
+    if op.link_url_ptr == null {
+        op.link_url_ptr = try allocator.alloc(new_cap);
+    } else {
+        op.link_url_ptr = try allocator.realloc(op.link_url_ptr, new_cap);
+    }
+    op.link_url_cap = new_cap;
+}
+
+fn rich_delta_op_set_link_url(op: &RichDeltaOp, allocator: &MallocAllocator, link_url: &const byte, link_url_len: usize) !void {
+    if link_url_len == 0usize {
+        if op.link_url_ptr != null {
+            allocator.dealloc(op.link_url_ptr);
+        }
+        op.link_url_ptr = null;
+        op.link_url_len = 0usize;
+        op.link_url_cap = 0usize;
+        return;
+    }
+    try rich_delta_op_ensure_link_capacity(op, allocator, link_url_len);
+    var idx: usize = 0usize;
+    while idx < link_url_len {
+        op.link_url_ptr[idx] = link_url[idx];
+        idx = idx + 1usize;
+    }
+    op.link_url_ptr[link_url_len] = 0u8;
+    op.link_url_len = link_url_len;
+}
+
+fn rich_delta_op_attrs_match(op: &RichDeltaOp, attrs: RichDeltaAttrs) bool {
+    if !rich_delta_attrs_eq(op.attrs, attrs) {
+        return false;
+    }
+    return rich_delta_link_url_eq(op.link_url_ptr as &const byte, op.link_url_len, attrs.link_url_ptr, attrs.link_url_len);
+}
+
+fn rich_delta_ensure_op_capacity(delta: &RichDelta, needed_count: u32) !void {
+    if needed_count <= delta.op_cap {
+        return;
+    }
+    var new_cap: u32 = delta.op_cap;
+    if new_cap == 0u32 {
+        new_cap = 4u32;
+    }
+    while new_cap < needed_count {
+        new_cap = new_cap * 2u32;
+    }
+    const new_bytes: usize = @size_of(RichDeltaOp) as usize * new_cap as usize;
+    if delta.ops == null {
+        delta.ops = (try delta.allocator.alloc(new_bytes)) as &RichDeltaOp;
+    } else {
+        delta.ops = (try delta.allocator.realloc(delta.ops as &byte, new_bytes)) as &RichDeltaOp;
+    }
+    delta.op_cap = new_cap;
+}
+
+fn rich_linear_atom_buffer_new(allocator: &MallocAllocator) RichLinearAtomBuffer {
+    return RichLinearAtomBuffer{
+        allocator: allocator,
+        atoms: null,
+        len: 0u32,
+        cap: 0u32,
+    };
+}
+
+fn rich_linear_atom_buffer_drop(buf: &RichLinearAtomBuffer) void {
+    if buf.atoms != null {
+        buf.allocator.dealloc(buf.atoms as &byte);
+    }
+    buf.atoms = null;
+    buf.len = 0u32;
+    buf.cap = 0u32;
+}
+
+fn rich_linear_atom_buffer_ensure_capacity(buf: &RichLinearAtomBuffer, needed_count: u32) !void {
+    if needed_count <= buf.cap {
+        return;
+    }
+    var new_cap: u32 = buf.cap;
+    if new_cap == 0u32 {
+        new_cap = 8u32;
+    }
+    while new_cap < needed_count {
+        new_cap = new_cap * 2u32;
+    }
+    const new_bytes: usize = @size_of(RichLinearAtom) as usize * new_cap as usize;
+    if buf.atoms == null {
+        buf.atoms = (try buf.allocator.alloc(new_bytes)) as &RichLinearAtom;
+    } else {
+        buf.atoms = (try buf.allocator.realloc(buf.atoms as &byte, new_bytes)) as &RichLinearAtom;
+    }
+    buf.cap = new_cap;
+}
+
+fn rich_linear_atom_push(buf: &RichLinearAtomBuffer, atom: RichLinearAtom) !void {
+    try rich_linear_atom_buffer_ensure_capacity(buf, buf.len + 1u32);
+    buf.atoms[buf.len as usize] = atom;
+    buf.len = buf.len + 1u32;
+}
+
+fn rich_linear_atom_text(text: &const byte, text_len: usize, marks: RichInlineMarks, link_url_ptr: &const byte, link_url_len: usize) RichLinearAtom {
+    var atom: RichLinearAtom = RichLinearAtom{
+        kind: RichLinearAtomKind.Text,
+        text_bytes: [0u8, 0u8, 0u8, 0u8],
+        text_len: text_len as u8,
+        inline_marks: marks,
+        link_url_ptr: link_url_ptr,
+        link_url_len: link_url_len,
+        block_type: RichBlockType.Paragraph,
+        indent: 0u8,
+    };
+    var idx: usize = 0usize;
+    while idx < text_len && idx < 4usize {
+        atom.text_bytes[idx] = text[idx];
+        idx = idx + 1usize;
+    }
+    return atom;
+}
+
+fn rich_linear_atom_break(block_type: RichBlockType, indent: u8) RichLinearAtom {
+    return RichLinearAtom{
+        kind: RichLinearAtomKind.Break,
+        text_bytes: [0u8, 0u8, 0u8, 0u8],
+        text_len: 0u8,
+        inline_marks: rich_inline_marks_none(),
+        link_url_ptr: null,
+        link_url_len: 0usize,
+        block_type: block_type,
+        indent: indent,
+    };
+}
+
+fn rich_document_to_atoms(doc: &RichDocument, out: &RichLinearAtomBuffer) !void {
+    var block_idx: u32 = 0u32;
+    while block_idx < doc.block_count {
+        const block: &RichBlock = &doc.blocks[block_idx as usize];
+        var span_idx: u16 = 0u16;
+        while span_idx < block.span_count {
+            const span: &RichSpan = &block.spans[span_idx as usize];
+            const link_url_ptr: &const byte = doc.link_ptr(span.marks.link_ref);
+            const link_url_len: usize = doc.link_len(span.marks.link_ref);
+            var cursor: usize = 0usize;
+            while cursor < span.text_len {
+                const next_cursor: usize = rich_utf8_next_index(span.text_ptr as &const byte, span.text_len, cursor);
+                try rich_linear_atom_push(out, rich_linear_atom_text(
+                    @ptr_from_usize(@usize_from_ptr(span.text_ptr as &void) + cursor) as &const byte,
+                    next_cursor - cursor,
+                    span.marks,
+                    link_url_ptr,
+                    link_url_len,
+                ));
+                cursor = next_cursor;
+            }
+            span_idx = span_idx + 1u16;
+        }
+        try rich_linear_atom_push(out, rich_linear_atom_break(block.block_type, block.indent));
+        block_idx = block_idx + 1u32;
+    }
+}
+
+fn rich_delta_insert_text_atoms(buf: &RichLinearAtomBuffer, text: &const byte, text_len: usize, marks: RichInlineMarks, link_url_ptr: &const byte, link_url_len: usize) !void {
+    var cursor: usize = 0usize;
+    while cursor < text_len {
+        const next_cursor: usize = rich_utf8_next_index(text, text_len, cursor);
+        try rich_linear_atom_push(buf, rich_linear_atom_text(
+            @ptr_from_usize(@usize_from_ptr(text as &void) + cursor) as &const byte,
+            next_cursor - cursor,
+            marks,
+            link_url_ptr,
+            link_url_len,
+        ));
+        cursor = next_cursor;
+    }
+}
+
+fn rich_delta_block_text_codepoints(block: &RichBlock) u32 {
+    if block == null {
+        return 0u32;
+    }
+    var total: u32 = 0u32;
+    var span_idx: u16 = 0u16;
+    while span_idx < block.span_count {
+        const span: &RichSpan = &block.spans[span_idx as usize];
+        total = total + rich_utf8_codepoint_count(span.text_ptr as &const byte, span.text_len);
+        span_idx = span_idx + 1u16;
+    }
+    return total;
+}
+
+fn rich_delta_range_offsets(doc: &RichDocument, range: RichRange) !RichLinearRange {
+    const normalized: RichRange = rich_range_normalized(range);
+    return RichLinearRange{
+        start: try doc.pos_to_linear_offset(normalized.anchor),
+        end: try doc.pos_to_linear_offset(normalized.focus),
+    };
+}
+
+fn rich_delta_block_is_list(block_type: RichBlockType) bool {
+    return block_type == RichBlockType.BulletItem || block_type == RichBlockType.OrderedItem;
+}
+
+fn rich_delta_delete_offsets(doc: &RichDocument, start: u32, end: u32) !RichPos {
+    if end <= start {
+        return try doc.linear_offset_to_pos(start);
+    }
+
+    var patch: RichDelta = rich_delta_new_with_allocator(doc.allocator);
+    defer patch.dispose();
+    if start > 0u32 {
+        try patch.push_retain(start, rich_delta_attrs_none());
+    }
+    try patch.push_delete(end - start);
+    try apply_delta(doc, &patch);
+    return try doc.linear_offset_to_pos(start);
+}
+
+fn rich_document_rebuild_from_atoms(doc: &RichDocument, atoms: &RichLinearAtomBuffer) !void {
+    doc.clear_blocks();
+    _ = try doc.append_block(RichBlockType.Paragraph, 0u8);
+    var block_index: u32 = 0u32;
+    var atom_idx: u32 = 0u32;
+    while atom_idx < atoms.len {
+        const atom: RichLinearAtom = atoms.atoms[atom_idx as usize];
+        const block: &RichBlock = &doc.blocks[block_index as usize];
+        if atom.kind == RichLinearAtomKind.Text {
+            var resolved_link_ref: u16 = 0u16;
+            if atom.link_url_ptr != null && atom.link_url_len > 0usize {
+                resolved_link_ref = try doc.intern_link(atom.link_url_ptr, atom.link_url_len);
+            }
+            if block.span_count == 0u16 {
+                _ = try doc.append_span(block_index, "" as &const byte, 0usize, RichInlineMarks{
+                    bits: atom.inline_marks.bits,
+                    link_ref: resolved_link_ref,
+                });
+            }
+            const last_idx: u16 = block.span_count - 1u16;
+            const last_span: &RichSpan = &block.spans[last_idx as usize];
+            if last_span.text_len == 0usize && rich_inline_marks_eq(last_span.marks, rich_inline_marks_none()) {
+                last_span.marks = RichInlineMarks{
+                    bits: atom.inline_marks.bits,
+                    link_ref: resolved_link_ref,
+                };
+                try doc.set_span_text(block_index, last_idx, &atom.text_bytes[0], atom.text_len as usize);
+            } else if rich_inline_marks_eq(last_span.marks, RichInlineMarks{
+                bits: atom.inline_marks.bits,
+                link_ref: resolved_link_ref,
+            }) {
+                try rich_delta_append_span_bytes(doc, block_index, last_idx, &atom.text_bytes[0], atom.text_len as usize);
+            } else {
+                _ = try doc.append_span(block_index, &atom.text_bytes[0], atom.text_len as usize, RichInlineMarks{
+                    bits: atom.inline_marks.bits,
+                    link_ref: resolved_link_ref,
+                });
+            }
+        } else {
+            block.block_type = atom.block_type;
+            block.indent = atom.indent;
+            if atom_idx + 1u32 < atoms.len {
+                block_index = try doc.append_block(RichBlockType.Paragraph, 0u8);
+            }
+        }
+        atom_idx = atom_idx + 1u32;
+    }
+    try doc.normalize();
+}
+
+fn rich_delta_append_span_bytes(doc: &RichDocument, block_index: u32, span_index: u16, text: &const byte, text_len: usize) !void {
+    const block: &RichBlock = &doc.blocks[block_index as usize];
+    const span: &RichSpan = &block.spans[span_index as usize];
+    const old_len: usize = span.text_len;
+    try doc.set_span_text(block_index, span_index, span.text_ptr as &const byte, old_len);
+    const updated: &RichSpan = &block.spans[span_index as usize];
+    if text_len == 0usize {
+        return;
+    }
+    const needed_len: usize = updated.text_len + text_len;
+    var tmp: &byte = null;
+    var tmp_cap: usize = 0usize;
+    if needed_len > 0usize {
+        tmp_cap = needed_len + 1usize;
+        tmp = try doc.allocator.alloc(tmp_cap);
+        if tmp == null {
+            return error.RichDeltaOutOfBounds;
+        }
+        const dst_tmp: &byte = tmp;
+        if updated.text_len > 0usize && updated.text_ptr != null {
+            _ = mem_copy(dst_tmp, updated.text_ptr as &const byte, updated.text_len);
+        }
+        if text_len > 0usize {
+            if text == null {
+                return error.RichDeltaOutOfBounds;
+            }
+            const tail_dst: &byte = @ptr_from_usize(@usize_from_ptr(dst_tmp as &void) + updated.text_len) as &byte;
+            _ = mem_copy(tail_dst, text, text_len);
+        }
+        dst_tmp[needed_len] = 0u8;
+    }
+    try doc.set_span_text(block_index, span_index, tmp as &const byte, needed_len);
+    if tmp != null {
+        doc.allocator.dealloc(tmp);
+        _ = tmp_cap;
+    }
+}
+
+export fn rich_delta_new() RichDelta {
+    return rich_delta_new_with_allocator(&g_allocator);
+}
+
+export fn rich_delta_new_with_allocator(allocator: &MallocAllocator) RichDelta {
+    return RichDelta{
+        allocator: allocator,
+        ops: null,
+        op_count: 0u32,
+        op_cap: 0u32,
+    };
+}
+
+RichDelta {
+    fn dispose(self: &Self) void {
+        self.clear();
+        if self.ops != null {
+            self.allocator.dealloc(self.ops as &byte);
+        }
+        self.ops = null;
+        self.op_cap = 0u32;
+    }
+
+    fn clear(self: &Self) void {
+        var idx: u32 = 0u32;
+        while idx < self.op_count {
+            rich_delta_op_drop(&self.ops[idx as usize], self.allocator);
+            idx = idx + 1u32;
+        }
+        self.op_count = 0u32;
+    }
+
+    fn push_retain(self: &Self, count: u32, attrs: RichDeltaAttrs) !void {
+        if count == 0u32 {
+            return;
+        }
+        if self.op_count > 0u32 {
+            const last: &RichDeltaOp = &self.ops[self.op_count as usize - 1usize];
+            if last.kind == RichOpKind.Retain && rich_delta_op_attrs_match(last, attrs) {
+                last.count = last.count + count;
+                return;
+            }
+        }
+        try rich_delta_ensure_op_capacity(self, self.op_count + 1u32);
+        rich_delta_op_reset(&self.ops[self.op_count as usize]);
+        self.ops[self.op_count as usize].kind = RichOpKind.Retain;
+        self.ops[self.op_count as usize].count = count;
+        self.ops[self.op_count as usize].attrs = attrs;
+        try rich_delta_op_set_link_url(&self.ops[self.op_count as usize], self.allocator, attrs.link_url_ptr, attrs.link_url_len);
+        self.ops[self.op_count as usize].attrs.link_url_ptr = self.ops[self.op_count as usize].link_url_ptr as &const byte;
+        self.ops[self.op_count as usize].attrs.link_url_len = self.ops[self.op_count as usize].link_url_len;
+        self.op_count = self.op_count + 1u32;
+    }
+
+    fn push_delete(self: &Self, count: u32) !void {
+        if count == 0u32 {
+            return;
+        }
+        if self.op_count > 0u32 {
+            const last: &RichDeltaOp = &self.ops[self.op_count as usize - 1usize];
+            if last.kind == RichOpKind.Delete {
+                last.count = last.count + count;
+                return;
+            }
+        }
+        try rich_delta_ensure_op_capacity(self, self.op_count + 1u32);
+        rich_delta_op_reset(&self.ops[self.op_count as usize]);
+        self.ops[self.op_count as usize].kind = RichOpKind.Delete;
+        self.ops[self.op_count as usize].count = count;
+        self.op_count = self.op_count + 1u32;
+    }
+
+    fn push_insert_text(self: &Self, text: &const byte, text_len: usize, attrs: RichDeltaAttrs) !void {
+        if text == null || text_len == 0usize {
+            return;
+        }
+        const codepoint_count: u32 = rich_utf8_codepoint_count(text, text_len);
+        if self.op_count > 0u32 {
+            const last: &RichDeltaOp = &self.ops[self.op_count as usize - 1usize];
+            if last.kind == RichOpKind.InsertText && rich_delta_op_attrs_match(last, attrs) {
+                const old_len: usize = last.text_len;
+                try rich_delta_op_ensure_text_capacity(last, self.allocator, old_len + text_len);
+                var idx: usize = 0usize;
+                while idx < text_len {
+                    last.text_ptr[old_len + idx] = text[idx];
+                    idx = idx + 1usize;
+                }
+                last.text_len = old_len + text_len;
+                last.text_ptr[last.text_len] = 0u8;
+                last.count = last.count + codepoint_count;
+                return;
+            }
+        }
+        try rich_delta_ensure_op_capacity(self, self.op_count + 1u32);
+        rich_delta_op_reset(&self.ops[self.op_count as usize]);
+        self.ops[self.op_count as usize].kind = RichOpKind.InsertText;
+        self.ops[self.op_count as usize].count = codepoint_count;
+        self.ops[self.op_count as usize].attrs = attrs;
+        try rich_delta_op_set_text(&self.ops[self.op_count as usize], self.allocator, text, text_len);
+        try rich_delta_op_set_link_url(&self.ops[self.op_count as usize], self.allocator, attrs.link_url_ptr, attrs.link_url_len);
+        self.ops[self.op_count as usize].attrs.link_url_ptr = self.ops[self.op_count as usize].link_url_ptr as &const byte;
+        self.ops[self.op_count as usize].attrs.link_url_len = self.ops[self.op_count as usize].link_url_len;
+        self.op_count = self.op_count + 1u32;
+    }
+
+    fn push_insert_break(self: &Self, attrs: RichDeltaAttrs) !void {
+        if self.op_count > 0u32 {
+            const last: &RichDeltaOp = &self.ops[self.op_count as usize - 1usize];
+            if last.kind == RichOpKind.InsertBreak && rich_delta_attrs_eq(last.attrs, attrs) {
+                last.count = last.count + 1u32;
+                return;
+            }
+        }
+        try rich_delta_ensure_op_capacity(self, self.op_count + 1u32);
+        rich_delta_op_reset(&self.ops[self.op_count as usize]);
+        self.ops[self.op_count as usize].kind = RichOpKind.InsertBreak;
+        self.ops[self.op_count as usize].count = 1u32;
+        self.ops[self.op_count as usize].attrs = attrs;
+        self.op_count = self.op_count + 1u32;
+    }
+}
+
+fn rich_delta_attrs_inline_from_atom(atom: &RichLinearAtom) RichDeltaAttrs {
+    if atom.link_url_len > 0usize {
+        return rich_delta_attrs_inline_link(atom.inline_marks, atom.link_url_ptr, atom.link_url_len);
+    }
+    return rich_delta_attrs_inline(atom.inline_marks);
+}
+
+fn rich_delta_push_insert_atom(out: &RichDelta, atom: &RichLinearAtom) !void {
+    if atom.kind == RichLinearAtomKind.Text {
+        if rich_inline_marks_eq(atom.inline_marks, rich_inline_marks_none()) && atom.link_url_len == 0usize {
+            try out.push_insert_text(&atom.text_bytes[0] as &const byte, atom.text_len as usize, rich_delta_attrs_none());
+        } else {
+            try out.push_insert_text(&atom.text_bytes[0] as &const byte, atom.text_len as usize, rich_delta_attrs_inline_from_atom(atom));
+        }
+    } else {
+        try out.push_insert_break(rich_delta_attrs_block(atom.block_type, atom.indent));
+    }
+}
+
+fn rich_delta_push_inverse_retain_atom(out: &RichDelta, atom: &RichLinearAtom) !void {
+    if atom.kind == RichLinearAtomKind.Text {
+        try out.push_retain(1u32, rich_delta_attrs_inline_from_atom(atom));
+    } else {
+        try out.push_retain(1u32, rich_delta_attrs_block(atom.block_type, atom.indent));
+    }
+}
+
+/// Builds the inverse patch for applying `delta` to `base_doc`.
+/// 参数: `base_doc` is the document before `delta`, `delta` is the patch to invert, and `out` receives the inverse patch.
+/// 返回值: succeeds after replacing `out` with the inverse delta, or returns an error if the patch exceeds `base_doc` bounds.
+export fn rich_delta_invert(base_doc: &RichDocument, delta: &RichDelta, out: &RichDelta) !void {
+    out.clear();
+
+    var atoms: RichLinearAtomBuffer = rich_linear_atom_buffer_new(base_doc.allocator);
+    defer rich_linear_atom_buffer_drop(&atoms);
+    try rich_document_to_atoms(base_doc, &atoms);
+
+    var source_index: u32 = 0u32;
+    var op_index: u32 = 0u32;
+    while op_index < delta.op_count {
+        const op: &RichDeltaOp = &delta.ops[op_index as usize];
+        if op.kind == RichOpKind.Retain {
+            if source_index + op.count > atoms.len {
+                return error.RichDeltaOutOfBounds;
+            }
+            if op.attrs.has_inline || op.attrs.has_block {
+                var retain_index: u32 = 0u32;
+                while retain_index < op.count {
+                    try rich_delta_push_inverse_retain_atom(out, &atoms.atoms[(source_index + retain_index) as usize]);
+                    retain_index = retain_index + 1u32;
+                }
+            } else {
+                try out.push_retain(op.count, rich_delta_attrs_none());
+            }
+            source_index = source_index + op.count;
+        } else if op.kind == RichOpKind.Delete {
+            if source_index + op.count > atoms.len {
+                return error.RichDeltaOutOfBounds;
+            }
+            var delete_index: u32 = 0u32;
+            while delete_index < op.count {
+                try rich_delta_push_insert_atom(out, &atoms.atoms[(source_index + delete_index) as usize]);
+                delete_index = delete_index + 1u32;
+            }
+            source_index = source_index + op.count;
+        } else if op.kind == RichOpKind.InsertText {
+            try out.push_delete(op.count);
+        } else if op.kind == RichOpKind.InsertBreak {
+            try out.push_delete(op.count);
+        }
+        op_index = op_index + 1u32;
+    }
+}
+
+export fn document_to_delta(doc: &RichDocument, out: &RichDelta) !void {
+    out.clear();
+    try doc.normalize();
+    var block_idx: u32 = 0u32;
+        while block_idx < doc.block_count {
+            const block: &RichBlock = &doc.blocks[block_idx as usize];
+            var span_idx: u16 = 0u16;
+            while span_idx < block.span_count {
+                const span: &RichSpan = &block.spans[span_idx as usize];
+                if span.text_len > 0usize {
+                    if rich_inline_marks_eq(span.marks, rich_inline_marks_none()) {
+                        try out.push_insert_text(span.text_ptr as &const byte, span.text_len, rich_delta_attrs_none());
+                    } else if span.marks.link_ref != 0u16 {
+                        try out.push_insert_text(
+                            span.text_ptr as &const byte,
+                            span.text_len,
+                            rich_delta_attrs_inline_link(
+                                span.marks,
+                                doc.link_ptr(span.marks.link_ref),
+                                doc.link_len(span.marks.link_ref),
+                            ),
+                        );
+                    } else {
+                        try out.push_insert_text(span.text_ptr as &const byte, span.text_len, rich_delta_attrs_inline(span.marks));
+                    }
+                }
+                span_idx = span_idx + 1u16;
+            }
+            try out.push_insert_break(rich_delta_attrs_block(block.block_type, block.indent));
+            block_idx = block_idx + 1u32;
+        }
+}
+
+export fn apply_delta(doc: &RichDocument, delta: &RichDelta) !void {
+    var src: RichLinearAtomBuffer = rich_linear_atom_buffer_new(doc.allocator);
+    var dst: RichLinearAtomBuffer = rich_linear_atom_buffer_new(doc.allocator);
+    defer rich_linear_atom_buffer_drop(&src);
+    defer rich_linear_atom_buffer_drop(&dst);
+
+    try rich_document_to_atoms(doc, &src);
+
+    var src_idx: u32 = 0u32;
+    var op_idx: u32 = 0u32;
+    while op_idx < delta.op_count {
+        const op: &RichDeltaOp = &delta.ops[op_idx as usize];
+        if op.kind == RichOpKind.Retain {
+            var remaining: u32 = op.count;
+            while remaining > 0u32 {
+                if src_idx >= src.len {
+                    return error.RichDeltaOutOfBounds;
+                }
+                var atom: RichLinearAtom = src.atoms[src_idx as usize];
+                if op.attrs.has_inline && atom.kind == RichLinearAtomKind.Text {
+                    atom.inline_marks = op.attrs.inline_marks;
+                    if op.link_url_len > 0usize {
+                        atom.link_url_ptr = op.link_url_ptr as &const byte;
+                        atom.link_url_len = op.link_url_len;
+                    } else if op.attrs.inline_marks.link_ref == 0u16 {
+                        atom.link_url_ptr = null;
+                        atom.link_url_len = 0usize;
+                    }
+                }
+                if op.attrs.has_block && atom.kind == RichLinearAtomKind.Break {
+                    atom.block_type = op.attrs.block.block_type;
+                    atom.indent = op.attrs.block.indent;
+                }
+                try rich_linear_atom_buffer_ensure_capacity(&dst, dst.len + 1u32);
+                const dst_idx: usize = dst.len as usize;
+                dst.atoms[dst_idx].kind = atom.kind;
+                dst.atoms[dst_idx].text_len = atom.text_len;
+                dst.atoms[dst_idx].inline_marks = RichInlineMarks{
+                    bits: atom.inline_marks.bits,
+                    link_ref: atom.inline_marks.link_ref,
+                };
+                dst.atoms[dst_idx].link_url_ptr = atom.link_url_ptr;
+                dst.atoms[dst_idx].link_url_len = atom.link_url_len;
+                dst.atoms[dst_idx].block_type = atom.block_type;
+                dst.atoms[dst_idx].indent = atom.indent;
+                var byte_idx: usize = 0usize;
+                while byte_idx < 4usize {
+                    dst.atoms[dst_idx].text_bytes[byte_idx] = atom.text_bytes[byte_idx];
+                    byte_idx = byte_idx + 1usize;
+                }
+                dst.len = dst.len + 1u32;
+                src_idx = src_idx + 1u32;
+                remaining = remaining - 1u32;
+            }
+        } else if op.kind == RichOpKind.Delete {
+            if src_idx + op.count > src.len {
+                return error.RichDeltaOutOfBounds;
+            }
+            src_idx = src_idx + op.count;
+        } else if op.kind == RichOpKind.InsertText {
+            var insert_link_url_ptr: &const byte = op.link_url_ptr as &const byte;
+            var insert_link_url_len: usize = op.link_url_len;
+            if insert_link_url_len == 0usize && op.attrs.has_inline && op.attrs.inline_marks.link_ref != 0u16 {
+                insert_link_url_ptr = doc.link_ptr(op.attrs.inline_marks.link_ref);
+                insert_link_url_len = doc.link_len(op.attrs.inline_marks.link_ref);
+            }
+            if op.attrs.has_inline {
+                try rich_delta_insert_text_atoms(
+                    &dst,
+                    op.text_ptr as &const byte,
+                    op.text_len,
+                    op.attrs.inline_marks,
+                    insert_link_url_ptr,
+                    insert_link_url_len,
+                );
+            } else {
+                try rich_delta_insert_text_atoms(
+                    &dst,
+                    op.text_ptr as &const byte,
+                    op.text_len,
+                    rich_inline_marks_none(),
+                    null,
+                    0usize,
+                );
+            }
+        } else if op.kind == RichOpKind.InsertBreak {
+            var repeat: u32 = 0u32;
+            while repeat < op.count {
+                if op.attrs.has_block {
+                    try rich_linear_atom_push(&dst, rich_linear_atom_break(op.attrs.block.block_type, op.attrs.block.indent));
+                } else {
+                    try rich_linear_atom_push(&dst, rich_linear_atom_break(RichBlockType.Paragraph, 0u8));
+                }
+                repeat = repeat + 1u32;
+            }
+        }
+        op_idx = op_idx + 1u32;
+    }
+
+    while src_idx < src.len {
+        try rich_linear_atom_push(&dst, src.atoms[src_idx as usize]);
+        src_idx = src_idx + 1u32;
+    }
+
+    try rich_document_rebuild_from_atoms(doc, &dst);
+}
+
+export fn rich_delete_range(doc: &RichDocument, range: RichRange) !RichPos {
+    const offsets: RichLinearRange = try rich_delta_range_offsets(doc, range);
+    return try rich_delta_delete_offsets(doc, offsets.start, offsets.end);
+}
+
+export fn rich_insert_text(doc: &RichDocument, range: RichRange, text: &const byte, text_len: usize, marks: RichInlineMarks) !RichPos {
+    const offsets: RichLinearRange = try rich_delta_range_offsets(doc, range);
+    if text == null || text_len == 0usize {
+        return try rich_delta_delete_offsets(doc, offsets.start, offsets.end);
+    }
+
+    var patch: RichDelta = rich_delta_new_with_allocator(doc.allocator);
+    defer patch.dispose();
+    if offsets.start > 0u32 {
+        try patch.push_retain(offsets.start, rich_delta_attrs_none());
+    }
+    if offsets.end > offsets.start {
+        try patch.push_delete(offsets.end - offsets.start);
+    }
+    const none_marks: RichInlineMarks = rich_inline_marks_none();
+    if rich_inline_marks_eq(marks, none_marks) {
+        try patch.push_insert_text(text, text_len, rich_delta_attrs_none());
+    } else {
+        try patch.push_insert_text(text, text_len, rich_delta_attrs_inline(marks));
+    }
+    try apply_delta(doc, &patch);
+    return try doc.linear_offset_to_pos(offsets.start + rich_utf8_codepoint_count(text, text_len));
+}
+
+export fn rich_backspace(doc: &RichDocument, range: RichRange) !RichPos {
+    const offsets: RichLinearRange = try rich_delta_range_offsets(doc, range);
+    if offsets.end > offsets.start {
+        return try rich_delta_delete_offsets(doc, offsets.start, offsets.end);
+    }
+    if offsets.start == 0u32 {
+        return try doc.linear_offset_to_pos(0u32);
+    }
+
+    var patch: RichDelta = rich_delta_new_with_allocator(doc.allocator);
+    defer patch.dispose();
+    if offsets.start > 1u32 {
+        try patch.push_retain(offsets.start - 1u32, rich_delta_attrs_none());
+    }
+    try patch.push_delete(1u32);
+    try apply_delta(doc, &patch);
+    return try doc.linear_offset_to_pos(offsets.start - 1u32);
+}
+
+export fn rich_delete_forward(doc: &RichDocument, range: RichRange) !RichPos {
+    const offsets: RichLinearRange = try rich_delta_range_offsets(doc, range);
+    if offsets.end > offsets.start {
+        return try rich_delta_delete_offsets(doc, offsets.start, offsets.end);
+    }
+    const max_offset: u32 = doc.max_cursor_offset();
+    if offsets.start >= max_offset {
+        return try doc.linear_offset_to_pos(max_offset);
+    }
+
+    var patch: RichDelta = rich_delta_new_with_allocator(doc.allocator);
+    defer patch.dispose();
+    if offsets.start > 0u32 {
+        try patch.push_retain(offsets.start, rich_delta_attrs_none());
+    }
+    try patch.push_delete(1u32);
+    try apply_delta(doc, &patch);
+    return try doc.linear_offset_to_pos(offsets.start);
+}
+
+export fn rich_insert_break(doc: &RichDocument, range: RichRange) !RichPos {
+    const offsets: RichLinearRange = try rich_delta_range_offsets(doc, range);
+    if offsets.end > offsets.start {
+        const caret: RichPos = try rich_delta_delete_offsets(doc, offsets.start, offsets.end);
+        return try rich_insert_break(doc, rich_range_collapsed(caret));
+    }
+    const caret: RichPos = try doc.linear_offset_to_pos(offsets.start);
+    if caret.block_index >= doc.block_count {
+        return error.RichTextOutOfBounds;
+    }
+    const block: &RichBlock = &doc.blocks[caret.block_index as usize];
+    const block_len: u32 = rich_delta_block_text_codepoints(block);
+    if block_len == 0u32 && rich_delta_block_is_list(block.block_type) {
+        var rewrite: RichDelta = rich_delta_new_with_allocator(doc.allocator);
+        defer rewrite.dispose();
+        if offsets.start > 0u32 {
+            try rewrite.push_retain(offsets.start, rich_delta_attrs_none());
+        }
+        try rewrite.push_retain(1u32, rich_delta_attrs_block(RichBlockType.Paragraph, 0u8));
+        try apply_delta(doc, &rewrite);
+        return try doc.linear_offset_to_pos(offsets.start);
+    }
+
+    var patch: RichDelta = rich_delta_new_with_allocator(doc.allocator);
+    defer patch.dispose();
+    if offsets.start > 0u32 {
+        try patch.push_retain(offsets.start, rich_delta_attrs_none());
+    }
+    try patch.push_insert_break(rich_delta_attrs_block(block.block_type, block.indent));
+    try apply_delta(doc, &patch);
+    return try doc.linear_offset_to_pos(offsets.start + 1u32);
+}
+
+export fn rich_set_block_type(doc: &RichDocument, range: RichRange, block_type: RichBlockType, indent: u8) !RichRange {
+    const offsets: RichLinearRange = try rich_delta_range_offsets(doc, range);
+    const start: u32 = offsets.start;
+    const end: u32 = offsets.end;
+    var collapsed_block_index: u32 = 0u32;
+    if start == end {
+        collapsed_block_index = (try doc.linear_offset_to_pos(start)).block_index;
+    }
+
+    var patch: RichDelta = rich_delta_new_with_allocator(doc.allocator);
+    defer patch.dispose();
+
+    var block_start: u32 = 0u32;
+    var block_idx: u32 = 0u32;
+    while block_idx < doc.block_count {
+        const block: &RichBlock = &doc.blocks[block_idx as usize];
+        const block_len: u32 = rich_delta_block_text_codepoints(block);
+        if block_len > 0u32 {
+            try patch.push_retain(block_len, rich_delta_attrs_none());
+        }
+
+        var selected: bool = false;
+        if start == end {
+            selected = block_idx == collapsed_block_index;
+        } else {
+            var coverage_end: u32 = block_start + block_len;
+            if block_idx + 1u32 < doc.block_count {
+                coverage_end = coverage_end + 1u32;
+            }
+            selected = start < coverage_end && end > block_start;
+        }
+        if selected {
+            try patch.push_retain(1u32, rich_delta_attrs_block(block_type, indent));
+        } else {
+            try patch.push_retain(1u32, rich_delta_attrs_none());
+        }
+
+        if block_idx + 1u32 < doc.block_count {
+            block_start = block_start + block_len + 1u32;
+        } else {
+            block_start = block_start + block_len;
+        }
+        block_idx = block_idx + 1u32;
+    }
+
+    try apply_delta(doc, &patch);
+    return RichRange{
+        anchor: try doc.linear_offset_to_pos(start),
+        focus: try doc.linear_offset_to_pos(end),
+    };
+}
+
+export fn rich_toggle_inline_mark(doc: &RichDocument, range: RichRange, pending_marks: RichInlineMarks, mark_bit: u16) !RichInlineToggleResult {
+    const offsets: RichLinearRange = try rich_delta_range_offsets(doc, range);
+    const start: u32 = offsets.start;
+    const end: u32 = offsets.end;
+    if start == end {
+        var next_pending: RichInlineMarks = pending_marks;
+        if (next_pending.bits & mark_bit) != 0u16 {
+            next_pending.bits = next_pending.bits & (~mark_bit);
+        } else {
+            next_pending.bits = next_pending.bits | mark_bit;
+        }
+        return RichInlineToggleResult{
+            range: RichRange{
+                anchor: try doc.linear_offset_to_pos(start),
+                focus: try doc.linear_offset_to_pos(end),
+            },
+            pending_marks: next_pending,
+        };
+    }
+
+    var saw_selected_text: bool = false;
+    var all_selected_have_mark: bool = true;
+    var scan_cursor: u32 = 0u32;
+    var scan_block_idx: u32 = 0u32;
+    while scan_block_idx < doc.block_count {
+        const scan_block: &RichBlock = &doc.blocks[scan_block_idx as usize];
+        var scan_span_idx: u16 = 0u16;
+        while scan_span_idx < scan_block.span_count {
+            const scan_span: &RichSpan = &scan_block.spans[scan_span_idx as usize];
+            var scan_byte_idx: usize = 0usize;
+            while scan_byte_idx < scan_span.text_len {
+                const next_scan_byte: usize = rich_utf8_next_index(scan_span.text_ptr as &const byte, scan_span.text_len, scan_byte_idx);
+                if scan_cursor >= start && scan_cursor < end {
+                    saw_selected_text = true;
+                    if (scan_span.marks.bits & mark_bit) == 0u16 {
+                        all_selected_have_mark = false;
+                    }
+                }
+                _ = next_scan_byte;
+                scan_cursor = scan_cursor + 1u32;
+                scan_byte_idx = next_scan_byte;
+            }
+            scan_span_idx = scan_span_idx + 1u16;
+        }
+        if scan_block_idx + 1u32 < doc.block_count {
+            scan_cursor = scan_cursor + 1u32;
+        }
+        scan_block_idx = scan_block_idx + 1u32;
+    }
+
+    if !saw_selected_text {
+        return RichInlineToggleResult{
+            range: RichRange{
+                anchor: try doc.linear_offset_to_pos(start),
+                focus: try doc.linear_offset_to_pos(end),
+            },
+            pending_marks: pending_marks,
+        };
+    }
+
+    var patch: RichDelta = rich_delta_new_with_allocator(doc.allocator);
+    defer patch.dispose();
+    var cursor: u32 = 0u32;
+    var block_idx: u32 = 0u32;
+    while block_idx < doc.block_count {
+        const block: &RichBlock = &doc.blocks[block_idx as usize];
+        var span_idx: u16 = 0u16;
+        while span_idx < block.span_count {
+            const span: &RichSpan = &block.spans[span_idx as usize];
+            var byte_idx: usize = 0usize;
+            while byte_idx < span.text_len {
+                const next_byte_idx: usize = rich_utf8_next_index(span.text_ptr as &const byte, span.text_len, byte_idx);
+                if cursor >= start && cursor < end {
+                    var updated_marks: RichInlineMarks = span.marks;
+                    if all_selected_have_mark {
+                        updated_marks.bits = updated_marks.bits & (~mark_bit);
+                    } else {
+                        updated_marks.bits = updated_marks.bits | mark_bit;
+                    }
+                    try patch.push_retain(1u32, rich_delta_attrs_inline(updated_marks));
+                } else {
+                    try patch.push_retain(1u32, rich_delta_attrs_none());
+                }
+                _ = next_byte_idx;
+                cursor = cursor + 1u32;
+                byte_idx = next_byte_idx;
+            }
+            span_idx = span_idx + 1u16;
+        }
+        try patch.push_retain(1u32, rich_delta_attrs_none());
+        if block_idx + 1u32 < doc.block_count {
+            cursor = cursor + 1u32;
+        }
+        block_idx = block_idx + 1u32;
+    }
+
+    try apply_delta(doc, &patch);
+    return RichInlineToggleResult{
+        range: RichRange{
+            anchor: try doc.linear_offset_to_pos(start),
+            focus: try doc.linear_offset_to_pos(end),
+        },
+        pending_marks: pending_marks,
+    };
+}
+
+export fn rich_delta_from_plain_text(text: &const byte) !RichDelta {
+    var doc: RichDocument = rich_document_new_with_allocator(&g_allocator);
+    defer doc.dispose();
+    try doc.set_plain_text(text);
+    var delta: RichDelta = rich_delta_new();
+    try document_to_delta(&doc, &delta);
+    return delta;
+}

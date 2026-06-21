@@ -1,0 +1,225 @@
+use gui.core.color.BLACK;
+use gui.core.dirty_region.DirtyRegion;
+use gui.core.dirty_region.DirtyRegionView;
+use gui.core.rect.Rect;
+use gui.platform.disp.DisplayCtx;
+use gui.platform.disp.FrameBuffer;
+use gui.platform.disp.PixelFormat;
+use gui.platform.disp.display_ctx_new;
+use gui.platform.disp.empty_framebuffer;
+use gui.platform.disp.framebuffer_clear;
+use gui.platform.disp.framebuffer_new;
+use gui.platform.disp.framebuffer_required_bytes;
+use gui.sim.web_present_plan.WebPresentMode;
+use gui.sim.web_present_plan.WebPresentPlan;
+use gui.sim.web_present_plan.web_build_present_plan;
+use gui.sim.runtime_core.IRuntimeDisplay;
+
+extern fn malloc(size: usize) &void;
+extern fn free(ptr: &void) void;
+
+extern fn uya_gui_web_display_open(width: i32, height: i32, scale: i32, title: &const byte) &void;
+extern fn uya_gui_web_display_close(handle: &void) void;
+extern fn uya_gui_web_display_present(handle: &void, pixels: &const byte, pitch: i32, width: i32, height: i32, format_tag: i32) i32;
+extern fn uya_gui_web_display_present_begin(handle: &void, width: i32, height: i32, format_tag: i32) i32;
+extern fn uya_gui_web_display_present_region(handle: &void, pixels: &const byte, pitch: i32, width: i32, height: i32, format_tag: i32, x: i32, y: i32, rect_w: i32, rect_h: i32) i32;
+extern fn uya_gui_web_display_present_end(handle: &void) i32;
+extern fn uya_gui_web_display_consume_refresh_request(handle: &void) i32;
+extern fn uya_gui_web_display_set_title(handle: &void, title: &const byte) void;
+extern fn uya_gui_web_display_request_fullscreen(handle: &void) i32;
+extern fn uya_gui_web_display_set_dirty_overlay(handle: &void, enabled: i32) i32;
+extern fn uya_gui_web_last_error() &byte;
+
+export struct WebDisplay : IRuntimeDisplay {
+    host: &void,
+    front_mem: &byte,
+    back_mem: &byte,
+    alloc_bytes: usize,
+    scale: u8,
+    dirty_overlay_enabled: bool,
+    ctx: DisplayCtx,
+
+    fn init(self: &Self, width: u16, height: u16, scale: u8, title: &const byte) bool {
+        self.host = uya_gui_web_display_open(width as i32, height as i32, scale as i32, title);
+        if self.host == null {
+            return false;
+        }
+
+        self.alloc_bytes = framebuffer_required_bytes(width, height, PixelFormat.ARGB8888);
+        self.front_mem = malloc(self.alloc_bytes) as &byte;
+        self.back_mem = malloc(self.alloc_bytes) as &byte;
+        if self.front_mem == null || self.back_mem == null {
+            self.shutdown();
+            return false;
+        }
+
+        const stride: u16 = (width as i32 * 4) as u16;
+        const front: FrameBuffer = framebuffer_new(self.front_mem, width, height, stride, PixelFormat.ARGB8888);
+        const back: FrameBuffer = framebuffer_new(self.back_mem, width, height, stride, PixelFormat.ARGB8888);
+        self.ctx = display_ctx_new(front, back);
+        self.scale = scale;
+        self.dirty_overlay_enabled = false;
+        framebuffer_clear(self.ctx.get_front_buffer(), BLACK);
+        framebuffer_clear(self.ctx.get_back_buffer(), BLACK);
+        return true;
+    }
+
+    fn shutdown(self: &Self) void {
+        if self.front_mem != null {
+            free(self.front_mem as &void);
+            self.front_mem = null;
+        }
+        if self.back_mem != null {
+            free(self.back_mem as &void);
+            self.back_mem = null;
+        }
+        if self.host != null {
+            uya_gui_web_display_close(self.host);
+            self.host = null;
+        }
+        self.alloc_bytes = 0usize;
+        self.ctx = display_ctx_new(empty_framebuffer(), empty_framebuffer());
+    }
+
+    fn valid(self: &Self) bool {
+        return self.host != null && self.front_mem != null && self.back_mem != null;
+    }
+
+    fn get_back_buffer(self: &Self) &FrameBuffer {
+        return self.ctx.get_back_buffer();
+    }
+
+    fn get_front_buffer(self: &Self) &FrameBuffer {
+        return self.ctx.get_front_buffer();
+    }
+
+    fn present(self: &Self) bool {
+        if !self.valid() {
+            return false;
+        }
+        self.ctx.swap_buffers();
+        const front: &FrameBuffer = self.ctx.get_front_buffer();
+        return uya_gui_web_display_present(
+            self.host,
+            front.pixels as &const byte,
+            front.stride as i32,
+            front.size.w as i32,
+            front.size.h as i32,
+            front.format as i32
+        ) != 0;
+    }
+
+    fn present_dirty(self: &Self, dirty: &DirtyRegion) bool {
+        if !self.valid() || dirty == null {
+            return false;
+        }
+
+        const plan: WebPresentPlan = web_build_present_plan(self.ctx.get_back_buffer(), dirty);
+        if plan.mode == WebPresentMode.None {
+            return true;
+        }
+        if plan.mode == WebPresentMode.Full {
+            return self.present();
+        }
+
+        self.ctx.swap_buffers();
+        const front: &FrameBuffer = self.ctx.get_front_buffer();
+        if uya_gui_web_display_present_begin(
+            self.host,
+            front.size.w as i32,
+            front.size.h as i32,
+            front.format as i32
+        ) == 0 {
+            return false;
+        }
+
+        const view: DirtyRegionView = dirty.get_regions();
+        var i: i32 = 0;
+        while i < view.len {
+            const rect: Rect = view.at(i);
+            if uya_gui_web_display_present_region(
+                self.host,
+                front.pixels as &const byte,
+                front.stride as i32,
+                front.size.w as i32,
+                front.size.h as i32,
+                front.format as i32,
+                rect.x as i32,
+                rect.y as i32,
+                rect.w as i32,
+                rect.h as i32
+            ) == 0 {
+                return false;
+            }
+            i = i + 1;
+        }
+        return uya_gui_web_display_present_end(self.host) != 0;
+    }
+
+    fn refresh_front(self: &Self) bool {
+        if !self.valid() {
+            return false;
+        }
+        const front: &FrameBuffer = self.ctx.get_front_buffer();
+        return uya_gui_web_display_present(
+            self.host,
+            front.pixels as &const byte,
+            front.stride as i32,
+            front.size.w as i32,
+            front.size.h as i32,
+            front.format as i32
+        ) != 0;
+    }
+
+    fn consume_refresh_request(self: &Self) bool {
+        if self.host == null {
+            return false;
+        }
+        return uya_gui_web_display_consume_refresh_request(self.host) != 0;
+    }
+
+    fn set_title(self: &Self, title: &const byte) void {
+        if self.host == null {
+            return;
+        }
+        uya_gui_web_display_set_title(self.host, title);
+    }
+
+    fn toggle_fullscreen(self: &Self) bool {
+        if self.host == null {
+            return false;
+        }
+        return uya_gui_web_display_request_fullscreen(self.host) != 0;
+    }
+
+    fn set_dirty_overlay(self: &Self, enabled: bool) bool {
+        if self.host == null {
+            return false;
+        }
+        const ok: bool = uya_gui_web_display_set_dirty_overlay(self.host, enabled as i32) != 0;
+        if ok {
+            self.dirty_overlay_enabled = enabled;
+        }
+        return ok;
+    }
+}
+
+export fn web_display_new() WebDisplay {
+    return WebDisplay{
+        host: null,
+        front_mem: null,
+        back_mem: null,
+        alloc_bytes: 0usize,
+        scale: 1u8,
+        dirty_overlay_enabled: false,
+        ctx: display_ctx_new(empty_framebuffer(), empty_framebuffer()),
+    };
+}
+
+export fn web_display_last_error() &const byte {
+    const err: &byte = uya_gui_web_last_error();
+    if err == null {
+        return "unknown" as &const byte;
+    }
+    return err as &const byte;
+}

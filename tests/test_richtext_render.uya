@@ -1,0 +1,187 @@
+use gui.core.color.Color;
+use gui.core.rect.Rect;
+use gui.platform.disp.PixelFormat;
+use gui.platform.disp.framebuffer_new;
+use gui.render.ctx.RenderCtx;
+use gui.render.ctx.ctx_pixel;
+use gui.render.ctx.render_ctx_new;
+use gui.render.font.Font;
+use gui.render.font.font_system_default;
+use gui.richtext.document.RICH_MARK_ITALIC;
+use gui.richtext.document.RICH_MARK_INLINE_CODE;
+use gui.richtext.document.RICH_MARK_STRIKE;
+use gui.richtext.document.RICH_MARK_UNDERLINE;
+use gui.richtext.document.RichDocument;
+use gui.richtext.document.rich_document_new;
+use gui.richtext.layout.RichLayoutCache;
+use gui.richtext.layout.rich_layout_cache_new;
+use gui.richtext.render.RichTextRenderer;
+use gui.richtext.render.rich_text_renderer_new;
+use gui.richtext.selection.RichPos;
+use gui.richtext.selection.RichRange;
+use std.testing.assert_eq_bool;
+use std.testing.assert_eq_i32;
+
+export const TEST_RICHTEXT_RENDER_MODULE: i32 = 1;
+
+test "rich text renderer draws document text using visual lines" {
+    var doc: RichDocument = rich_document_new();
+    defer doc.dispose();
+    try doc.set_plain_text("I" as &const byte);
+
+    var font: Font = font_system_default();
+    var layout: RichLayoutCache = rich_layout_cache_new();
+    defer layout.dispose();
+    try layout.relayout(&doc, &font, 32u16, 0u32);
+
+    var bytes: [byte: 1024] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 16, 16, 64, PixelFormat.ARGB8888));
+    const white: Color = Color{ r: 255, g: 255, b: 255, a: 255 };
+    ctx.clear(Color{ r: 0, g: 0, b: 0, a: 255 });
+
+    var renderer: RichTextRenderer = rich_text_renderer_new();
+    try renderer.draw_document(&ctx, Rect{ x: 0, y: 0, w: 16u16, h: 16u16 }, &doc, &layout, &font, &white);
+
+    try assert_eq_bool(ctx_pixel(&ctx, 2, 3) == white, true);
+}
+
+test "rich text renderer fills selection highlight rects" {
+    var doc: RichDocument = rich_document_new();
+    defer doc.dispose();
+    try doc.set_plain_text("alpha beta\ngamma" as &const byte);
+
+    var font: Font = font_system_default();
+    var layout: RichLayoutCache = rich_layout_cache_new();
+    defer layout.dispose();
+    try layout.relayout(&doc, &font, 35u16, 0u32);
+
+    var bytes: [byte: 4096] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 32, 32, 128, PixelFormat.ARGB8888));
+    const green: Color = Color{ r: 0, g: 255, b: 0, a: 255 };
+    ctx.clear(Color{ r: 0, g: 0, b: 0, a: 255 });
+
+    var renderer: RichTextRenderer = rich_text_renderer_new();
+    var rects: [Rect: 4] = [];
+    _ = try layout.selection_rects(&doc, &font, RichRange{
+        anchor: try doc.linear_offset_to_pos(3u32),
+        focus: try doc.linear_offset_to_pos(8u32),
+    }, &rects[0], 4u32);
+    const rect_count: u32 = try renderer.draw_selection(&ctx, Rect{ x: 0, y: 0, w: 32u16, h: 32u16 }, &doc, &layout, &font, RichRange{
+        anchor: try doc.linear_offset_to_pos(3u32),
+        focus: try doc.linear_offset_to_pos(8u32),
+    }, &green);
+
+    try assert_eq_i32(rect_count as i32, 2);
+    try assert_eq_bool(ctx_pixel(&ctx, rects[0].x + 1i16, rects[0].y + 1i16) == green, true);
+}
+
+test "rich text renderer draws caret at layout position" {
+    var doc: RichDocument = rich_document_new();
+    defer doc.dispose();
+    try doc.set_plain_text("ab" as &const byte);
+
+    var font: Font = font_system_default();
+    var layout: RichLayoutCache = rich_layout_cache_new();
+    defer layout.dispose();
+    try layout.relayout(&doc, &font, 32u16, 0u32);
+
+    var bytes: [byte: 1024] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 16, 16, 64, PixelFormat.ARGB8888));
+    const white: Color = Color{ r: 255, g: 255, b: 255, a: 255 };
+    ctx.clear(Color{ r: 0, g: 0, b: 0, a: 255 });
+
+    var renderer: RichTextRenderer = rich_text_renderer_new();
+    const caret: RichPos = try doc.linear_offset_to_pos(1u32);
+    const caret_rect: Rect = try renderer.draw_caret(&ctx, Rect{ x: 0, y: 0, w: 16u16, h: 16u16 }, &doc, &layout, &font, caret, &white);
+
+    try assert_eq_i32(caret_rect.x as i32, (try layout.line_x_for_pos(&doc, &font, 0u32, caret)) as i32);
+    try assert_eq_i32(caret_rect.y as i32, layout.lines[0].y as i32);
+    try assert_eq_i32(caret_rect.h as i32, layout.lines[0].h as i32);
+    try assert_eq_bool(ctx_pixel(&ctx, caret_rect.x, caret_rect.y + 1i16) == white, true);
+}
+
+test "rich text renderer draws placeholder text when asked" {
+    var bytes: [byte: 1024] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 16, 16, 64, PixelFormat.ARGB8888));
+    var font: Font = font_system_default();
+    const white: Color = Color{ r: 255, g: 255, b: 255, a: 255 };
+    ctx.clear(Color{ r: 0, g: 0, b: 0, a: 255 });
+
+    var renderer: RichTextRenderer = rich_text_renderer_new();
+    renderer.draw_placeholder(&ctx, Rect{ x: 0, y: 0, w: 16u16, h: 16u16 }, "I" as &const byte, 1usize, &font, &white);
+
+    try assert_eq_bool(ctx_pixel(&ctx, 2, 3) == white, true);
+}
+
+test "rich text renderer draws inline formatting feedback" {
+    var doc: RichDocument = rich_document_new();
+    defer doc.dispose();
+    try doc.set_plain_text("III" as &const byte);
+    doc.blocks[0].spans[0].marks.bits = RICH_MARK_UNDERLINE | RICH_MARK_STRIKE | RICH_MARK_INLINE_CODE;
+
+    var font: Font = font_system_default();
+    var layout: RichLayoutCache = rich_layout_cache_new();
+    defer layout.dispose();
+    try layout.relayout(&doc, &font, 32u16, 0u32);
+
+    var bytes: [byte: 2048] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 32, 16, 128, PixelFormat.ARGB8888));
+    const white: Color = Color{ r: 255, g: 255, b: 255, a: 255 };
+    ctx.clear(Color{ r: 0, g: 0, b: 0, a: 255 });
+
+    var renderer: RichTextRenderer = rich_text_renderer_new();
+    try renderer.draw_document(&ctx, Rect{ x: 0, y: 0, w: 32u16, h: 16u16 }, &doc, &layout, &font, &white);
+
+    const line: RichVisualLine = layout.lines[0];
+    try assert_eq_bool(ctx_pixel(&ctx, 1, line.y + 2i16) != Color{ r: 0, g: 0, b: 0, a: 255 }, true);
+    try assert_eq_bool(ctx_pixel(&ctx, 2, line.baseline + 1i16) != Color{ r: 0, g: 0, b: 0, a: 255 }, true);
+    try assert_eq_bool(ctx_pixel(&ctx, 2, line.baseline - font.height as i16 / 3i16) != Color{ r: 0, g: 0, b: 0, a: 255 }, true);
+}
+
+test "rich text renderer italic changes glyph shape not just content" {
+    var normal_doc: RichDocument = rich_document_new();
+    defer normal_doc.dispose();
+    try normal_doc.set_plain_text("hello" as &const byte);
+
+    var italic_doc: RichDocument = rich_document_new();
+    defer italic_doc.dispose();
+    try italic_doc.set_plain_text("hello" as &const byte);
+    italic_doc.blocks[0].spans[0].marks.bits = RICH_MARK_ITALIC;
+
+    var font: Font = font_system_default();
+    var normal_layout: RichLayoutCache = rich_layout_cache_new();
+    defer normal_layout.dispose();
+    try normal_layout.relayout(&normal_doc, &font, 64u16, 0u32);
+
+    var italic_layout: RichLayoutCache = rich_layout_cache_new();
+    defer italic_layout.dispose();
+    try italic_layout.relayout(&italic_doc, &font, 64u16, 0u32);
+
+    var normal_bytes: [byte: 4096] = [];
+    var normal_ctx: RenderCtx = render_ctx_new(framebuffer_new(&normal_bytes[0], 64, 16, 256, PixelFormat.ARGB8888));
+    normal_ctx.clear(Color{ r: 0, g: 0, b: 0, a: 255 });
+
+    var italic_bytes: [byte: 4096] = [];
+    var italic_ctx: RenderCtx = render_ctx_new(framebuffer_new(&italic_bytes[0], 64, 16, 256, PixelFormat.ARGB8888));
+    italic_ctx.clear(Color{ r: 0, g: 0, b: 0, a: 255 });
+
+    const white: Color = Color{ r: 255, g: 255, b: 255, a: 255 };
+    var renderer: RichTextRenderer = rich_text_renderer_new();
+    try renderer.draw_document(&normal_ctx, Rect{ x: 0, y: 0, w: 64u16, h: 16u16 }, &normal_doc, &normal_layout, &font, &white);
+    try renderer.draw_document(&italic_ctx, Rect{ x: 0, y: 0, w: 64u16, h: 16u16 }, &italic_doc, &italic_layout, &font, &white);
+
+    var diff_found: bool = false;
+    var y: i16 = 0i16;
+    while y < 16i16 && !diff_found {
+        var x: i16 = 0i16;
+        while x < 64i16 {
+            if ctx_pixel(&normal_ctx, x, y) != ctx_pixel(&italic_ctx, x, y) {
+                diff_found = true;
+                break;
+            }
+            x = x + 1i16;
+        }
+        y = y + 1i16;
+    }
+    try assert_eq_bool(diff_found, true);
+}

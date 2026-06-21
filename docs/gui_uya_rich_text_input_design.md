@@ -10,16 +10,16 @@
 
 当前仓库已经具备几块关键基础：
 
-- `gui/widget/lbl.uya`
+- `src/gui/widget/lbl.uya`
   - 已有单行 `TextInput`。
   - 已支持 UTF-8 commit 输入、左右移动、退格、点击定位、焦点态绘制。
-- `gui/core/event.uya`
+- `src/gui/core/event.uya`
   - 已有 `TextInput` / `KeyDown` / `KeyUp` / `FocusIn` / `FocusOut` / `Drag*` 事件。
-- `gui/platform/indev.uya`
+- `src/gui/platform/indev.uya`
   - 已有 `TouchDriver` / `KeyDriver` / `TextDriver` 抽象。
-- `gui/render/ctx.uya` 与 `gui/render/font.uya`
+- `src/gui/render/ctx.uya` 与 `src/gui/render/font.uya`
   - 已有裁剪、文字绘制、字体度量和动态字体加载能力。
-- `gui/platform/web/*`
+- `src/gui/platform/web/*`
   - 已有 Web 事件桥接和页面 overlay 容器，可作为隐藏输入层、剪贴板层、IME 层的宿主。
 
 当前明显缺口：
@@ -218,28 +218,28 @@ docs/
 
 W0 模块边界说明：
 
-- `gui/richtext/document.uya`
+- `src/gui/richtext/document.uya`
   - 承载 `RichBlockType`、`RichInlineMarks`、`RichSpan`、`RichBlock`、`RichDocument`、normalize、plain text 导出和 `RichPos <-> linear_offset` 公共 helper。
-- `gui/richtext/delta.uya`
+- `src/gui/richtext/delta.uya`
   - 承载 snapshot / patch 两类 `RichDelta` 规范、`apply_delta()` 和 `document_to_delta()`。
-- `gui/richtext/selection.uya`
+- `src/gui/richtext/selection.uya`
   - 承载 `RichPos`、`RichRange`、选区归一化与光标移动辅助逻辑。
-- `gui/richtext/history.uya`
+- `src/gui/richtext/history.uya`
   - 承载 undo / redo 栈和连续输入合并策略。
-- `gui/richtext/layout.uya`
+- `src/gui/richtext/layout.uya`
   - 承载 block 测量、visual line、命中测试和 block 级增量重排。
-- `gui/richtext/render.uya`
+- `src/gui/richtext/render.uya`
   - 承载基于 layout cache 的绘制逻辑，不直接持有文档真源。
-- `gui/widget/rich_text_input.uya`
+- `src/gui/widget/rich_text_input.uya`
   - 暴露 Widget API，承接焦点、滚动、输入事件和 `on_change` 回调。
-- `gui/platform/text_host.uya`
+- `src/gui/platform/text_host.uya`
   - 只暴露跨后端 `IRichTextHostBridge` 抽象，不放任何 Web / SDL2 / FB 专有实现细节。
 
 延后拆分说明：
 
 - `command`、`format`、`serialize_*`、`normalize`、`clipboard` 首版不作为额外顶层文件；它们先作为上述模块的内部类型或 helper 收敛，等实现压力真实出现后再拆分，避免在 W1 前把模块面做得过宽。
 - `rich_toolbar.uya` 是 W8 的可选配套，不是 `RichTextInput` 的首版硬依赖。
-- Web 富文本宿主桥首版明确并入现有 `gui/platform/web/web_host.c`，不新增 `rich_text_web_host.c`；这样可以复用现有 canvas / overlay 生命周期、减少一套并行宿主初始化逻辑。
+- Web 富文本宿主桥首版明确并入现有 `src/gui/platform/web/web_host.c`，不新增 `rich_text_web_host.c`；这样可以复用现有 canvas / overlay 生命周期、减少一套并行宿主初始化逻辑。
 
 ---
 
@@ -800,7 +800,7 @@ export interface IRichTextHostBridge {
 
 Web 侧推荐方案：
 
-- 在 `gui/platform/web/shell.html` 的 `#uya-gui-overlay` 内挂一个隐藏 `textarea`。
+- 在 `src/gui/platform/web/shell.html` 的 `#uya-gui-overlay` 内挂一个隐藏 `textarea`。
 - 当 `RichTextInput` 获得焦点时：
   - 同步 caret rect
   - 激活隐藏 `textarea`

@@ -1,0 +1,151 @@
+use gui.core.point.Point;
+use gui.core.size.Size;
+
+fn rect_right(r: Rect) i32 {
+    return r.x as i32 + r.w as i32;
+}
+
+fn rect_bottom(r: Rect) i32 {
+    return r.y as i32 + r.h as i32;
+}
+
+fn rect_copy(r: &Rect) Rect {
+    return Rect{
+        x: r.x,
+        y: r.y,
+        w: r.w,
+        h: r.h,
+    };
+}
+
+export struct Rect {
+    x: i16,
+    y: i16,
+    w: u16,
+    h: u16,
+}
+
+export const RECT_ZERO: Rect = Rect{ x: 0, y: 0, w: 0, h: 0 };
+
+Rect {
+    fn is_empty(self: &Self) bool {
+        return self.w == 0 || self.h == 0;
+    }
+
+    fn contains(self: &Self, point: Point) bool {
+        if self.is_empty() {
+            return false;
+        }
+
+        const px: i32 = point.x as i32;
+        const py: i32 = point.y as i32;
+        const self_rect: Rect = rect_copy(self);
+        return px >= self.x as i32
+            && py >= self.y as i32
+            && px < rect_right(self_rect)
+            && py < rect_bottom(self_rect);
+    }
+
+    fn intersect(self: &Self, other: Rect) Rect {
+        const self_rect: Rect = rect_copy(self);
+        var left: i32 = self.x as i32;
+        var top: i32 = self.y as i32;
+        var right: i32 = rect_right(self_rect);
+        var bottom: i32 = rect_bottom(self_rect);
+
+        if (other.x as i32) > left {
+            left = other.x as i32;
+        }
+        if (other.y as i32) > top {
+            top = other.y as i32;
+        }
+        if rect_right(other) < right {
+            right = rect_right(other);
+        }
+        if rect_bottom(other) < bottom {
+            bottom = rect_bottom(other);
+        }
+
+        if left >= right || top >= bottom {
+            return RECT_ZERO;
+        }
+
+        return Rect{
+            x: left as i16,
+            y: top as i16,
+            w: (right - left) as u16,
+            h: (bottom - top) as u16,
+        };
+    }
+
+    fn union_rect(self: &Self, other: Rect) Rect {
+        if self.is_empty() {
+            return other;
+        }
+        if other.is_empty() {
+            return Rect{ x: self.x, y: self.y, w: self.w, h: self.h };
+        }
+
+        const self_rect: Rect = rect_copy(self);
+        var left: i32 = self.x as i32;
+        var top: i32 = self.y as i32;
+        var right: i32 = rect_right(self_rect);
+        var bottom: i32 = rect_bottom(self_rect);
+
+        if (other.x as i32) < left {
+            left = other.x as i32;
+        }
+        if (other.y as i32) < top {
+            top = other.y as i32;
+        }
+        if rect_right(other) > right {
+            right = rect_right(other);
+        }
+        if rect_bottom(other) > bottom {
+            bottom = rect_bottom(other);
+        }
+
+        return Rect{
+            x: left as i16,
+            y: top as i16,
+            w: (right - left) as u16,
+            h: (bottom - top) as u16,
+        };
+    }
+
+    fn inflate(self: &Self, dx: i16, dy: i16) Rect {
+        const new_x: i32 = self.x as i32 - dx as i32;
+        const new_y: i32 = self.y as i32 - dy as i32;
+        const new_w: i32 = self.w as i32 + dx as i32 * 2;
+        const new_h: i32 = self.h as i32 + dy as i32 * 2;
+
+        if new_w <= 0 || new_h <= 0 {
+            return RECT_ZERO;
+        }
+
+        return Rect{
+            x: new_x as i16,
+            y: new_y as i16,
+            w: new_w as u16,
+            h: new_h as u16,
+        };
+    }
+
+    fn offset(self: &Self, dx: i16, dy: i16) Rect {
+        return Rect{
+            x: (self.x as i32 + dx as i32) as i16,
+            y: (self.y as i32 + dy as i32) as i16,
+            w: self.w,
+            h: self.h,
+        };
+    }
+
+    fn size(self: &Self) Size {
+        return Size{ w: self.w, h: self.h };
+    }
+}
+
+/// 返回两个矩形的并集。
+export fn rect_union(a: Rect, b: Rect) Rect {
+    return a.union_rect(b);
+}

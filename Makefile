@@ -1,18 +1,26 @@
-UYA ?= ./uya/bin/uya
+UYA_BUNDLED ?= ./uya/bin/uya
+UYA_AUTO := $(shell if command -v uya >/dev/null 2>&1; then command -v uya; elif [ -x "$(UYA_BUNDLED)" ]; then printf '%s\n' "$(UYA_BUNDLED)"; else printf '%s\n' "$(UYA_BUNDLED)"; fi)
+UYA ?= $(UYA_AUTO)
+export UYA
 BUILD_DIR ?= build
-TEST_DIR ?= gui/tests
-BENCH_DIR ?= gui/benchmarks
-EXAMPLE_DIR ?= gui/examples
-SMOKE_APP ?= gui/phase6_smoke.uya
+UYA_STAGE_DIR ?= $(BUILD_DIR)/uya_stage
+UYA_STAGE_EXAMPLE_ALIAS ?= demo
+UYA_STAGE_TEST_ALIAS ?= suite
+UYA_STAGE_BENCH_ALIAS ?= bench
+stage_path = $(abspath $(UYA_STAGE_DIR)/$(patsubst examples/%,$(UYA_STAGE_EXAMPLE_ALIAS)/%,$(patsubst tests/%,$(UYA_STAGE_TEST_ALIAS)/%,$(1))))
+TEST_DIR ?= tests
+BENCH_DIR ?= src/gui/benchmarks
+EXAMPLE_DIR ?= examples
+SMOKE_APP ?= apps/phase6_smoke.uya
 BENCH_APP ?= gui/bench_suite.uya
-TEST_ENTRY ?= gui/test_suite.uya
-TEST_EXTRA_ENTRY ?= gui/test_suite_extra.uya
-RICHTEXT_TEST_ENTRY ?= gui/richtext_test_suite.uya
-WEB_PRESENT_TEST_ENTRY ?= gui/web_present_plan_suite.uya
-RENDER_TEST_ENTRY ?= gui/render_test_suite.uya
+TEST_ENTRY ?= tests/test_suite.uya
+TEST_EXTRA_ENTRY ?= tests/test_suite_extra.uya
+RICHTEXT_TEST_ENTRY ?= tests/richtext_test_suite.uya
+WEB_PRESENT_TEST_ENTRY ?= tests/web_present_plan_suite.uya
+RENDER_TEST_ENTRY ?= tests/render_test_suite.uya
 TEST_STACK_SIZE ?= 65536
 BENCH_STACK_SIZE ?= $(TEST_STACK_SIZE)
-TEXT_COMPARE_APP ?= gui/text_render_compare.uya
+TEXT_COMPARE_APP ?= apps/text_render_compare.uya
 LVGL_COMPARE_DIR ?= tools/lvgl_compare
 LVGL_COMPARE_BUILD_DIR ?= $(BUILD_DIR)/lvgl_compare
 MODE ?= debug
@@ -23,12 +31,12 @@ LVGL_DASHBOARD_FRAMES ?= $(DASHBOARD_COMPARE_FRAMES)
 LVGL_DASHBOARD_REBUILD ?= 0
 FONT_BACKEND_COMPARE_FRAMES ?= 120
 BENCH_JSON ?= $(BUILD_DIR)/phase5_bench.json
-BENCH_BASELINE ?= gui/benchmarks/phase5_bench_baseline.json
+BENCH_BASELINE ?= src/gui/benchmarks/phase5_bench_baseline.json
 UYA_DASHBOARD_COMPARE_DIR ?= $(BUILD_DIR)/dashboard_compare
 UYA_DASHBOARD_COMPARE_BIN ?= $(UYA_DASHBOARD_COMPARE_DIR)/uya_dashboard_compare
 DASHBOARD_COMPARE_REPORT ?= $(BUILD_DIR)/dashboard_compare/dashboard_compare_report.md
 
-.PHONY: build test bench bench-report bench-json bench-snapshot bench-verify docs-api ci release release-artifacts clean hooks build-arm build-riscv build-esp32 sim-build sim-run sim-debug sim-headless sim-web-build sim-web-run sim-web-serve sim-web-smoke sim-web-richtext-smoke sim-web-pages text-compare lvgl-text-compare uya-dashboard-compare-build uya-dashboard-compare lvgl-dashboard-compare-build lvgl-dashboard-compare dashboard-compare dashboard-compare-report font-backend-compare demo-font-atlas ddz-openai-proxy-secrets ddz-openai-proxy-secrets-dev ddz-openai-proxy-deploy ddz-openai-proxy-deploy-dev
+.PHONY: check-uya uya-version stage-uya build test bench bench-report bench-json bench-snapshot bench-verify docs-api ci release release-artifacts clean hooks build-arm build-riscv build-esp32 sim-build sim-run sim-debug sim-headless sim-web-build sim-web-run sim-web-serve sim-web-smoke sim-web-richtext-smoke sim-web-pages text-compare lvgl-text-compare uya-dashboard-compare-build uya-dashboard-compare lvgl-dashboard-compare-build lvgl-dashboard-compare dashboard-compare dashboard-compare-report font-backend-compare demo-font-atlas ddz-openai-proxy-secrets ddz-openai-proxy-secrets-dev ddz-openai-proxy-deploy ddz-openai-proxy-deploy-dev
 
 SIM_BUILD_DIR ?= $(BUILD_DIR)/sim
 SIM_BIN ?= $(SIM_BUILD_DIR)/gui_uya_sim
@@ -42,7 +50,7 @@ SIM_WEB_PORT ?= 8000
 SIM_WEB_OPENAI_ENV ?= dev
 SIM_WEB_AUTO_DEPLOY_OPENAI ?= 0
 DDZ_OPENAI_PROXY_DIR ?= cloudflare/ddz-openai-proxy
-WQY_DEMO_FONT_DIR ?= gui/render/generated
+WQY_DEMO_FONT_DIR ?= src/gui/render/generated
 WQY_DEMO_FONT_TOOL ?= $(BUILD_DIR)/tools/gen_wqy_demo_bitmap_font
 WQY_DEMO_FONT_SRC ?= third_party/fonts/wqy/wqy-microhei.ttc
 
@@ -51,25 +59,38 @@ RELEASE_VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' uya.toml)
 RELEASE_DIR ?= $(BUILD_DIR)/release/uyagui-$(RELEASE_VERSION)
 RELEASE_TARBALL ?= $(BUILD_DIR)/release/uyagui-$(RELEASE_VERSION).tar.gz
 
-build:
+check-uya:
+	@if ! command -v "$(UYA)" >/dev/null 2>&1; then \
+		echo "error: Uya compiler not found: $(UYA)" >&2; \
+		echo "hint : install 'uya' on PATH or run 'make UYA=/path/to/uya <target>'." >&2; \
+		exit 127; \
+	fi
+
+uya-version: check-uya
+	$(UYA) --version
+
+stage-uya:
+	python3 tools/stage_uya_sources.py --root '$(CURDIR)' --stage '$(abspath $(UYA_STAGE_DIR))' --examples-alias '$(UYA_STAGE_EXAMPLE_ALIAS)' --tests-alias '$(UYA_STAGE_TEST_ALIAS)' --benchmarks-alias '$(UYA_STAGE_BENCH_ALIAS)'
+
+build: check-uya stage-uya
 	@mkdir -p $(BUILD_DIR)
-	$(UYA) build $(SMOKE_APP) $(UYA_OPT) -o $(BUILD_DIR)/phase6_smoke
+	$(UYA) build $(call stage_path,$(SMOKE_APP)) $(UYA_OPT) -o $(BUILD_DIR)/phase6_smoke
 
-test:
-	$(UYA) test $(TEST_ENTRY) $(UYA_OPT) --stack-size $(TEST_STACK_SIZE)
-	$(UYA) test $(TEST_EXTRA_ENTRY) $(UYA_OPT) --stack-size $(TEST_STACK_SIZE)
-	$(UYA) test $(RICHTEXT_TEST_ENTRY) $(UYA_OPT) --stack-size $(TEST_STACK_SIZE)
-	$(UYA) test $(WEB_PRESENT_TEST_ENTRY) $(UYA_OPT) --stack-size $(TEST_STACK_SIZE)
-	$(UYA) test $(RENDER_TEST_ENTRY) $(UYA_OPT) --stack-size $(TEST_STACK_SIZE)
+test: check-uya stage-uya
+	$(UYA) test $(call stage_path,$(TEST_ENTRY)) $(UYA_OPT) --stack-size $(TEST_STACK_SIZE)
+	$(UYA) test $(call stage_path,$(TEST_EXTRA_ENTRY)) $(UYA_OPT) --stack-size $(TEST_STACK_SIZE)
+	$(UYA) test $(call stage_path,$(RICHTEXT_TEST_ENTRY)) $(UYA_OPT) --stack-size $(TEST_STACK_SIZE)
+	$(UYA) test $(call stage_path,$(WEB_PRESENT_TEST_ENTRY)) $(UYA_OPT) --stack-size $(TEST_STACK_SIZE)
+	$(UYA) test $(call stage_path,$(RENDER_TEST_ENTRY)) $(UYA_OPT) --stack-size $(TEST_STACK_SIZE)
 
-bench:
+bench: check-uya stage-uya
 	@mkdir -p $(BUILD_DIR)
-	$(UYA) run $(BENCH_APP) $(UYA_OPT) --stack-size $(BENCH_STACK_SIZE)
+	$(UYA) run $(call stage_path,$(BENCH_APP)) $(UYA_OPT) --stack-size $(BENCH_STACK_SIZE)
 
-bench-report:
+bench-report: check-uya stage-uya
 	@mkdir -p $(BUILD_DIR)
 	@raw_report="$(BENCH_REPORT).raw"; \
-	if ! $(UYA) run $(BENCH_APP) -O3 --stack-size $(BENCH_STACK_SIZE) > "$$raw_report" 2>&1; then \
+	if ! $(UYA) run $(call stage_path,$(BENCH_APP)) -O3 --stack-size $(BENCH_STACK_SIZE) > "$$raw_report" 2>&1; then \
 		cat "$$raw_report"; \
 		exit 1; \
 	fi; \
@@ -84,9 +105,9 @@ bench-snapshot: bench-json
 bench-verify: bench-report
 	python3 tools/check_gui_bench.py --report $(BENCH_REPORT) --baseline $(BENCH_BASELINE) --json-out $(BENCH_JSON) --verify
 
-text-compare:
+text-compare: check-uya stage-uya
 	@mkdir -p $(BUILD_DIR)/text_compare
-	$(UYA) run $(TEXT_COMPARE_APP) $(UYA_OPT)
+	$(UYA) run $(call stage_path,$(TEXT_COMPARE_APP)) $(UYA_OPT)
 
 demo-font-atlas:
 	@mkdir -p $(BUILD_DIR)/tools $(WQY_DEMO_FONT_DIR)
@@ -99,9 +120,9 @@ lvgl-text-compare:
 	cmake --build $(LVGL_COMPARE_BUILD_DIR) -j
 	SDL_VIDEODRIVER=dummy $(LVGL_COMPARE_BUILD_DIR)/lvgl_text_compare
 
-uya-dashboard-compare-build:
+uya-dashboard-compare-build: check-uya stage-uya
 	@mkdir -p $(UYA_DASHBOARD_COMPARE_DIR)
-	@APP=$(abspath gui/dashboard_compare_main.uya) OUT_NAME=uya_dashboard_compare MODE=$(DASHBOARD_COMPARE_MODE) BUILD_DIR=$(abspath $(UYA_DASHBOARD_COMPARE_DIR)) bash tools/build_gui_sim.sh
+	@APP=$(call stage_path,apps/dashboard_compare_main.uya) OUT_NAME=uya_dashboard_compare MODE=$(DASHBOARD_COMPARE_MODE) BUILD_DIR=$(abspath $(UYA_DASHBOARD_COMPARE_DIR)) bash tools/build_gui_sim.sh
 
 uya-dashboard-compare:
 	@mkdir -p $(BUILD_DIR)/dashboard_compare
@@ -174,28 +195,28 @@ hooks:
 	git config core.hooksPath .githooks
 
 # ARM Cortex-M 当前以 C99 代码生成为交叉编译交接点。
-build-arm:
+build-arm: check-uya stage-uya
 	@mkdir -p $(BUILD_DIR)/c99
-	TARGET_ARCH=arm TARGET_OS=none $(UYA) build --c99 $(SMOKE_APP) $(UYA_OPT) -o $(BUILD_DIR)/c99/phase6_smoke_arm.c
+	TARGET_ARCH=arm TARGET_OS=none $(UYA) build --c99 $(call stage_path,$(SMOKE_APP)) $(UYA_OPT) -o $(BUILD_DIR)/c99/phase6_smoke_arm.c
 
-build-riscv:
+build-riscv: check-uya stage-uya
 	@mkdir -p $(BUILD_DIR)/microapp
-	$(UYA) build --app microapp --microapp-profile rv32_baremetal_softvm $(SMOKE_APP) $(UYA_OPT) -o $(BUILD_DIR)/microapp/phase6_smoke_rv32.pobj
+	$(UYA) build --app microapp --microapp-profile rv32_baremetal_softvm $(call stage_path,$(SMOKE_APP)) $(UYA_OPT) -o $(BUILD_DIR)/microapp/phase6_smoke_rv32.pobj
 
-build-esp32:
+build-esp32: check-uya stage-uya
 	@mkdir -p $(BUILD_DIR)/microapp
-	$(UYA) build --app microapp --microapp-profile xtensa_baremetal_softvm $(SMOKE_APP) $(UYA_OPT) -o $(BUILD_DIR)/microapp/phase6_smoke_xtensa.pobj
+	$(UYA) build --app microapp --microapp-profile xtensa_baremetal_softvm $(call stage_path,$(SMOKE_APP)) $(UYA_OPT) -o $(BUILD_DIR)/microapp/phase6_smoke_xtensa.pobj
 
-sim-build:
+sim-build: check-uya stage-uya
 	@mkdir -p $(SIM_BUILD_DIR)
-	@MODE=$(MODE) BUILD_DIR=$(abspath $(SIM_BUILD_DIR)) bash tools/build_gui_sim.sh
+	@APP=$(call stage_path,apps/sim_main.uya) MODE=$(MODE) BUILD_DIR=$(abspath $(SIM_BUILD_DIR)) bash tools/build_gui_sim.sh
 
 sim-run: sim-build
 	$(SIM_BIN) $(SIM_ARGS)
 
-sim-debug:
+sim-debug: check-uya stage-uya
 	@mkdir -p $(SIM_BUILD_DIR)
-	@MODE=debug BUILD_DIR=$(abspath $(SIM_BUILD_DIR)) bash tools/build_gui_sim.sh >/dev/null
+	@APP=$(call stage_path,apps/sim_main.uya) MODE=debug BUILD_DIR=$(abspath $(SIM_BUILD_DIR)) bash tools/build_gui_sim.sh >/dev/null
 	$(SIM_BIN) --hud --profile-every 60 $(SIM_ARGS)
 
 sim-headless: sim-build
@@ -204,9 +225,9 @@ sim-headless: sim-build
 sim-fb-run: sim-build
 	$(SIM_BIN) $(SIM_FB_ARGS)
 
-sim-web-build:
+sim-web-build: check-uya stage-uya
 	@mkdir -p $(SIM_WEB_BUILD_DIR)
-	@MODE=$(MODE) BUILD_DIR=$(abspath $(SIM_WEB_BUILD_DIR)) bash tools/build_gui_web.sh
+	@APP=$(call stage_path,apps/sim_web_main.uya) MODE=$(MODE) BUILD_DIR=$(abspath $(SIM_WEB_BUILD_DIR)) bash tools/build_gui_web.sh
 
 sim-web-prepare-openai:
 	@if [ "$(SIM_WEB_AUTO_DEPLOY_OPENAI)" = "0" ] || [ "$(SIM_WEB_AUTO_DEPLOY_OPENAI)" = "false" ]; then \

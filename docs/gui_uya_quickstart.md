@@ -11,10 +11,10 @@
 
 ## 环境准备
 
-仓库已经内置编译器：
+优先使用系统 `PATH` 中的 Uya 编译器：
 
 ```bash
-./uya/bin/uya --version
+uya --version
 ```
 
 常用命令：
@@ -29,23 +29,23 @@ make dashboard-compare-report
 make docs-api
 ```
 
-默认 `make build` 当前会编译 `gui/phase6_smoke.uya`，它会串联 Phase 6 的 demo 应用。
+默认 `make build` 当前会编译 `apps/phase6_smoke.uya`，它会串联 Phase 6 的 demo 应用。
 
 ## 目录速览
 
-- `gui/core/`: 基础类型、对象树、事件、脏区
-- `gui/render/`: 渲染上下文、图片、批处理、GPU、零拷贝
-- `gui/widget/`: 组件库
-- `gui/layout/`: Flex/Grid/自动布局
-- `gui/anim/`: tween、timeline、easing
-- `gui/res/`: 池、缓存、文件系统
-- `gui/platform/`: 显示、输入、时钟
-- `gui/examples/`: smoke 和 demo 应用
-- `gui/tests/`: 单元测试与运行时回归
+- `src/gui/core/`: 基础类型、对象树、事件、脏区
+- `src/gui/render/`: 渲染上下文、图片、批处理、GPU、零拷贝
+- `src/gui/widget/`: 组件库
+- `src/gui/layout/`: Flex/Grid/自动布局
+- `src/gui/anim/`: tween、timeline、easing
+- `src/gui/res/`: 池、缓存、文件系统
+- `src/gui/platform/`: 显示、输入、时钟
+- `examples/`: smoke 和 demo 应用
+- `tests/`: 单元测试与运行时回归
 
 ## 最小页面
 
-下面这个思路与 [phase6_smoke.uya](/home/winger/gui-uya/gui/examples/phase6_smoke.uya:1) 中的 demo 一致：
+下面这个思路与 [phase6_smoke.uya](../examples/phase6_smoke.uya) 中的 demo 一致：
 
 ```uya
 var page: Page = Page.new("Demo");
@@ -80,10 +80,10 @@ page.render(&ctx);
 
 ## 示例入口
 
-- [demo_clock.uya](/home/winger/uya/gui-uya/gui/examples/demo_clock.uya:1)
-- [demo_music.uya](/home/winger/uya/gui-uya/gui/examples/demo_music.uya:1)
-- [demo_settings.uya](/home/winger/uya/gui-uya/gui/examples/demo_settings.uya:1)
-- [demo_dashboard.uya](/home/winger/uya/gui-uya/gui/examples/demo_dashboard.uya:1)
-- [demo_game.uya](/home/winger/uya/gui-uya/gui/examples/demo_game.uya:1)
-- [demo_perf.uya](/home/winger/uya/gui-uya/gui/examples/demo_perf.uya:1)
-- [demo_novel.uya](/home/winger/gui-uya/gui/examples/demo_novel.uya:1)
+- [demo_clock.uya](../examples/demo_clock.uya)
+- [demo_music.uya](../examples/demo_music.uya)
+- [demo_settings.uya](../examples/demo_settings.uya)
+- [demo_dashboard.uya](../examples/demo_dashboard.uya)
+- [demo_game.uya](../examples/demo_game.uya)
+- [demo_perf.uya](../examples/demo_perf.uya)
+- [demo_novel.uya](../examples/demo_novel.uya)

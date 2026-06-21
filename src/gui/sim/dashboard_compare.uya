@@ -1,0 +1,439 @@
+use gui.core.color.Color;
+use gui.core.obj_tree.ObjTree;
+use gui.core.obj_tree.obj_tree_new;
+use gui.core.rect.Rect;
+use libc.atoi;
+use libc.getenv;
+use gui.platform.disp.FrameBuffer;
+use gui.platform.disp.framebuffer_new;
+use gui.platform.sdl2.disp_sdl.SdlDisplay;
+use gui.platform.sdl2.disp_sdl.sdl_display_last_error;
+use gui.platform.sdl2.disp_sdl.sdl_display_new;
+use gui.platform.tick.get_tick_us;
+use gui.render.ctx.RenderCtx;
+use gui.render.ctx.render_ctx_new;
+use gui.render.font.ttf_font_native_backend_is_c;
+use gui.render.font.ttf_font_set_default_native_backend_c;
+use gui.render.scheduler.RenderFrameResult;
+use gui.render.scheduler.RenderPresentMode;
+use gui.render.scheduler.render_schedule_tree_frame;
+use gui.sim.common.sim_cstr_empty;
+use gui.sim.common.sim_cstr_eq;
+use gui.sim.screenshot.screenshot_write;
+use gui.style.StyleProp;
+use gui.widget.btn.Button;
+use gui.widget.chart.Chart;
+use gui.widget.chart.ChartType;
+use gui.widget.lbl.Label;
+use gui.widget.page.Page;
+use gui.widget.panel.Panel;
+
+extern "libc" fn printf(fmt: *byte, ...) i32;
+
+const COMPARE_OUTPUT_PATH: &const byte = "build/dashboard_compare/uya_dashboard.bmp" as &const byte;
+const COMPARE_TITLE: &const byte = "Uya dashboard compare" as &const byte;
+const COMPARE_WIDTH: u16 = 640u16;
+const COMPARE_HEIGHT: u16 = 480u16;
+const COMPARE_DEFAULT_FRAMES: u32 = 120u32;
+
+fn compare_page_bg() Color {
+    return Color{ r: 27, g: 36, b: 48, a: 255 };
+}
+
+fn compare_shell_bg() Color {
+    return Color{ r: 27, g: 36, b: 48, a: 255 };
+}
+
+fn compare_title_bg() Color {
+    return Color{ r: 16, g: 20, b: 24, a: 255 };
+}
+
+fn compare_grid_bg() Color {
+    return Color{ r: 15, g: 23, b: 42, a: 255 };
+}
+
+fn compare_border() Color {
+    return Color{ r: 51, g: 65, b: 85, a: 255 };
+}
+
+fn compare_text() Color {
+    return Color{ r: 248, g: 250, b: 252, a: 255 };
+}
+
+fn compare_button_bg() Color {
+    return Color{ r: 37, g: 99, b: 235, a: 255 };
+}
+
+fn compare_button_idle_bg() Color {
+    return Color{ r: 15, g: 23, b: 42, a: 255 };
+}
+
+fn dashboard_screen_rect() Rect {
+    return Rect{ x: 0, y: 0, w: COMPARE_WIDTH, h: COMPARE_HEIGHT };
+}
+
+struct DashboardCompareScene {
+    tree: ObjTree,
+    page: Page,
+    shell: Panel,
+    title_box: Panel,
+    title: Label,
+    chart: Chart,
+    grid: Panel,
+    cpu: Button,
+    net: Button,
+    mem: Button,
+    ready: bool,
+    metric: i32,
+}
+
+fn dashboard_compare_metric_title(metric: i32) &const byte {
+    if metric == 1 {
+        return "Ops Dashboard / NET" as &const byte;
+    }
+    if metric == 2 {
+        return "Ops Dashboard / MEM" as &const byte;
+    }
+    return "Ops Dashboard / CPU" as &const byte;
+}
+
+fn dashboard_compare_fill_chart(chart: &Chart, metric: i32) void {
+    _ = chart.clear();
+    if metric == 1 {
+        _ = chart.add_point(26);
+        _ = chart.add_point(32);
+        _ = chart.add_point(24);
+        _ = chart.add_point(38);
+        _ = chart.add_point(30);
+        return;
+    }
+    if metric == 2 {
+        _ = chart.add_point(20);
+        _ = chart.add_point(22);
+        _ = chart.add_point(28);
+        _ = chart.add_point(31);
+        _ = chart.add_point(36);
+        return;
+    }
+    _ = chart.add_point(18);
+    _ = chart.add_point(26);
+    _ = chart.add_point(21);
+    _ = chart.add_point(34);
+    _ = chart.add_point(29);
+}
+
+fn dashboard_style_panel(panel: &Panel, bg: Color, border: Color, radius: u32) void {
+    if panel == null {
+        return;
+    }
+    panel.widget.base.style.set_color(StyleProp.BgColor, bg);
+    panel.widget.base.style.set_color(StyleProp.BorderColor, border);
+    panel.widget.base.style.set_u32(StyleProp.BorderWidth, 1u32);
+    panel.widget.base.style.set_u32(StyleProp.Radius, radius);
+}
+
+fn dashboard_style_button(button: &Button, active: bool) void {
+    if button == null {
+        return;
+    }
+    button.widget.base.style.set_color(StyleProp.FgColor, compare_text());
+    button.widget.base.style.set_u32(StyleProp.FontSize, 14u32);
+    button.widget.base.style.set_u32(StyleProp.Radius, 8u32);
+    if active {
+        button.widget.base.style.set_color(StyleProp.BgColor, compare_button_bg());
+        button.widget.base.style.set_color(StyleProp.BorderColor, compare_button_bg());
+        button.widget.base.style.set_u32(StyleProp.BorderWidth, 0u32);
+    } else {
+        button.widget.base.style.set_color(StyleProp.BgColor, compare_button_idle_bg());
+        button.widget.base.style.set_color(StyleProp.BorderColor, compare_text());
+        button.widget.base.style.set_u32(StyleProp.BorderWidth, 1u32);
+    }
+    button.widget.base.invalidate();
+}
+
+fn dashboard_scene_new() DashboardCompareScene {
+    return DashboardCompareScene{
+        tree: obj_tree_new(),
+        page: Page.new("DashboardCompare"),
+        shell: Panel.new(),
+        title_box: Panel.new(),
+        title: Label.new("Ops Dashboard / CPU"),
+        chart: Chart.new(),
+        grid: Panel.new(),
+        cpu: Button.outlined("CPU"),
+        net: Button.outlined("NET"),
+        mem: Button.outlined("MEM"),
+        ready: false,
+        metric: -1,
+    };
+}
+
+fn dashboard_apply_metric(scene: &DashboardCompareScene, metric: i32) void {
+    if scene == null {
+        return;
+    }
+    if scene.metric == metric {
+        return;
+    }
+    _ = scene.title.set_text(dashboard_compare_metric_title(metric));
+    dashboard_compare_fill_chart(&scene.chart, metric);
+    dashboard_style_button(&scene.cpu, metric == 0);
+    dashboard_style_button(&scene.net, metric == 1);
+    dashboard_style_button(&scene.mem, metric == 2);
+    scene.metric = metric;
+}
+
+fn dashboard_scene_init(scene: &DashboardCompareScene) void {
+    if scene == null || scene.ready {
+        return;
+    }
+
+    scene.page.widget.at(0, 0);
+    scene.page.widget.size(COMPARE_WIDTH, COMPARE_HEIGHT);
+    scene.page.widget.base.style.set_color(StyleProp.BgColor, compare_page_bg());
+    scene.page.widget.base.style.set_color(StyleProp.BorderColor, compare_page_bg());
+    scene.page.widget.base.style.set_u32(StyleProp.BorderWidth, 0u32);
+    scene.page.widget.base.style.set_u32(StyleProp.Radius, 0u32);
+
+    scene.shell.widget.at(24, 24);
+    scene.shell.widget.size(592u16, 432u16);
+    dashboard_style_panel(&scene.shell, compare_shell_bg(), compare_border(), 6u32);
+
+    scene.title_box.widget.at(28, 24);
+    scene.title_box.widget.size(240u16, 32u16);
+    dashboard_style_panel(&scene.title_box, compare_title_bg(), compare_title_bg(), 0u32);
+
+    scene.title.widget.at(8, 8);
+    scene.title.widget.size(224u16, 16u16);
+    scene.title.widget.base.style.set_u32(StyleProp.FontSize, 14u32);
+    scene.title.widget.base.style.set_color(StyleProp.FgColor, compare_text());
+
+    scene.chart.widget.at(28, 88);
+    scene.chart.widget.size(336u16, 248u16);
+    scene.chart.chart_type = ChartType.Line;
+    scene.chart.widget.base.style.set_color(StyleProp.BgColor, compare_shell_bg());
+    scene.chart.widget.base.style.set_color(StyleProp.BorderColor, compare_border());
+    scene.chart.widget.base.style.set_u32(StyleProp.BorderWidth, 1u32);
+    scene.chart.widget.base.style.set_u32(StyleProp.Radius, 6u32);
+    scene.chart.widget.base.style.set_color(StyleProp.FgColor, compare_text());
+
+    scene.grid.widget.at(392, 88);
+    scene.grid.widget.size(176u16, 232u16);
+    dashboard_style_panel(&scene.grid, compare_grid_bg(), compare_border(), 3u32);
+
+    scene.cpu.widget.at(416, 110);
+    scene.cpu.widget.size(128u16, 56u16);
+    scene.net.widget.at(416, 176);
+    scene.net.widget.size(128u16, 56u16);
+    scene.mem.widget.at(416, 242);
+    scene.mem.widget.size(128u16, 56u16);
+
+    scene.page.add(scene.shell.obj());
+    scene.shell.add(scene.title_box.obj());
+    scene.shell.add(scene.chart.obj());
+    scene.shell.add(scene.grid.obj());
+    scene.shell.add(scene.cpu.obj());
+    scene.shell.add(scene.net.obj());
+    scene.shell.add(scene.mem.obj());
+    scene.title_box.add(scene.title.obj());
+    scene.tree.set_root(0, scene.page.obj());
+
+    dashboard_apply_metric(scene, 0);
+    scene.ready = true;
+}
+
+fn dashboard_env_u32(name: &const byte, fallback: u32, max_value: u32) u32 {
+    const raw: &byte = getenv(name);
+    if raw == null || raw[0] == 0 {
+        return fallback;
+    }
+    var parsed: i32 = atoi(raw as &const byte);
+    if parsed < 0 {
+        parsed = 0;
+    }
+    const value: u32 = (parsed as! u32).value;
+    if value > max_value {
+        return max_value;
+    }
+    return value;
+}
+
+fn dashboard_env_bool(name: &const byte, fallback: bool) bool {
+    const raw: &byte = getenv(name);
+    if raw == null || raw[0] == 0 {
+        return fallback;
+    }
+    if sim_cstr_eq(raw as &const byte, "0" as &const byte)
+        || sim_cstr_eq(raw as &const byte, "false" as &const byte)
+        || sim_cstr_eq(raw as &const byte, "off" as &const byte) {
+        return false;
+    }
+    return true;
+}
+
+fn dashboard_round_us_to_ms(value_us: u64) u32 {
+    if value_us == 0u64 {
+        return 0u32;
+    }
+    return ((value_us + 500u64) / 1000u64) as u32;
+}
+
+fn dashboard_framebuffer(display: &SdlDisplay, front: bool) FrameBuffer {
+    var fb_ref: &FrameBuffer = display.get_back_buffer();
+    if front {
+        fb_ref = display.get_front_buffer();
+    }
+    return framebuffer_new(fb_ref.pixels, fb_ref.size.w, fb_ref.size.h, fb_ref.stride, fb_ref.format);
+}
+
+fn dashboard_present(display: &SdlDisplay, result: RenderFrameResult, ctx: &RenderCtx) bool {
+    if result.present_mode == RenderPresentMode.Full {
+        return display.present();
+    }
+    if result.present_mode == RenderPresentMode.Dirty {
+        return display.present_dirty(&ctx.dirty);
+    }
+    return true;
+}
+
+/// 运行 Uya 侧 dashboard 对照程序并返回退出码。
+export fn run_dashboard_compare() i32 {
+    const capture: bool = dashboard_env_bool("UYA_DASHBOARD_CAPTURE" as &const byte, true);
+    const frames: u32 = dashboard_env_u32("UYA_DASHBOARD_FRAMES" as &const byte, COMPARE_DEFAULT_FRAMES, 1000000u32);
+    const metric: i32 = (dashboard_env_u32("UYA_DASHBOARD_METRIC" as &const byte, 0u32, 2u32) as! i32).value;
+    const out_env: &byte = getenv("UYA_DASHBOARD_OUT" as &const byte);
+    var out_path: &const byte = COMPARE_OUTPUT_PATH;
+    if out_env != null && !sim_cstr_empty(out_env as &const byte) {
+        out_path = out_env as &const byte;
+    }
+
+    const startup_begin_us: u64 = get_tick_us();
+    ttf_font_set_default_native_backend_c(true);
+
+    var display: SdlDisplay = sdl_display_new();
+    if !display.init(COMPARE_WIDTH, COMPARE_HEIGHT, 1u8, COMPARE_TITLE, false, 0, false) {
+        _ = printf("[uya-dashboard-compare] init failed: %s\n" as *byte, sdl_display_last_error());
+        return 2;
+    }
+    defer {
+        display.shutdown();
+    }
+
+    var scene: DashboardCompareScene = dashboard_scene_new();
+    dashboard_scene_init(&scene);
+    dashboard_apply_metric(&scene, metric);
+
+    var startup_ctx: RenderCtx = render_ctx_new(dashboard_framebuffer(&display, false));
+    scene.page.widget.base.invalidate();
+    const startup_render_begin_us: u64 = get_tick_us();
+    const startup_result: RenderFrameResult = render_schedule_tree_frame(
+        &startup_ctx,
+        &scene.tree,
+        dashboard_screen_rect(),
+        true,
+        compare_page_bg(),
+        null,
+        null,
+        null
+    );
+    const startup_render_us: u64 = get_tick_us() - startup_render_begin_us;
+    startup_ctx.dirty.merge();
+    const startup_present_begin_us: u64 = get_tick_us();
+    if !dashboard_present(&display, startup_result, &startup_ctx) {
+        _ = printf("[uya-dashboard-compare] present failed: %s\n" as *byte, sdl_display_last_error());
+        return 3;
+    }
+    const startup_present_us: u64 = get_tick_us() - startup_present_begin_us;
+    const startup_us: u64 = get_tick_us() - startup_begin_us;
+
+    var total_frame_us: u64 = 0u64;
+    var total_render_us: u64 = 0u64;
+    var total_present_us: u64 = 0u64;
+    var max_frame_us: u64 = 0u64;
+    var i: u32 = 0u32;
+    while i < frames {
+        var ctx: RenderCtx = render_ctx_new(dashboard_framebuffer(&display, false));
+        scene.page.widget.base.invalidate();
+
+        const frame_begin_us: u64 = get_tick_us();
+        const render_begin_us: u64 = frame_begin_us;
+        const result: RenderFrameResult = render_schedule_tree_frame(
+            &ctx,
+            &scene.tree,
+            dashboard_screen_rect(),
+            false,
+            compare_page_bg(),
+            null,
+            null,
+            null
+        );
+        const render_us: u64 = get_tick_us() - render_begin_us;
+        ctx.dirty.merge();
+
+        const present_begin_us: u64 = get_tick_us();
+        if !dashboard_present(&display, result, &ctx) {
+            _ = printf("[uya-dashboard-compare] present failed: %s\n" as *byte, sdl_display_last_error());
+            return 4;
+        }
+        const present_us: u64 = get_tick_us() - present_begin_us;
+        const frame_us: u64 = get_tick_us() - frame_begin_us;
+
+        total_frame_us = total_frame_us + frame_us;
+        total_render_us = total_render_us + render_us;
+        total_present_us = total_present_us + present_us;
+        if frame_us > max_frame_us {
+            max_frame_us = frame_us;
+        }
+        i = i + 1u32;
+    }
+
+    if capture {
+        const written: usize = screenshot_write(out_path, display.get_front_buffer()) catch {
+            _ = printf("[uya-dashboard-compare] capture failed\n" as *byte);
+            return 5;
+        };
+        _ = printf("[uya-dashboard-compare] wrote %s (%lu bytes)\n" as *byte, out_path, written as u64);
+    }
+
+    var backend_name: *byte = "uya-stb\0" as *byte;
+    if ttf_font_native_backend_is_c() {
+        backend_name = "c-stb\0" as *byte;
+    }
+    var capture_name: *byte = "off\0" as *byte;
+    if capture {
+        capture_name = "on\0" as *byte;
+    }
+
+    var avg_frame_us: u64 = 0u64;
+    var avg_render_us: u64 = 0u64;
+    var avg_present_us: u64 = 0u64;
+    if frames > 0u32 {
+        avg_frame_us = total_frame_us / frames as u64;
+        avg_render_us = total_render_us / frames as u64;
+        avg_present_us = total_present_us / frames as u64;
+    }
+
+    _ = printf(
+        "[uya-dashboard-compare] display=%ux%u backend=%s metric=%u mode=retained-invalidate capture=%s\n" as *byte,
+        COMPARE_WIDTH as u32,
+        COMPARE_HEIGHT as u32,
+        backend_name,
+        metric as u32,
+        capture_name
+    );
+    _ = printf(
+        "[uya-dashboard-compare] startup=%lu us render=%lu us present=%lu us\n" as *byte,
+        startup_us,
+        startup_render_us,
+        startup_present_us
+    );
+    _ = printf(
+        "[uya profiler] frames=%u frame(avg/max)=%u/%u ms update=0 ms render=%u ms present=%u ms\n" as *byte,
+        frames,
+        dashboard_round_us_to_ms(avg_frame_us),
+        dashboard_round_us_to_ms(max_frame_us),
+        dashboard_round_us_to_ms(avg_render_us),
+        dashboard_round_us_to_ms(avg_present_us)
+    );
+    return 0;
+}

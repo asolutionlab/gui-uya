@@ -1,0 +1,347 @@
+use gui.anim.easing.EasingType;
+use gui.anim.easing.apply_easing;
+use gui.anim.easing.easing_variant_count;
+use gui.anim.timeline.AnimManager;
+use gui.anim.timeline.anim_manager_new;
+use gui.anim.tween.AnimProp;
+use gui.anim.tween.AnimValue;
+use gui.anim.tween.ITweenCompleteCallback;
+use gui.anim.tween.ITweenUpdateCallback;
+use gui.anim.tween.Tween;
+use gui.anim.tween.anim_value_color;
+use gui.anim.tween.anim_value_i32;
+use gui.core.color.BLUE;
+use gui.core.color.Color;
+use gui.core.color.RED;
+use gui.core.obj.GuiObj;
+use gui.core.obj.gui_obj_default;
+use gui.core.obj.gui_obj_register;
+use gui.core.obj.gui_obj_reset_registry;
+use gui.core.size.Size;
+use gui.style.StyleProp;
+use std.async.Future;
+use std.async.Poll;
+use std.async.Waker;
+use std.testing.assert_eq_bool;
+use std.testing.assert_eq_i32;
+use std.testing.expect;
+use gui.widget.page.Page;
+
+export const TEST_ANIM_MODULE: i32 = 1;
+
+struct TweenCompleteCounter : ITweenCompleteCallback {
+    count_ref: &i32,
+    last_target_ref: &i32,
+}
+
+struct TweenUpdateCounter : ITweenUpdateCallback {
+    count_ref: &i32,
+    last_value_ref: &i32,
+}
+
+TweenCompleteCounter {
+    fn invoke(self: &Self, target: i32) void {
+        self.count_ref[0] = self.count_ref[0] + 1;
+        self.last_target_ref[0] = target;
+    }
+}
+
+TweenUpdateCounter {
+    fn invoke(self: &Self, target: i32, value: AnimValue) void {
+        _ = target;
+        self.count_ref[0] = self.count_ref[0] + 1;
+        match value {
+            .I32(v) => {
+                self.last_value_ref[0] = v;
+            },
+            else => {},
+        };
+    }
+}
+
+fn anim_start_tween_hits_limit(manager: &AnimManager, tween: &Tween) bool {
+    _ = manager.start_tween(tween) catch {
+        return true;
+    };
+    return false;
+}
+
+test "easing table covers phase4 variants" {
+    try assert_eq_i32(easing_variant_count(), 25);
+    try expect(apply_easing(0.0, EasingType.Linear) == 0.0);
+    try expect(apply_easing(1.0, EasingType.EaseOutBounce) >= 0.99);
+}
+
+test "tween updates object geometry and colors" {
+    gui_obj_reset_registry();
+
+    var obj: GuiObj = gui_obj_default();
+    obj.x = 0;
+    obj.y = 0;
+    obj.w = 20;
+    obj.h = 10;
+    obj.style.set_color(StyleProp.BgColor, Color{ r: 255, g: 0, b: 0, a: 255 });
+    _ = gui_obj_register(7, &obj);
+
+    var move: Tween = Tween.new(7, AnimProp.X, anim_value_i32(40), 100u32);
+    move.with_from_i32(0);
+    move.with_easing(EasingType.Linear);
+    move.start();
+    try assert_eq_bool(move.update(50u32), true);
+    try expect(obj.x >= 19 && obj.x <= 21);
+
+    var color_tween: Tween = Tween.new(7, AnimProp.BgColor, anim_value_color(Color{ r: 0, g: 0, b: 255, a: 255 }), 100u32);
+    color_tween.with_from_color(Color{ r: 255, g: 0, b: 0, a: 255 });
+    color_tween.with_easing(EasingType.Linear);
+    color_tween.start();
+    _ = color_tween.update(50u32);
+    const mid: Color = obj.style.get_color_or(StyleProp.BgColor, Color{ r: 255, g: 0, b: 0, a: 255 });
+    try expect(mid.r < 255 && mid.b > 0);
+
+    _ = move.update(50u32);
+    try assert_eq_i32(obj.x, 40);
+}
+
+test "anim manager sustains 32 concurrent tweens" {
+    gui_obj_reset_registry();
+
+    var objects: [GuiObj: 32] = [];
+    var manager: AnimManager = anim_manager_new();
+    var i: i32 = 0;
+    while i < 32 {
+        objects[i] = gui_obj_default();
+        objects[i].x = 0;
+        objects[i].y = (i as! i16).value;
+        objects[i].w = 8;
+        objects[i].h = 8;
+        _ = gui_obj_register(i, &objects[i]);
+
+        var tween: Tween = Tween.new(i, AnimProp.X, anim_value_i32(32 + i), 96u32);
+        tween.with_from_i32(0);
+        const slot: i32 = try manager.start_tween(&tween);
+        try expect(slot >= 0);
+        i = i + 1;
+    }
+
+    try assert_eq_bool(manager.is_animating(), true);
+    manager.update_all(96u32);
+    try assert_eq_bool(manager.is_animating(), false);
+
+    i = 0;
+    while i < 32 {
+        try assert_eq_i32(objects[i].x as i32, 32 + i);
+        i = i + 1;
+    }
+}
+
+test "anim manager async loop compiles with future err void" {
+    var manager: AnimManager = anim_manager_new();
+    const future: Future<!void> = manager.animation_loop(1u32);
+    const waker: Waker = Waker{};
+    const poll: Poll<!void> = future.poll(&waker);
+    match poll {
+        .Ready(result) => {
+            _ = result catch {
+                return error.AssertionFailed;
+            };
+        },
+        .Pending(_) => {
+            return error.AssertionFailed;
+        },
+    };
+    try assert_eq_i32(manager.frame_count as i32, 0);
+}
+
+test "all easing variants clamp at boundaries" {
+    var easings: [EasingType: 25] = [
+        EasingType.Linear,
+        EasingType.EaseInQuad,
+        EasingType.EaseOutQuad,
+        EasingType.EaseInOutQuad,
+        EasingType.EaseInCubic,
+        EasingType.EaseOutCubic,
+        EasingType.EaseInOutCubic,
+        EasingType.EaseInQuart,
+        EasingType.EaseOutQuart,
+        EasingType.EaseInOutQuart,
+        EasingType.EaseInSine,
+        EasingType.EaseOutSine,
+        EasingType.EaseInOutSine,
+        EasingType.EaseInExpo,
+        EasingType.EaseOutExpo,
+        EasingType.EaseInOutExpo,
+        EasingType.EaseInElastic,
+        EasingType.EaseOutElastic,
+        EasingType.EaseInOutElastic,
+        EasingType.EaseInBack,
+        EasingType.EaseOutBack,
+        EasingType.EaseInOutBack,
+        EasingType.EaseInBounce,
+        EasingType.EaseOutBounce,
+        EasingType.EaseInOutBounce,
+    ];
+
+    var i: i32 = 0;
+    while i < 25 {
+        const easing: EasingType = easings[i];
+        try expect(apply_easing(0.0, easing) == 0.0);
+        try assert_eq_bool(apply_easing(-1.0, easing) == 0.0, true);
+        try assert_eq_bool(apply_easing(2.0, easing) == 1.0, true);
+        try assert_eq_bool(apply_easing(0.5, easing) == apply_easing(0.5, easing), true);
+        i = i + 1;
+    }
+}
+
+test "tween delay zero duration and callbacks behave deterministically" {
+    gui_obj_reset_registry();
+
+    var obj: GuiObj = gui_obj_default();
+    obj.x = 0;
+    _ = gui_obj_register(41, &obj);
+
+    var complete_count: i32 = 0;
+    var last_target: i32 = -1;
+    var complete_impl: TweenCompleteCounter = TweenCompleteCounter{
+        count_ref: &complete_count,
+        last_target_ref: &last_target,
+    };
+    var complete_cb: ITweenCompleteCallback = complete_impl;
+
+    var instant: Tween = Tween.new(41, AnimProp.X, anim_value_i32(33), 0u32);
+    instant.on_complete(&complete_cb);
+    instant.start();
+    try assert_eq_i32(obj.x as i32, 33);
+    try assert_eq_bool(instant.running, false);
+    try assert_eq_i32(complete_count, 1);
+    try assert_eq_i32(last_target, 41);
+
+    obj.x = 0;
+    var delayed: Tween = Tween.new(41, AnimProp.X, anim_value_i32(20), 100u32);
+    delayed.with_from_i32(0);
+    delayed.with_delay(40u32);
+    delayed.with_easing(EasingType.Linear);
+    delayed.start();
+    try assert_eq_bool(delayed.update(20u32), true);
+    try assert_eq_i32(obj.x as i32, 0);
+    try assert_eq_bool(delayed.update(20u32), true);
+    try assert_eq_i32(obj.x as i32, 0);
+    try assert_eq_bool(delayed.update(50u32), true);
+    try assert_eq_i32(obj.x as i32, 10);
+    try assert_eq_bool(delayed.update(50u32), false);
+    try assert_eq_i32(obj.x as i32, 20);
+}
+
+test "tween repeat yoyo and update callbacks traverse both directions" {
+    gui_obj_reset_registry();
+
+    var obj: GuiObj = gui_obj_default();
+    obj.x = 0;
+    _ = gui_obj_register(42, &obj);
+
+    var update_count: i32 = 0;
+    var last_value: i32 = -1;
+    var complete_count: i32 = 0;
+    var last_target: i32 = -1;
+    var update_impl: TweenUpdateCounter = TweenUpdateCounter{
+        count_ref: &update_count,
+        last_value_ref: &last_value,
+    };
+    var complete_impl: TweenCompleteCounter = TweenCompleteCounter{
+        count_ref: &complete_count,
+        last_target_ref: &last_target,
+    };
+    var update_cb: ITweenUpdateCallback = update_impl;
+    var complete_cb: ITweenCompleteCallback = complete_impl;
+
+    var tween: Tween = Tween.new(42, AnimProp.X, anim_value_i32(10), 40u32);
+    tween.with_from_i32(0);
+    tween.with_easing(EasingType.Linear);
+    tween.repeat(1);
+    tween.yoyo(true);
+    tween.on_update(&update_cb);
+    tween.on_complete(&complete_cb);
+    tween.start();
+
+    try assert_eq_bool(tween.update(40u32), true);
+    try assert_eq_i32(obj.x as i32, 10);
+    try assert_eq_bool(tween.reversed, true);
+    try assert_eq_bool(tween.update(40u32), false);
+    try assert_eq_i32(obj.x as i32, 0);
+    try assert_eq_bool(tween.running, false);
+    try assert_eq_bool(update_count >= 2, true);
+    try assert_eq_i32(last_value, 0);
+    try assert_eq_i32(complete_count, 1);
+    try assert_eq_i32(last_target, 42);
+}
+
+test "tween updates opacity radius and page scroll properties" {
+    gui_obj_reset_registry();
+
+    var obj: GuiObj = gui_obj_default();
+    obj.style.set_u32(StyleProp.Opacity, 255u32);
+    obj.style.set_u32(StyleProp.Radius, 0u32);
+    _ = gui_obj_register(43, &obj);
+
+    var opacity: Tween = Tween.new(43, AnimProp.Opacity, anim_value_i32(64), 64u32);
+    opacity.with_from_i32(255);
+    opacity.with_easing(EasingType.Linear);
+    opacity.start();
+    _ = opacity.update(32u32);
+    try assert_eq_bool(obj.style.get_u32_or(StyleProp.Opacity, 0u32) < 255u32, true);
+
+    var radius: Tween = Tween.new(43, AnimProp.Radius, anim_value_i32(12), 40u32);
+    radius.with_from_i32(0);
+    radius.with_easing(EasingType.Linear);
+    radius.start();
+    _ = radius.update(40u32);
+    try assert_eq_i32(obj.style.get_u32_or(StyleProp.Radius, 0u32) as i32, 12);
+
+    var page: Page = Page.new("AnimPage");
+    page.scrollable = true;
+    page.content_size = Size{ w: 200u16, h: 200u16 };
+    page.widget.size(60u16, 60u16);
+    _ = gui_obj_register(44, page.obj());
+
+    var scroll_x: Tween = Tween.new(44, AnimProp.ScrollX, anim_value_i32(40), 80u32);
+    scroll_x.with_from_i32(0);
+    scroll_x.with_easing(EasingType.Linear);
+    scroll_x.start();
+    _ = scroll_x.update(80u32);
+    try assert_eq_i32(page.scroll_x as i32, 40);
+
+    var scroll_y: Tween = Tween.new(44, AnimProp.ScrollY, anim_value_i32(70), 100u32);
+    scroll_y.with_from_i32(0);
+    scroll_y.with_easing(EasingType.Linear);
+    scroll_y.start();
+    _ = scroll_y.update(50u32);
+    try assert_eq_i32(page.scroll_y as i32, 35);
+    _ = scroll_y.update(50u32);
+    try assert_eq_i32(page.scroll_y as i32, 70);
+}
+
+test "anim manager stop tween reuses slot and reports limit" {
+    gui_obj_reset_registry();
+
+    var objects: [GuiObj: 33] = [];
+    var manager: AnimManager = anim_manager_new();
+    var i: i32 = 0;
+    while i < 32 {
+        objects[i] = gui_obj_default();
+        _ = gui_obj_register(i, &objects[i]);
+        var tween: Tween = Tween.new(i, AnimProp.X, anim_value_i32(i + 1), 10u32);
+        tween.with_from_i32(0);
+        _ = try manager.start_tween(&tween);
+        i = i + 1;
+    }
+
+    objects[32] = gui_obj_default();
+    _ = gui_obj_register(32, &objects[32]);
+    var overflow: Tween = Tween.new(32, AnimProp.X, anim_value_i32(10), 10u32);
+    overflow.with_from_i32(0);
+    try assert_eq_bool(anim_start_tween_hits_limit(&manager, &overflow), true);
+
+    manager.stop_tween(5);
+    try assert_eq_bool(manager.active[5], false);
+    const reused: i32 = try manager.start_tween(&overflow);
+    try assert_eq_i32(reused, 5);
+}

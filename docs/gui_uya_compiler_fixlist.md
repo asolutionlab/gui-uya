@@ -73,8 +73,8 @@
 
 ### GUI 侧复现点
 
-- [event.uya](/home/winger/gui-uya/gui/core/event.uya)
-- 当前代码已恢复 `EventData` union 载荷，但 `EventQueue.pop()` 仍保留专用 `EventOption`，见 [event.uya](/home/winger/uya/gui-uya/gui/core/event.uya)
+- [event.uya](/home/winger/gui-uya/src/gui/core/event.uya)
+- 当前代码已恢复 `EventData` union 载荷，但 `EventQueue.pop()` 仍保留专用 `EventOption`，见 [event.uya](/home/winger/uya/gui-uya/src/gui/core/event.uya)
 
 ### 当时的失败表现
 
@@ -115,7 +115,7 @@
 ### GUI 侧复现点
 
 - 目标形态原本是 `Event { data: EventData, ... }`
-- 当前代码已恢复 `Event { data: EventData, ... }` 形态，见 [event.uya](/home/winger/uya/gui-uya/gui/core/event.uya)
+- 当前代码已恢复 `Event { data: EventData, ... }` 形态，见 [event.uya](/home/winger/uya/gui-uya/src/gui/core/event.uya)
 
 ### 当时的失败表现
 
@@ -153,8 +153,8 @@
 
 ### GUI 侧复现点
 
-- `ObjPool<T: IGuiObj>` 与 `obj_pool_new<T>()` 已一并恢复，见 [obj_pool.uya](/home/winger/uya/gui-uya/gui/core/obj_pool.uya)
-- 使用点已回到工厂初始化，见 [test_pool.uya](/home/winger/uya/gui-uya/gui/tests/test_pool.uya) 和 [core_bench.uya](/home/winger/uya/gui-uya/gui/benchmarks/core_bench.uya)
+- `ObjPool<T: IGuiObj>` 与 `obj_pool_new<T>()` 已一并恢复，见 [obj_pool.uya](/home/winger/uya/gui-uya/src/gui/core/obj_pool.uya)
+- 使用点已回到工厂初始化，见 [test_pool.uya](/home/winger/uya/gui-uya/tests/test_pool.uya) 和 [core_bench.uya](/home/winger/uya/gui-uya/src/gui/benchmarks/core_bench.uya)
 
 ### 相关表现
 
@@ -165,7 +165,7 @@
 
 - `ObjPool<T>` 直接字面量初始化
 - `Slice<T>` 直接字面量初始化
-- `Buffer.as_slice()` 在独立场景可表达为 `Slice<byte>`，但当前 GUI 仓库仍保留 `ByteSlice` 以规避真实构建回归，见 [buf.uya](/home/winger/uya/gui-uya/gui/res/buf.uya)
+- `Buffer.as_slice()` 在独立场景可表达为 `Slice<byte>`，但当前 GUI 仓库仍保留 `ByteSlice` 以规避真实构建回归，见 [buf.uya](/home/winger/uya/gui-uya/src/gui/res/buf.uya)
 
 ### 修复结果
 
@@ -194,9 +194,9 @@
 
 ### GUI 侧复现点
 
-- [test_color.uya](/home/winger/gui-uya/gui/tests/test_color.uya#L15)
-- [test_rect.uya](/home/winger/gui-uya/gui/tests/test_rect.uya#L8)
-- [test_core_types.uya](/home/winger/gui-uya/gui/tests/test_core_types.uya#L15)
+- [test_color.uya](/home/winger/gui-uya/tests/test_color.uya#L15)
+- [test_rect.uya](/home/winger/gui-uya/tests/test_rect.uya#L8)
+- [test_core_types.uya](/home/winger/gui-uya/tests/test_core_types.uya#L15)
 
 ### 历史绕法
 
@@ -228,7 +228,7 @@
 
 ### GUI 侧复现点
 
-- [style.uya](/home/winger/gui-uya/gui/style/style.uya)
+- [style.uya](/home/winger/gui-uya/src/gui/style/style.uya)
 - 当前已恢复 `DEFAULT_STYLE = { background: TRANSPARENT, ... }` 这类全局默认样式常量
 
 ### 历史绕法
@@ -257,9 +257,9 @@
 
 ### GUI 侧复现点
 
-- [test_color.uya](/home/winger/gui-uya/gui/tests/test_color.uya#L44)
-- [test_core_types.uya](/home/winger/gui-uya/gui/tests/test_core_types.uya#L16)
-- [test_rect.uya](/home/winger/gui-uya/gui/tests/test_rect.uya#L41)
+- [test_color.uya](/home/winger/gui-uya/tests/test_color.uya#L44)
+- [test_core_types.uya](/home/winger/gui-uya/tests/test_core_types.uya#L16)
+- [test_rect.uya](/home/winger/gui-uya/tests/test_rect.uya#L41)
 
 ### 修复后效果
 
@@ -287,7 +287,7 @@
 
 ### GUI 侧复现点
 
-- 当前用了 `union_rect`，见 [rect.uya](/home/winger/gui-uya/gui/core/rect.uya#L81)
+- 当前用了 `union_rect`，见 [rect.uya](/home/winger/gui-uya/src/gui/core/rect.uya#L81)
 
 ### 当前结论
 
@@ -314,10 +314,10 @@
 
 - `Phase 3` 组件库初版尝试在 `widget/*` 内保存 `IGuiRenderCallback` / `IGuiInputCallback`
 - 具体踩点在：
-  - [btn.uya](/home/winger/uya/gui-uya/gui/widget/btn.uya)
-  - [panel.uya](/home/winger/uya/gui-uya/gui/widget/panel.uya)
-  - [page.uya](/home/winger/uya/gui-uya/gui/widget/page.uya)
-  - [grid_view.uya](/home/winger/uya/gui-uya/gui/widget/grid_view.uya)
+  - [btn.uya](/home/winger/uya/gui-uya/src/gui/widget/btn.uya)
+  - [panel.uya](/home/winger/uya/gui-uya/src/gui/widget/panel.uya)
+  - [page.uya](/home/winger/uya/gui-uya/src/gui/widget/page.uya)
+  - [grid_view.uya](/home/winger/uya/gui-uya/src/gui/widget/grid_view.uya)
 
 ### 当时的失败表现
 
@@ -330,9 +330,9 @@
 - 不在全局或结构体字段里保存接口对象
 - 当时 `GuiObj` 的 `render_cb` / `input_cb` 统一置空
 - 容器层退回到 `type_tag + user_data` 的显式分发，见：
-- [panel.uya](/home/winger/uya/gui-uya/gui/widget/panel.uya)
-- [page.uya](/home/winger/uya/gui-uya/gui/widget/page.uya)
-- [grid_view.uya](/home/winger/uya/gui-uya/gui/widget/grid_view.uya)
+- [panel.uya](/home/winger/uya/gui-uya/src/gui/widget/panel.uya)
+- [page.uya](/home/winger/uya/gui-uya/src/gui/widget/page.uya)
+- [grid_view.uya](/home/winger/uya/gui-uya/src/gui/widget/grid_view.uya)
 
 ### GUI 侧同步状态
 
@@ -374,8 +374,8 @@ _ = chart.add_point(2).add_point(6).add_point(3).add_point(8);
 ```
 
 - 当前单独编译器测试已覆盖链式调用；GUI 仓库里的 `Chart.add_point()` 仍保留逐句调用，见：
-  - [test_widgets.uya](/home/winger/uya/gui-uya/gui/tests/test_widgets.uya)
-  - [phase3_smoke.uya](/home/winger/uya/gui-uya/gui/examples/phase3_smoke.uya)
+  - [test_widgets.uya](/home/winger/uya/gui-uya/tests/test_widgets.uya)
+  - [phase3_smoke.uya](/home/winger/uya/gui-uya/examples/phase3_smoke.uya)
 
 ### 当时的失败表现
 
@@ -420,7 +420,7 @@ _ = chart.add_point(6);
 
 - `render/font.uya` 已有 `TextAlign`
 - `widget/lbl.uya` 初版也定义了 `TextAlign`
-- 当前代码已恢复组件侧 `TextAlign` 命名，见 [lbl.uya](/home/winger/uya/gui-uya/gui/widget/lbl.uya)
+- 当前代码已恢复组件侧 `TextAlign` 命名，见 [lbl.uya](/home/winger/uya/gui-uya/src/gui/widget/lbl.uya)
 
 ### 当时的失败表现
 
@@ -500,7 +500,7 @@ _ = chart.add_point(6);
 
 ### GUI 侧复现点
 
-- 目标写法见 Phase 4 动画管理器的设计目标，当前兼容实现位于 [timeline.uya](/home/winger/uya/gui-uya/gui/anim/timeline.uya)
+- 目标写法见 Phase 4 动画管理器的设计目标，当前兼容实现位于 [timeline.uya](/home/winger/uya/gui-uya/src/gui/anim/timeline.uya)
 - 原始目标是 `AnimManager.animation_loop(self, tick_ms) Future<!void>`
 
 ### 当时的失败表现
@@ -545,7 +545,7 @@ _ = chart.add_point(6);
 ### GUI 侧复现点
 
 - 目标形态原本是 `fs_read_async<F: IFileSystem>(fs, path, out, cap) Future<!usize>`
-- 当前 GUI 仓库已恢复 `fs_read_async<F: IFileSystem>(...)`，见 [fs.uya](/home/winger/uya/gui-uya/gui/res/fs.uya)
+- 当前 GUI 仓库已恢复 `fs_read_async<F: IFileSystem>(...)`，见 [fs.uya](/home/winger/uya/gui-uya/src/gui/res/fs.uya)
 
 ### 当时的失败表现
 
@@ -587,8 +587,8 @@ _ = chart.add_point(6);
 
 ### GUI 侧复现点
 
-- 原始触发点见 [test_bitmap.uya](/home/winger/uya/gui-uya/gui/tests/test_bitmap.uya)
-- 共享对象是 [bitmap.uya](/home/winger/uya/gui-uya/gui/core/bitmap.uya) 中的 `BitmapAllocator`
+- 原始触发点见 [test_bitmap.uya](/home/winger/uya/gui-uya/tests/test_bitmap.uya)
+- 共享对象是 [bitmap.uya](/home/winger/uya/gui-uya/src/gui/core/bitmap.uya) 中的 `BitmapAllocator`
 
 ### 当时的失败表现
 

@@ -1,7 +1,0 @@
-use std.runtime.entry;
-
-use sim.runner_web.run_simulator_web_bootstrap;
-
-export fn main() i32 {
-    return run_simulator_web_bootstrap();
-}

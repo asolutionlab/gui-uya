@@ -1,0 +1,174 @@
+use gui.core.color.Color;
+use gui.core.obj.gui_obj_register;
+use gui.core.obj_tree.ObjTree;
+use gui.core.obj_tree.obj_tree_new;
+use gui.render.ctx.RenderCtx;
+use gui.sim.common.SIM_DEFAULT_RES_HEIGHT;
+use gui.sim.common.SIM_DEFAULT_RES_WIDTH;
+use gui.sim.common.sim_layout_font;
+use gui.sim.common.sim_layout_h;
+use gui.sim.common.sim_layout_w;
+use gui.sim.common.sim_layout_x;
+use gui.sim.common.sim_layout_y;
+use gui.style.StyleProp;
+use gui.widget.lbl.Label;
+use gui.widget.lbl.TextAlign;
+use gui.widget.lbl.TextOverflow;
+use gui.widget.page.Page;
+use gui.widget.panel.Panel;
+use gui.widget.rich_text_input.RichTextInput;
+use gui.widget.rich_toolbar.RichToolbar;
+
+const RICHTEXT_ID_PAGE: i32 = 80;
+const RICHTEXT_ID_HERO: i32 = 81;
+const RICHTEXT_ID_TITLE: i32 = 82;
+const RICHTEXT_ID_SUBTITLE: i32 = 83;
+const RICHTEXT_ID_EDITOR_PANEL: i32 = 84;
+const RICHTEXT_ID_EDITOR_TITLE: i32 = 85;
+const RICHTEXT_ID_EDITOR_HINT: i32 = 86;
+const RICHTEXT_ID_TOOLBAR: i32 = 87;
+const RICHTEXT_ID_EDITOR: i32 = 88;
+const RICHTEXT_ID_FOOTER: i32 = 89;
+
+export struct RichTextRetained {
+    tree: ObjTree,
+    page: Page,
+    hero: Panel,
+    title: Label,
+    subtitle: Label,
+    editor_panel: Panel,
+    editor_title: Label,
+    editor_hint: Label,
+    toolbar: RichToolbar,
+    editor: RichTextInput,
+    footer: Label,
+    ready: bool,
+}
+
+export fn richtext_retained_new() RichTextRetained {
+    return RichTextRetained{
+        tree: obj_tree_new(),
+        page: Page.new("RichText"),
+        hero: Panel.new(),
+        title: Label.new("RichTextInput Playground"),
+        subtitle: Label.new("Click to focus, drag to select, press Enter to split paragraphs, and try Ctrl/Cmd + C/X/V in SDL2 or Web."),
+        editor_panel: Panel.new(),
+        editor_title: Label.new("Editor"),
+        editor_hint: Label.new("当前示例使用真实 RichTextInput 控件。首版 HTML 导出和宿主桥会继续在后续里程碑补强。"),
+        editor: RichTextInput.new("输入多段内容，试试拖拽选区与多行编辑"),
+        toolbar: RichToolbar.new(null),
+        footer: Label.new("建议操作：输入几行文本、拖拽选区、回车拆段、退格合段、尝试桌面与 Web 的粘贴链路。"),
+        ready: false,
+    };
+}
+
+export fn richtext_retained_init(demo: &RichTextRetained) void {
+    if demo == null || demo.ready {
+        return;
+    }
+
+    demo.page.widget.at(0, 0);
+    demo.page.widget.size(SIM_DEFAULT_RES_WIDTH, SIM_DEFAULT_RES_HEIGHT);
+    demo.page.widget.base.style.set_color(StyleProp.BgColor, Color{ r: 238, g: 243, b: 248, a: 255 });
+
+    demo.hero.widget.at(sim_layout_x(20), sim_layout_y(16));
+    demo.hero.widget.size(sim_layout_w(600), sim_layout_h(76));
+    demo.hero.widget.base.style.set_color(StyleProp.BgColor, Color{ r: 255, g: 255, b: 255, a: 255 });
+    demo.hero.widget.base.style.set_u32(StyleProp.PaddingLeft, 0u32);
+    demo.hero.widget.base.style.set_u32(StyleProp.PaddingRight, 0u32);
+    demo.hero.widget.base.style.set_u32(StyleProp.PaddingTop, 0u32);
+    demo.hero.widget.base.style.set_u32(StyleProp.PaddingBottom, 0u32);
+
+    demo.title.widget.at(sim_layout_x(20), sim_layout_y(12));
+    demo.title.widget.size(sim_layout_w(560), sim_layout_h(28));
+    demo.title.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(24u8) as u32);
+    _ = demo.title.set_align(TextAlign.Center);
+
+    demo.subtitle.widget.at(sim_layout_x(22), sim_layout_y(42));
+    demo.subtitle.widget.size(sim_layout_w(556), sim_layout_h(28));
+    demo.subtitle.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(11u8) as u32);
+    demo.subtitle.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 100, g: 116, b: 139, a: 255 });
+    demo.subtitle.overflow = TextOverflow.Wrap;
+    _ = demo.subtitle.set_align(TextAlign.Center);
+
+    demo.editor_panel.widget.at(sim_layout_x(20), sim_layout_y(108));
+    demo.editor_panel.widget.size(sim_layout_w(600), sim_layout_h(332));
+    demo.editor_panel.widget.base.style.set_color(StyleProp.BgColor, Color{ r: 255, g: 255, b: 255, a: 255 });
+    demo.editor_panel.widget.base.style.set_u32(StyleProp.PaddingLeft, 0u32);
+    demo.editor_panel.widget.base.style.set_u32(StyleProp.PaddingRight, 0u32);
+    demo.editor_panel.widget.base.style.set_u32(StyleProp.PaddingTop, 0u32);
+    demo.editor_panel.widget.base.style.set_u32(StyleProp.PaddingBottom, 0u32);
+
+    demo.editor_title.widget.at(sim_layout_x(18), sim_layout_y(16));
+    demo.editor_title.widget.size(sim_layout_w(180), sim_layout_h(20));
+    demo.editor_title.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(18u8) as u32);
+
+    demo.editor_hint.widget.at(sim_layout_x(18), sim_layout_y(42));
+    demo.editor_hint.widget.size(sim_layout_w(564), sim_layout_h(34));
+    demo.editor_hint.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(11u8) as u32);
+    demo.editor_hint.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 100, g: 116, b: 139, a: 255 });
+    demo.editor_hint.overflow = TextOverflow.Wrap;
+
+    demo.editor.widget.at(sim_layout_x(18), sim_layout_y(86));
+    demo.editor.widget.size(sim_layout_w(564u16), sim_layout_h(188u16));
+    demo.toolbar.bind_editor(&demo.editor);
+    demo.toolbar.widget.at(sim_layout_x(18), sim_layout_y(82));
+    demo.toolbar.widget.size(sim_layout_w(420u16), sim_layout_h(34u16));
+    demo.editor.widget.at(sim_layout_x(18), sim_layout_y(124));
+    demo.editor.widget.size(sim_layout_w(564u16), sim_layout_h(150u16));
+    _ = demo.editor.set_plain_text(
+        "RichTextInput 已接入模拟器 demo。\n你可以在这里输入多段文本、拖拽选择内容，或直接粘贴多行文本。\nSDL2 与 Web 的宿主桥能力会继续沿 TODO 文档向前推进。"
+            as &const byte
+    ) catch {};
+
+    demo.footer.widget.at(sim_layout_x(18), sim_layout_y(286));
+    demo.footer.widget.size(sim_layout_w(564), sim_layout_h(30));
+    demo.footer.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(11u8) as u32);
+    demo.footer.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 71, g: 85, b: 105, a: 255 });
+    demo.footer.overflow = TextOverflow.Wrap;
+
+    _ = gui_obj_register(RICHTEXT_ID_PAGE, demo.page.obj());
+    _ = gui_obj_register(RICHTEXT_ID_HERO, demo.hero.obj());
+    _ = gui_obj_register(RICHTEXT_ID_TITLE, demo.title.obj());
+    _ = gui_obj_register(RICHTEXT_ID_SUBTITLE, demo.subtitle.obj());
+    _ = gui_obj_register(RICHTEXT_ID_EDITOR_PANEL, demo.editor_panel.obj());
+    _ = gui_obj_register(RICHTEXT_ID_EDITOR_TITLE, demo.editor_title.obj());
+    _ = gui_obj_register(RICHTEXT_ID_EDITOR_HINT, demo.editor_hint.obj());
+    _ = gui_obj_register(RICHTEXT_ID_TOOLBAR, demo.toolbar.obj());
+    _ = gui_obj_register(RICHTEXT_ID_EDITOR, demo.editor.obj());
+    _ = gui_obj_register(RICHTEXT_ID_FOOTER, demo.footer.obj());
+
+    demo.page.add(demo.hero.obj());
+    demo.page.add(demo.editor_panel.obj());
+    demo.hero.add(demo.title.obj());
+    demo.hero.add(demo.subtitle.obj());
+    demo.editor_panel.add(demo.editor_title.obj());
+    demo.editor_panel.add(demo.editor_hint.obj());
+    demo.editor_panel.add(demo.toolbar.obj());
+    demo.editor_panel.add(demo.editor.obj());
+    demo.editor_panel.add(demo.footer.obj());
+
+    demo.tree.set_root(RICHTEXT_ID_PAGE, demo.page.obj());
+    demo.ready = true;
+}
+
+export fn richtext_retained_sync(demo: &RichTextRetained) void {
+    if demo == null {
+        return;
+    }
+    richtext_retained_init(demo);
+}
+
+export fn render_demo_richtext_retained_state(
+    demo: &RichTextRetained,
+    ctx: &RenderCtx,
+    origin_x: i16,
+    origin_y: i16
+) void {
+    if demo == null {
+        return;
+    }
+    richtext_retained_sync(demo);
+    demo.page.widget.at(origin_x, origin_y);
+    demo.page.render(ctx);
+}

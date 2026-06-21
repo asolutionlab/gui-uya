@@ -1,0 +1,154 @@
+use gui.core.color.Color;
+use gui.core.obj_tree.ObjTree;
+use gui.core.obj_tree.obj_tree_new;
+use gui.platform.disp.PixelFormat;
+use gui.platform.disp.framebuffer_new;
+use gui.platform.disp.framebuffer_required_bytes;
+use gui.render.ctx.RenderCtx;
+use gui.render.ctx.render_ctx_new;
+use gui.sim.common.sim_layout_font;
+use gui.sim.common.sim_layout_h;
+use gui.sim.common.sim_layout_w;
+use gui.sim.common.sim_layout_x;
+use gui.sim.common.sim_layout_y;
+use gui.sim.common.SIM_DEFAULT_RES_HEIGHT;
+use gui.sim.common.SIM_DEFAULT_RES_WIDTH;
+use gui.style.StyleProp;
+use gui.widget.lbl.Label;
+use gui.widget.page.Page;
+use gui.widget.panel.Panel;
+use gui.widget.slider.Slider;
+use gui.widget.switch.Switch;
+
+extern fn malloc(size: usize) &void;
+extern fn free(ptr: &void) void;
+
+export struct SettingsRetained {
+    tree: ObjTree,
+    page: Page,
+    panel: Panel,
+    title: Label,
+    wifi_label: Label,
+    wifi: Switch,
+    notif_label: Label,
+    notif: Switch,
+    bright_label: Label,
+    brightness: Slider,
+    ready: bool,
+}
+
+/// 创建默认的 `SettingsRetained` 实例。
+export fn settings_retained_new() SettingsRetained {
+    return SettingsRetained{
+        tree: obj_tree_new(),
+        page: Page.new("Settings"),
+        panel: Panel.new(),
+        title: Label.new("Settings"),
+        wifi_label: Label.new("Wi-Fi"),
+        wifi: Switch.new(true),
+        notif_label: Label.new("Alerts"),
+        notif: Switch.new(false),
+        bright_label: Label.new("Brightness"),
+        brightness: Slider.new(0, 100, 68),
+        ready: false,
+    };
+}
+
+/// 初始化 `settings_retained` 的内部状态。
+export fn settings_retained_init(settings: &SettingsRetained) void {
+    if settings == null || settings.ready {
+        return;
+    }
+
+    settings.page.widget.at(0, 0);
+    settings.page.widget.size(SIM_DEFAULT_RES_WIDTH, SIM_DEFAULT_RES_HEIGHT);
+    settings.page.widget.base.style.set_color(StyleProp.BgColor, Color{ r: 245, g: 248, b: 252, a: 255 });
+
+    settings.panel.widget.at(sim_layout_x(40), sim_layout_y(32));
+    settings.panel.widget.size(sim_layout_w(560), sim_layout_h(416));
+
+    settings.title.widget.at(sim_layout_x(40), sim_layout_y(32));
+    settings.title.widget.size(sim_layout_w(220), sim_layout_h(36));
+    settings.title.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(28u8) as u32);
+    settings.title.widget.base.style.set_color(StyleProp.FgColor, Color{ r: 15, g: 23, b: 42, a: 255 });
+
+    settings.wifi_label.widget.at(sim_layout_x(40), sim_layout_y(104));
+    settings.wifi_label.widget.size(sim_layout_w(160), sim_layout_h(24));
+    settings.wifi_label.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(18u8) as u32);
+    settings.wifi.widget.at(sim_layout_x(416), sim_layout_y(92));
+    settings.wifi.widget.size(sim_layout_w(52u16), sim_layout_h(30u16));
+
+    settings.notif_label.widget.at(sim_layout_x(40), sim_layout_y(176));
+    settings.notif_label.widget.size(sim_layout_w(160), sim_layout_h(24));
+    settings.notif_label.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(18u8) as u32);
+    settings.notif.widget.at(sim_layout_x(416), sim_layout_y(164));
+    settings.notif.widget.size(sim_layout_w(52u16), sim_layout_h(30u16));
+
+    settings.bright_label.widget.at(sim_layout_x(40), sim_layout_y(264));
+    settings.bright_label.widget.size(sim_layout_w(200), sim_layout_h(24));
+    settings.bright_label.widget.base.style.set_u32(StyleProp.FontSize, sim_layout_font(18u8) as u32);
+    settings.brightness.widget.at(sim_layout_x(40), sim_layout_y(312));
+    settings.brightness.widget.size(sim_layout_w(480), sim_layout_h(20));
+
+    settings.page.add(settings.panel.obj());
+    settings.panel.add(settings.title.obj());
+    settings.panel.add(settings.wifi_label.obj());
+    settings.panel.add(settings.wifi.obj());
+    settings.panel.add(settings.notif_label.obj());
+    settings.panel.add(settings.notif.obj());
+    settings.panel.add(settings.bright_label.obj());
+    settings.panel.add(settings.brightness.obj());
+    settings.tree.set_root(0, settings.page.obj());
+    settings.ready = true;
+}
+
+/// 将外部状态同步到 `settings_retained`。
+export fn settings_retained_sync(settings: &SettingsRetained, wifi_enabled: bool, alerts_enabled: bool, brightness_value: i32) void {
+    if settings == null {
+        return;
+    }
+    settings_retained_init(settings);
+    _ = settings.wifi.set_checked(wifi_enabled);
+    _ = settings.notif.set_checked(alerts_enabled);
+    settings.brightness.set_value(brightness_value);
+}
+
+/// 按 retained 状态参数将 `settings` demo 渲染到指定上下文。
+export fn render_demo_settings_retained_state(settings: &SettingsRetained, ctx: &RenderCtx, origin_x: i16, origin_y: i16, wifi_enabled: bool, alerts_enabled: bool, brightness_value: i32) void {
+    if settings == null {
+        return;
+    }
+    settings_retained_sync(settings, wifi_enabled, alerts_enabled, brightness_value);
+    settings.page.widget.at(origin_x, origin_y);
+    settings.page.render(ctx);
+}
+
+/// 按显式状态参数将 `settings` demo 渲染到指定上下文。
+export fn render_demo_settings_state(ctx: &RenderCtx, origin_x: i16, origin_y: i16, wifi_enabled: bool, alerts_enabled: bool, brightness_value: i32) void {
+    var settings: SettingsRetained = settings_retained_new();
+    render_demo_settings_retained_state(&settings, ctx, origin_x, origin_y, wifi_enabled, alerts_enabled, brightness_value);
+}
+
+/// 将 `settings` demo 渲染到指定上下文。
+export fn render_demo_settings(ctx: &RenderCtx, origin_x: i16, origin_y: i16) void {
+    render_demo_settings_state(ctx, origin_x, origin_y, true, false, 68);
+}
+
+/// 运行 `settings` demo 并返回退出码。
+export fn run_demo_settings() i32 {
+    const bytes_len: usize = framebuffer_required_bytes(SIM_DEFAULT_RES_WIDTH, SIM_DEFAULT_RES_HEIGHT, PixelFormat.ARGB8888);
+    const bytes: &byte = malloc(bytes_len) as &byte;
+    if bytes == null {
+        return 2;
+    }
+    defer {
+        free(bytes as &void);
+    }
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(bytes, SIM_DEFAULT_RES_WIDTH, SIM_DEFAULT_RES_HEIGHT, SIM_DEFAULT_RES_WIDTH * 4u16, PixelFormat.ARGB8888));
+    ctx.clear(Color{ r: 245, g: 248, b: 252, a: 255 });
+    render_demo_settings(&ctx, 0, 0);
+    if ctx.stats.text_ops == 0u32 || ctx.stats.circle_ops == 0u32 {
+        return 1;
+    }
+    return 0;
+}

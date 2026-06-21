@@ -1,0 +1,674 @@
+use std.runtime.entry;
+
+use gui.anim.timeline.AnimManager;
+use gui.anim.timeline.anim_manager_new;
+use gui.anim.tween.AnimProp;
+use gui.anim.tween.Tween;
+use gui.anim.tween.anim_value_i32;
+use gui.core.dirty_region.DirtyRegion;
+use gui.core.dirty_region.dirty_region_new;
+use gui.core.event_dispatch.EventDispatcher;
+use gui.core.event_dispatch.event_dispatcher_new;
+use gui.core.color.Color;
+use gui.core.obj.GuiObj;
+use gui.core.obj.gui_obj_default;
+use gui.core.obj.gui_obj_register;
+use gui.core.obj.gui_obj_reset_registry;
+use gui.core.obj_pool.ObjPool;
+use gui.core.obj_pool.obj_pool_new;
+use gui.core.obj_tree.ObjTree;
+use gui.core.obj_tree.obj_tree_new;
+use gui.core.point.Point;
+use gui.core.rect.Rect;
+use examples.demo_novel.NovelPageRetained;
+use examples.demo_novel.NovelRetained;
+use examples.demo_novel.novel_page_retained_new;
+use examples.demo_novel.novel_page_retained_sync;
+use examples.demo_novel.novel_retained_new;
+use examples.demo_novel.novel_retained_scroll_by;
+use gui.layout.auto.AutoLayout;
+use gui.layout.auto.LayoutMode;
+use gui.layout.auto.auto_layout_new;
+use gui.platform.tick.get_tick_us;
+use gui.platform.disp.FrameBuffer;
+use gui.platform.disp.PixelFormat;
+use gui.platform.disp.framebuffer_required_bytes;
+use gui.platform.disp.framebuffer_new;
+use gui.render.batch.DrawBatch;
+use gui.render.batch.draw_batch_new;
+use gui.render.cpu_backend.cpu_render_batch_execute;
+use gui.render.ctx.RenderCtx;
+use gui.render.ctx.render_ctx_new;
+use gui.render.font.ttf_font_set_default_native_backend_c;
+use gui.render.font.Font;
+use gui.render.font.font_default;
+use gui.render.gpu.IGpuCtx;
+use gui.render.gpu.gpu_execute_batch;
+use gui.render.gpu_software.SoftwareGpuCtx;
+use gui.render.gpu_software.software_gpu_new;
+use gui.richtext.delta.RichDelta;
+use gui.richtext.delta.document_to_delta;
+use gui.richtext.delta.rich_delta_new;
+use gui.richtext.document.RichDocument;
+use gui.richtext.document.rich_document_new;
+use gui.richtext.layout.RichLayoutCache;
+use gui.richtext.layout.rich_layout_cache_new;
+use gui.render.img.ImageData;
+use gui.render.img.draw_image_scaled;
+use gui.render.img.image_data_new;
+use gui.render.scheduler.IRenderScheduleFullCallback;
+use gui.render.scheduler.IRenderScheduleOverlayCallback;
+use gui.render.scheduler.render_schedule_tree_frame;
+use gui.render.zerocopy.ZeroCopyCtx;
+use gui.render.zerocopy.zerocopy_ctx_new;
+use gui.platform.disp.DisplayCtx;
+use gui.platform.disp.display_ctx_new;
+use gui.res.cache.ImageCache;
+use gui.res.cache.image_cache_new;
+use gui.sim.common.SIM_DEFAULT_RES_HEIGHT;
+use gui.sim.common.SIM_DEFAULT_RES_WIDTH;
+use std.mem.allocator.MallocAllocator;
+use std.mem.allocator.g_allocator;
+use std.time.now_ms;
+use gui.style.StyleProp;
+
+extern "libc" fn printf(fmt: *byte, ...) i32;
+
+const BENCH_ITERATIONS: i32 = 5000;
+const BENCH_EMPTY_FRAME_ITERATIONS: i32 = 250000;
+const BENCH_FULLSCREEN_ITERATIONS: i32 = 1000;
+const BENCH_NOVEL_DRAG_FRAMES: i32 = 64;
+
+struct RichTextDocBenchResult {
+    set_plain_us: u64,
+    layout_us: u64,
+    snapshot_us: u64,
+    line_count: u32,
+    op_count: u32,
+}
+
+struct NovelDragBenchResult {
+    avg_us: u64,
+    max_us: u64,
+}
+
+fn fill_richtext_bench_text(text: &byte, byte_len: usize) void {
+    var idx: usize = 0usize;
+    var column: usize = 0usize;
+    while idx < byte_len {
+        if column >= 96usize {
+            text[idx] = '\n' as byte;
+            column = 0usize;
+        } else {
+            text[idx] = 'x' as byte;
+            column = column + 1usize;
+        }
+        idx = idx + 1usize;
+    }
+    text[byte_len] = 0u8;
+}
+
+fn bench_richtext_document(byte_len: usize) !RichTextDocBenchResult {
+    const allocator: &MallocAllocator = &g_allocator;
+    const text: &byte = try allocator.alloc(byte_len + 1usize);
+    defer allocator.dealloc(text);
+    fill_richtext_bench_text(text, byte_len);
+
+    var doc: RichDocument = rich_document_new();
+    defer doc.dispose();
+    var layout: RichLayoutCache = rich_layout_cache_new();
+    defer layout.dispose();
+    const font: Font = font_default();
+
+    const set_start_us: u64 = get_tick_us();
+    try doc.set_plain_text(text as &const byte);
+    const set_plain_us: u64 = get_tick_us() - set_start_us;
+
+    const layout_start_us: u64 = get_tick_us();
+    try layout.relayout(&doc, &font, 360u16, 0u32);
+    const layout_us: u64 = get_tick_us() - layout_start_us;
+
+    const snapshot_start_us: u64 = get_tick_us();
+    var snapshot: RichDelta = rich_delta_new();
+    try document_to_delta(&doc, &snapshot);
+    const snapshot_us: u64 = get_tick_us() - snapshot_start_us;
+    const op_count: u32 = snapshot.op_count;
+    snapshot.dispose();
+
+    return RichTextDocBenchResult{
+        set_plain_us: set_plain_us,
+        layout_us: layout_us,
+        snapshot_us: snapshot_us,
+        line_count: layout.line_count,
+        op_count: op_count,
+    };
+}
+
+fn bench_obj_pool() !u64 {
+    var pool: ObjPool<GuiObj> = obj_pool_new<GuiObj>();
+    const start_ms: u64 = try now_ms();
+
+    var i: i32 = 0;
+    while i < BENCH_ITERATIONS {
+        const obj: &GuiObj = pool.alloc_obj();
+        if obj == null {
+            return 0u64;
+        }
+        obj[0] = gui_obj_default();
+        obj.type_tag = (i as! u32).value;
+        pool.free_obj(obj);
+        i = i + 1;
+    }
+
+    return (try now_ms()) - start_ms;
+}
+
+fn bench_allocator() !u64 {
+    const allocator: &MallocAllocator = &g_allocator;
+    const start_ms: u64 = try now_ms();
+
+    var i: i32 = 0;
+    while i < BENCH_ITERATIONS {
+        const ptr: &byte = try allocator.alloc(@size_of(GuiObj) as usize);
+        allocator.dealloc(ptr);
+        i = i + 1;
+    }
+
+    return (try now_ms()) - start_ms;
+}
+
+fn bench_layout_and_dirty() !u64 {
+    gui_obj_reset_registry();
+
+    var root: GuiObj = gui_obj_default();
+    var a: GuiObj = gui_obj_default();
+    var b: GuiObj = gui_obj_default();
+    root.set_area(Rect{ x: 0, y: 0, w: 160, h: 40 });
+    a.set_area(Rect{ x: 0, y: 0, w: 20, h: 10 });
+    b.set_area(Rect{ x: 0, y: 0, w: 20, h: 10 });
+    root.style.set_u32(StyleProp.LayoutMode, LayoutMode.Flex as u32);
+
+    _ = gui_obj_register(0, &root);
+    _ = gui_obj_register(1, &a);
+    _ = gui_obj_register(2, &b);
+
+    var tree: ObjTree = obj_tree_new();
+    tree.set_root(0, &root);
+    tree.attach(0, 1);
+    tree.attach(0, 2);
+
+    var auto: AutoLayout = auto_layout_new();
+    auto.flex.config.gap = 8;
+
+    const start_ms: u64 = try now_ms();
+    var i: i32 = 0;
+    while i < BENCH_ITERATIONS {
+        tree.perform_layout(0, &auto);
+        var dirty: DirtyRegion = dirty_region_new();
+        dirty.add(a.screen_area());
+        dirty.add(b.screen_area());
+        dirty.merge();
+        i = i + 1;
+    }
+    return (try now_ms()) - start_ms;
+}
+
+fn bench_dispatcher() !u64 {
+    gui_obj_reset_registry();
+
+    var root: GuiObj = gui_obj_default();
+    var child: GuiObj = gui_obj_default();
+    root.set_area(Rect{ x: 0, y: 0, w: 120, h: 40 });
+    child.set_area(Rect{ x: 0, y: 0, w: 40, h: 20 });
+    child.flags.clickable = true;
+
+    _ = gui_obj_register(0, &root);
+    _ = gui_obj_register(1, &child);
+
+    var tree: ObjTree = obj_tree_new();
+    tree.set_root(0, &root);
+    tree.attach(0, 1);
+
+    var dispatcher: EventDispatcher = event_dispatcher_new();
+    const start_ms: u64 = try now_ms();
+    var i: i32 = 0;
+    while i < BENCH_ITERATIONS {
+        _ = dispatcher.process_touch(&tree, Point{ x: 5, y: 5 }, true, (i * 2) as u32);
+        _ = dispatcher.process_touch(&tree, Point{ x: 5, y: 5 }, false, (i * 2 + 1) as u32);
+        i = i + 1;
+    }
+    return (try now_ms()) - start_ms;
+}
+
+fn bench_render_primitives() !u64 {
+    var bytes: [byte: 4096] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 32, 32, 128, PixelFormat.ARGB8888));
+    const start_ms: u64 = try now_ms();
+    var i: i32 = 0;
+    while i < BENCH_ITERATIONS {
+        ctx.clear(Color{ r: 16, g: 18, b: 22, a: 255 });
+        ctx.fill_rect(Rect{ x: 2, y: 2, w: 12, h: 8 }, Color{ r: 255, g: 0, b: 0, a: 255 });
+        ctx.draw_line(0, 0, 31, 31, Color{ r: 255, g: 255, b: 255, a: 255 }, 1);
+        ctx.fill_arc(16, 16, 6, 0, 180, Color{ r: 0, g: 255, b: 0, a: 255 });
+        i = i + 1;
+    }
+    return (try now_ms()) - start_ms;
+}
+
+fn bench_render_fill_opaque() !u64 {
+    var bytes: [byte: 16384] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 64, 64, 256, PixelFormat.ARGB8888));
+    const start_ms: u64 = try now_ms();
+    var i: i32 = 0;
+    while i < BENCH_ITERATIONS {
+        ctx.fill_rect(Rect{ x: 4, y: 4, w: 56, h: 56 }, Color{ r: 48, g: 124, b: 255, a: 255 });
+        i = i + 1;
+    }
+    return (try now_ms()) - start_ms;
+}
+
+fn bench_render_fill_alpha() !u64 {
+    var bytes: [byte: 16384] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 64, 64, 256, PixelFormat.ARGB8888));
+    const start_ms: u64 = try now_ms();
+    var i: i32 = 0;
+    while i < BENCH_ITERATIONS {
+        ctx.clear(Color{ r: 12, g: 16, b: 24, a: 255 });
+        ctx.fill_rect(Rect{ x: 4, y: 4, w: 56, h: 56 }, Color{ r: 255, g: 255, b: 255, a: 96 });
+        i = i + 1;
+    }
+    return (try now_ms()) - start_ms;
+}
+
+fn bench_empty_frame() u64 {
+    gui_obj_reset_registry();
+
+    var root: GuiObj = gui_obj_default();
+    root.set_area(Rect{ x: 0, y: 0, w: 64, h: 64 });
+    _ = gui_obj_register(0, &root);
+
+    var tree: ObjTree = obj_tree_new();
+    tree.set_root(0, &root);
+    tree.clear_invalid_regions();
+
+    var bytes: [byte: 64] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 4, 4, 16, PixelFormat.ARGB8888));
+    const start_us: u64 = get_tick_us();
+    var i: i32 = 0;
+    while i < BENCH_EMPTY_FRAME_ITERATIONS {
+        _ = render_schedule_tree_frame(
+            &ctx,
+            &tree,
+            Rect{ x: 0, y: 0, w: 64, h: 64 },
+            false,
+            Color{ r: 0, g: 0, b: 0, a: 255 },
+            null,
+            null,
+            null
+        );
+        i = i + 1;
+    }
+    return get_tick_us() - start_us;
+}
+
+fn bench_fullscreen_refresh() !u64 {
+    const width: u16 = 320u16;
+    const height: u16 = 240u16;
+    const allocator: &MallocAllocator = &g_allocator;
+    const bytes_len: usize = framebuffer_required_bytes(width, height, PixelFormat.RGB565);
+    const pixels: &byte = try allocator.alloc(bytes_len);
+    defer {
+        allocator.dealloc(pixels);
+    }
+
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(pixels, width, height, width * 2u16, PixelFormat.RGB565));
+    const start_ms: u64 = try now_ms();
+    var i: i32 = 0;
+    while i < BENCH_FULLSCREEN_ITERATIONS {
+        ctx.fill_rect(Rect{ x: 0, y: 0, w: width, h: height }, Color{ r: 18, g: 24, b: 38, a: 255 });
+        i = i + 1;
+    }
+    return (try now_ms()) - start_ms;
+}
+
+fn bench_batch_compare_case(optimize: bool) !u64 {
+    var bytes: [byte: 4096] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 32, 32, 128, PixelFormat.ARGB8888));
+    var batch: DrawBatch = draw_batch_new();
+    var seg: i32 = 0;
+    while seg < 16 {
+        batch.push_fill_rect(Rect{ x: seg as i16, y: 0, w: 1, h: 2 }, Color{ r: 255, g: 0, b: 0, a: 255 });
+        batch.push_fill_rect(Rect{ x: seg as i16, y: 4, w: 1, h: 2 }, Color{ r: 0, g: 64, b: 255, a: 255 });
+        batch.push_line(seg as i16, 10, seg as i16, 10, Color{ r: 255, g: 255, b: 255, a: 255 }, 1);
+        batch.push_line(seg as i16, 12, seg as i16, 12, Color{ r: 0, g: 255, b: 0, a: 255 }, 1);
+        seg = seg + 1;
+    }
+    if optimize {
+        batch.optimize();
+    }
+
+    const start_ms: u64 = try now_ms();
+    var iter: i32 = 0;
+    while iter < BENCH_ITERATIONS {
+        cpu_render_batch_execute(&ctx, &batch);
+        iter = iter + 1;
+    }
+    return (try now_ms()) - start_ms;
+}
+
+fn bench_render_image_batch() !u64 {
+    var bytes: [byte: 4096] = [];
+    var img_bytes: [byte: 12] = [255, 0, 0,   0, 255, 0,   0, 0, 255,   255, 255, 255];
+    var front_bytes: [byte: 4096] = [];
+    var back_bytes: [byte: 4096] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 32, 32, 128, PixelFormat.ARGB8888));
+    const img: ImageData = image_data_new(&img_bytes[0], 2, 2, 6, PixelFormat.RGB888);
+    var batch: DrawBatch = draw_batch_new();
+    batch.push_fill_rect(Rect{ x: 0, y: 0, w: 4, h: 4 }, Color{ r: 255, g: 0, b: 0, a: 255 });
+    batch.push_fill_rect(Rect{ x: 4, y: 0, w: 4, h: 4 }, Color{ r: 255, g: 0, b: 0, a: 255 });
+    batch.optimize();
+    var display: DisplayCtx = display_ctx_new(
+        framebuffer_new(&front_bytes[0], 32, 32, 128, PixelFormat.ARGB8888),
+        framebuffer_new(&back_bytes[0], 32, 32, 128, PixelFormat.ARGB8888)
+    );
+    var zc: ZeroCopyCtx = zerocopy_ctx_new(&display);
+    const start_ms: u64 = try now_ms();
+    var i: i32 = 0;
+    while i < BENCH_ITERATIONS {
+        draw_image_scaled(&ctx, Rect{ x: 8, y: 8, w: 12, h: 12 }, &img);
+        cpu_render_batch_execute(&ctx, &batch);
+        zc.present(Rect{ x: 0, y: 0, w: 32, h: 32 });
+        i = i + 1;
+    }
+    return (try now_ms()) - start_ms;
+}
+
+fn bench_gpu_batch() !u64 {
+    var bytes: [byte: 4096] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 32, 32, 128, PixelFormat.ARGB8888));
+    var batch: DrawBatch = draw_batch_new();
+    const fill_a: Color = Color{ r: 48, g: 124, b: 255, a: 255 };
+    const fill_b: Color = Color{ r: 48, g: 124, b: 255, a: 255 };
+    const stroke_a: Color = Color{ r: 255, g: 255, b: 255, a: 255 };
+    const stroke_b: Color = Color{ r: 255, g: 255, b: 255, a: 255 };
+    const stroke_c: Color = Color{ r: 255, g: 255, b: 255, a: 255 };
+    batch.push_fill_rect(Rect{ x: 0, y: 0, w: 8, h: 4 }, fill_a);
+    batch.push_fill_rect(Rect{ x: 8, y: 0, w: 8, h: 4 }, fill_b);
+    batch.push_draw_rect(Rect{ x: 1, y: 6, w: 10, h: 8 }, stroke_a, 1);
+    batch.push_line(0, 20, 15, 20, stroke_b, 1);
+    batch.push_line(16, 20, 31, 20, stroke_c, 1);
+    batch.optimize();
+
+    var gpu: SoftwareGpuCtx = software_gpu_new(&ctx);
+    var gpu_iface: IGpuCtx = gpu;
+    const start_ms: u64 = try now_ms();
+    var i: i32 = 0;
+    while i < BENCH_ITERATIONS {
+        gpu_execute_batch(&gpu_iface, &batch);
+        i = i + 1;
+    }
+    return (try now_ms()) - start_ms;
+}
+
+fn bench_cache_pressure() !u64 {
+    var img_a_bytes: [byte: 12] = [255, 0, 0,   0, 255, 0,   0, 0, 255,   255, 255, 255];
+    var img_b_bytes: [byte: 12] = [0, 0, 0,   128, 128, 128,   255, 255, 255,   64, 64, 64];
+    var img_c_bytes: [byte: 12] = [10, 20, 30,   40, 50, 60,   70, 80, 90,   100, 110, 120];
+    var img_d_bytes: [byte: 12] = [5, 15, 25,   35, 45, 55,   65, 75, 85,   95, 105, 115];
+    var cache: ImageCache = image_cache_new(4, 24u32);
+    var out: ImageData = image_data_new(&img_a_bytes[0], 2, 2, 6, PixelFormat.RGB888);
+    const start_ms: u64 = try now_ms();
+    var i: i32 = 0;
+    while i < BENCH_ITERATIONS {
+        cache.put(1u32, image_data_new(&img_a_bytes[0], 2, 2, 6, PixelFormat.RGB888));
+        cache.put(2u32, image_data_new(&img_b_bytes[0], 2, 2, 6, PixelFormat.RGB888));
+        cache.put(3u32, image_data_new(&img_c_bytes[0], 2, 2, 6, PixelFormat.RGB888));
+        cache.put(4u32, image_data_new(&img_d_bytes[0], 2, 2, 6, PixelFormat.RGB888));
+        _ = cache.get(2u32, &out);
+        _ = cache.get(9u32, &out);
+        i = i + 1;
+    }
+    return (try now_ms()) - start_ms;
+}
+
+fn bench_startup_init() !u64 {
+    var fb_bytes: [byte: 4096] = [];
+    var front_bytes: [byte: 4096] = [];
+    var back_bytes: [byte: 4096] = [];
+    const start_us: u64 = get_tick_us();
+    var checksum: i32 = 0;
+    var i: i32 = 0;
+    while i < BENCH_ITERATIONS {
+        var ctx: RenderCtx = render_ctx_new(framebuffer_new(&fb_bytes[0], 32, 32, 128, PixelFormat.ARGB8888));
+        var display: DisplayCtx = display_ctx_new(
+            framebuffer_new(&front_bytes[0], 32, 32, 128, PixelFormat.ARGB8888),
+            framebuffer_new(&back_bytes[0], 32, 32, 128, PixelFormat.ARGB8888)
+        );
+        var zc: ZeroCopyCtx = zerocopy_ctx_new(&display);
+        var cache: ImageCache = image_cache_new(4, 64u32);
+        checksum = checksum + ctx.clip_len + zc.pending_count as i32 + cache.capacity as i32;
+        i = i + 1;
+    }
+    _ = checksum;
+    return get_tick_us() - start_us;
+}
+
+fn bench_novel_drag_render() !NovelDragBenchResult {
+    ttf_font_set_default_native_backend_c(true);
+    const allocator: &MallocAllocator = &g_allocator;
+    const bytes_len: usize = framebuffer_required_bytes(SIM_DEFAULT_RES_WIDTH, SIM_DEFAULT_RES_HEIGHT, PixelFormat.ARGB8888);
+    const pixels: &byte = try allocator.alloc(bytes_len);
+    defer {
+        allocator.dealloc(pixels);
+    }
+
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(pixels, SIM_DEFAULT_RES_WIDTH, SIM_DEFAULT_RES_HEIGHT, SIM_DEFAULT_RES_WIDTH * 4u16, PixelFormat.ARGB8888));
+    var novel: NovelRetained = novel_retained_new();
+    var page_state: NovelPageRetained = novel_page_retained_new();
+    novel_page_retained_sync(&page_state, &novel);
+    _ = render_schedule_tree_frame(
+        &ctx,
+        &page_state.tree,
+        Rect{ x: 0, y: 0, w: SIM_DEFAULT_RES_WIDTH, h: SIM_DEFAULT_RES_HEIGHT },
+        true,
+        Color{ r: 16, g: 44, b: 52, a: 255 },
+        null as &IRenderScheduleFullCallback,
+        null as &IRenderScheduleOverlayCallback,
+        null as &void
+    );
+
+    novel.drag_active = true;
+    var warm_idx: i32 = 0;
+    while warm_idx < 4 {
+        novel_retained_scroll_by(&novel, 36);
+        novel_page_retained_sync(&page_state, &novel);
+        _ = render_schedule_tree_frame(
+            &ctx,
+            &page_state.tree,
+            Rect{ x: 0, y: 0, w: SIM_DEFAULT_RES_WIDTH, h: SIM_DEFAULT_RES_HEIGHT },
+            false,
+            Color{ r: 16, g: 44, b: 52, a: 255 },
+            null as &IRenderScheduleFullCallback,
+            null as &IRenderScheduleOverlayCallback,
+            null as &void
+        );
+        warm_idx = warm_idx + 1;
+    }
+
+    var total_us: u64 = 0u64;
+    var max_us: u64 = 0u64;
+    var frame_idx: i32 = 0;
+    while frame_idx < BENCH_NOVEL_DRAG_FRAMES {
+        novel_retained_scroll_by(&novel, 36);
+        novel_page_retained_sync(&page_state, &novel);
+        const start_us: u64 = get_tick_us();
+        _ = render_schedule_tree_frame(
+            &ctx,
+            &page_state.tree,
+            Rect{ x: 0, y: 0, w: SIM_DEFAULT_RES_WIDTH, h: SIM_DEFAULT_RES_HEIGHT },
+            false,
+            Color{ r: 16, g: 44, b: 52, a: 255 },
+            null as &IRenderScheduleFullCallback,
+            null as &IRenderScheduleOverlayCallback,
+            null as &void
+        );
+        const elapsed_us: u64 = get_tick_us() - start_us;
+        total_us = total_us + elapsed_us;
+        if elapsed_us > max_us {
+            max_us = elapsed_us;
+        }
+        frame_idx = frame_idx + 1;
+    }
+    novel.drag_active = false;
+
+    return NovelDragBenchResult{
+        avg_us: total_us / BENCH_NOVEL_DRAG_FRAMES as u64,
+        max_us: max_us,
+    };
+}
+
+fn bench_animations() !u64 {
+    gui_obj_reset_registry();
+
+    var objects: [GuiObj: 32] = [];
+    var manager: AnimManager = anim_manager_new();
+    var i: i32 = 0;
+    while i < 32 {
+        objects[i] = gui_obj_default();
+        objects[i].x = 0;
+        objects[i].y = (i as! i16).value;
+        objects[i].w = 8;
+        objects[i].h = 8;
+        _ = gui_obj_register(i, &objects[i]);
+
+        var tween: Tween = Tween.new(i, AnimProp.X, anim_value_i32(120 + i), 160u32);
+        tween.with_from_i32(0);
+        _ = manager.start_tween(&tween) catch {
+            return 0u64;
+        };
+        i = i + 1;
+    }
+
+    const start_ms: u64 = try now_ms();
+    i = 0;
+    while i < BENCH_ITERATIONS {
+        manager.update_all(16u32);
+        if !manager.is_animating() {
+            var j: i32 = 0;
+            while j < 32 {
+                var tween: Tween = Tween.new(j, AnimProp.X, anim_value_i32(120 + j), 160u32);
+                tween.with_from_i32(0);
+                _ = manager.start_tween(&tween) catch {};
+                objects[j].x = 0;
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return (try now_ms()) - start_ms;
+}
+
+/// 运行 `core_bench` 并返回退出码。
+export fn run_core_bench() i32 {
+    const pool_ms: u64 = bench_obj_pool() catch {
+        return 1;
+    };
+    const heap_ms: u64 = bench_allocator() catch {
+        return 2;
+    };
+    const layout_ms: u64 = bench_layout_and_dirty() catch {
+        return 3;
+    };
+    const dispatch_ms: u64 = bench_dispatcher() catch {
+        return 4;
+    };
+    const render_ms: u64 = bench_render_primitives() catch {
+        return 5;
+    };
+    const render_fill_ms: u64 = bench_render_fill_opaque() catch {
+        return 6;
+    };
+    const render_alpha_ms: u64 = bench_render_fill_alpha() catch {
+        return 7;
+    };
+    const empty_frame_us: u64 = bench_empty_frame();
+    const fullscreen_ms: u64 = bench_fullscreen_refresh() catch {
+        return 8;
+    };
+    const batch_raw_ms: u64 = bench_batch_compare_case(false) catch {
+        return 9;
+    };
+    const batch_opt_ms: u64 = bench_batch_compare_case(true) catch {
+        return 10;
+    };
+    const image_batch_ms: u64 = bench_render_image_batch() catch {
+        return 11;
+    };
+    const gpu_batch_ms: u64 = bench_gpu_batch() catch {
+        return 12;
+    };
+    const cache_ms: u64 = bench_cache_pressure() catch {
+        return 13;
+    };
+    const startup_us: u64 = bench_startup_init() catch {
+        return 14;
+    };
+    const animation_ms: u64 = bench_animations() catch {
+        return 15;
+    };
+    const novel_drag: NovelDragBenchResult = bench_novel_drag_render() catch {
+        return 16;
+    };
+    const richtext_10k: RichTextDocBenchResult = bench_richtext_document(10usize * 1024usize) catch {
+        return 17;
+    };
+    const richtext_50k: RichTextDocBenchResult = bench_richtext_document(50usize * 1024usize) catch {
+        return 18;
+    };
+    const richtext_200k: RichTextDocBenchResult = bench_richtext_document(200usize * 1024usize) catch {
+        return 19;
+    };
+
+    printf("Phase5 benchmark/report (%d iterations)\n" as *byte, BENCH_ITERATIONS);
+    printf("DirtyRegion : %lu bytes\n" as *byte, @size_of(DirtyRegion) as u64);
+    printf("DrawBatch   : %lu bytes\n" as *byte, @size_of(DrawBatch) as u64);
+    printf("RenderCtx   : %lu bytes\n" as *byte, @size_of(RenderCtx) as u64);
+    printf("ZeroCopyCtx : %lu bytes\n" as *byte, @size_of(ZeroCopyCtx) as u64);
+    printf("ImageCache  : %lu bytes\n" as *byte, @size_of(ImageCache) as u64);
+    printf("FB 480x320 RGB565: %lu bytes\n" as *byte, framebuffer_required_bytes(480, 320, PixelFormat.RGB565) as u64);
+    printf("FB 320x240 RGB565: %lu bytes\n" as *byte, framebuffer_required_bytes(320, 240, PixelFormat.RGB565) as u64);
+    printf("obj_pool : %lu ms\n" as *byte, pool_ms);
+    printf("allocator: %lu ms\n" as *byte, heap_ms);
+    printf("layout+dirty: %lu ms\n" as *byte, layout_ms);
+    printf("dispatcher  : %lu ms\n" as *byte, dispatch_ms);
+    printf("render prim : %lu ms\n" as *byte, render_ms);
+    printf("render fill : %lu ms\n" as *byte, render_fill_ms);
+    printf("render alpha: %lu ms\n" as *byte, render_alpha_ms);
+    printf("empty frame : %lu us\n" as *byte, empty_frame_us);
+    printf("fullscreen  : %lu ms\n" as *byte, fullscreen_ms);
+    printf("batch raw   : %lu ms\n" as *byte, batch_raw_ms);
+    printf("batch opt   : %lu ms\n" as *byte, batch_opt_ms);
+    printf("image+batch : %lu ms\n" as *byte, image_batch_ms);
+    printf("gpu batch   : %lu ms\n" as *byte, gpu_batch_ms);
+    printf("cache churn : %lu ms\n" as *byte, cache_ms);
+    printf("startup init: %lu us\n" as *byte, startup_us);
+    printf("32 anims    : %lu ms\n" as *byte, animation_ms);
+    printf("novel drag  : %lu us\n" as *byte, novel_drag.max_us);
+    printf("novel drag avg: %lu us\n" as *byte, novel_drag.avg_us);
+    printf("richtext 10KB set: %lu us\n" as *byte, richtext_10k.set_plain_us);
+    printf("richtext 10KB layout: %lu us\n" as *byte, richtext_10k.layout_us);
+    printf("richtext 10KB snapshot: %lu us\n" as *byte, richtext_10k.snapshot_us);
+    printf("richtext 10KB lines: %lu count\n" as *byte, richtext_10k.line_count as u64);
+    printf("richtext 10KB ops: %lu count\n" as *byte, richtext_10k.op_count as u64);
+    printf("richtext 50KB set: %lu us\n" as *byte, richtext_50k.set_plain_us);
+    printf("richtext 50KB layout: %lu us\n" as *byte, richtext_50k.layout_us);
+    printf("richtext 50KB snapshot: %lu us\n" as *byte, richtext_50k.snapshot_us);
+    printf("richtext 50KB lines: %lu count\n" as *byte, richtext_50k.line_count as u64);
+    printf("richtext 50KB ops: %lu count\n" as *byte, richtext_50k.op_count as u64);
+    printf("richtext 200KB set: %lu us\n" as *byte, richtext_200k.set_plain_us);
+    printf("richtext 200KB layout: %lu us\n" as *byte, richtext_200k.layout_us);
+    printf("richtext 200KB snapshot: %lu us\n" as *byte, richtext_200k.snapshot_us);
+    printf("richtext 200KB lines: %lu count\n" as *byte, richtext_200k.line_count as u64);
+    printf("richtext 200KB ops: %lu count\n" as *byte, richtext_200k.op_count as u64);
+    return 0;
+}

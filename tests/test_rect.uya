@@ -1,0 +1,194 @@
+use gui.core.point.Point;
+use gui.core.rect.RECT_ZERO;
+use gui.core.rect.Rect;
+use std.testing.assert_eq_bool;
+use std.testing.assert_eq_i32;
+use std.testing.expect;
+
+export const TEST_RECT_MODULE: i32 = 1;
+
+struct RectContainsCase {
+    rect: Rect,
+    point: Point,
+    expected: bool,
+}
+
+struct RectPairCase {
+    a: Rect,
+    b: Rect,
+    expected: Rect,
+}
+
+struct RectOffsetCase {
+    rect: Rect,
+    dx: i16,
+    dy: i16,
+    expected: Rect,
+}
+
+fn assert_rect_eq(actual: Rect, expected: Rect) !void {
+    try expect(actual == expected);
+}
+
+test "rect contains and empty checks" {
+    const rect: Rect = Rect{ x: 10, y: 20, w: 50, h: 40 };
+    try assert_eq_bool(rect.is_empty(), false);
+    try assert_eq_bool(RECT_ZERO.is_empty(), true);
+    try assert_eq_bool(rect.contains(Point{ x: 10, y: 20 }), true);
+    try assert_eq_bool(rect.contains(Point{ x: 59, y: 59 }), true);
+    try assert_eq_bool(rect.contains(Point{ x: 60, y: 20 }), false);
+    try assert_eq_bool(rect.contains(Point{ x: 9, y: 20 }), false);
+}
+
+test "rect intersection cases" {
+    const a: Rect = Rect{ x: 0, y: 0, w: 20, h: 20 };
+    const b: Rect = Rect{ x: 10, y: 10, w: 20, h: 20 };
+    const c: Rect = Rect{ x: 30, y: 30, w: 5, h: 5 };
+    const d: Rect = Rect{ x: 5, y: 5, w: 4, h: 4 };
+
+    try expect(a.intersect(b) == Rect{ x: 10, y: 10, w: 10, h: 10 });
+    try expect(a.intersect(c) == RECT_ZERO);
+    try expect(a.intersect(d) == d);
+    try expect(d.intersect(a) == d);
+}
+
+test "rect union cases" {
+    const a: Rect = Rect{ x: 0, y: 0, w: 20, h: 20 };
+    const b: Rect = Rect{ x: 10, y: 10, w: 20, h: 20 };
+    const c: Rect = Rect{ x: -5, y: -3, w: 2, h: 2 };
+
+    try expect(a.union_rect(b) == Rect{ x: 0, y: 0, w: 30, h: 30 });
+    try expect(a.union_rect(RECT_ZERO) == a);
+    try expect(RECT_ZERO.union_rect(b) == b);
+    try expect(a.union_rect(c) == Rect{ x: -5, y: -3, w: 25, h: 23 });
+}
+
+test "rect inflate and offset" {
+    const r: Rect = Rect{ x: 10, y: 10, w: 20, h: 20 };
+
+    try expect(r.inflate(5, 3) == Rect{ x: 5, y: 7, w: 30, h: 26 });
+    try expect(r.inflate(-5, -5) == Rect{ x: 15, y: 15, w: 10, h: 10 });
+    try expect(r.inflate(-20, -20) == RECT_ZERO);
+    try expect(r.offset(4, -2) == Rect{ x: 14, y: 8, w: 20, h: 20 });
+}
+
+test "rect size view" {
+    const r: Rect = Rect{ x: 1, y: 2, w: 3, h: 4 };
+    try assert_eq_i32(r.size().w as i32, 3);
+    try assert_eq_i32(r.size().h as i32, 4);
+}
+
+test "rect contains matrix covers boundary and empty cases" {
+    var cases: [RectContainsCase: 18] = [
+        RectContainsCase{ rect: Rect{ x: 0, y: 0, w: 1, h: 1 }, point: Point{ x: 0, y: 0 }, expected: true },
+        RectContainsCase{ rect: Rect{ x: 0, y: 0, w: 1, h: 1 }, point: Point{ x: 1, y: 0 }, expected: false },
+        RectContainsCase{ rect: Rect{ x: 0, y: 0, w: 1, h: 1 }, point: Point{ x: 0, y: 1 }, expected: false },
+        RectContainsCase{ rect: Rect{ x: -4, y: -4, w: 8, h: 8 }, point: Point{ x: -4, y: -4 }, expected: true },
+        RectContainsCase{ rect: Rect{ x: -4, y: -4, w: 8, h: 8 }, point: Point{ x: 3, y: 3 }, expected: true },
+        RectContainsCase{ rect: Rect{ x: -4, y: -4, w: 8, h: 8 }, point: Point{ x: 4, y: 3 }, expected: false },
+        RectContainsCase{ rect: Rect{ x: -4, y: -4, w: 8, h: 8 }, point: Point{ x: 3, y: 4 }, expected: false },
+        RectContainsCase{ rect: Rect{ x: 12, y: 8, w: 9, h: 5 }, point: Point{ x: 12, y: 8 }, expected: true },
+        RectContainsCase{ rect: Rect{ x: 12, y: 8, w: 9, h: 5 }, point: Point{ x: 20, y: 12 }, expected: true },
+        RectContainsCase{ rect: Rect{ x: 12, y: 8, w: 9, h: 5 }, point: Point{ x: 21, y: 12 }, expected: false },
+        RectContainsCase{ rect: Rect{ x: 12, y: 8, w: 9, h: 5 }, point: Point{ x: 20, y: 13 }, expected: false },
+        RectContainsCase{ rect: Rect{ x: 7, y: 9, w: 0, h: 4 }, point: Point{ x: 7, y: 9 }, expected: false },
+        RectContainsCase{ rect: Rect{ x: 7, y: 9, w: 4, h: 0 }, point: Point{ x: 8, y: 9 }, expected: false },
+        RectContainsCase{ rect: RECT_ZERO, point: Point{ x: 0, y: 0 }, expected: false },
+        RectContainsCase{ rect: Rect{ x: 30, y: 30, w: 4, h: 4 }, point: Point{ x: 29, y: 30 }, expected: false },
+        RectContainsCase{ rect: Rect{ x: 30, y: 30, w: 4, h: 4 }, point: Point{ x: 30, y: 29 }, expected: false },
+        RectContainsCase{ rect: Rect{ x: 30, y: 30, w: 4, h: 4 }, point: Point{ x: 33, y: 33 }, expected: true },
+        RectContainsCase{ rect: Rect{ x: 30, y: 30, w: 4, h: 4 }, point: Point{ x: 34, y: 34 }, expected: false },
+    ];
+
+    var i: i32 = 0;
+    while i < 18 {
+        try assert_eq_bool(cases[i].rect.contains(cases[i].point), cases[i].expected);
+        i = i + 1;
+    }
+}
+
+test "rect intersect matrix covers overlap edge and enclosure cases" {
+    var cases: [RectPairCase: 12] = [
+        RectPairCase{ a: Rect{ x: 0, y: 0, w: 10, h: 10 }, b: Rect{ x: 5, y: 5, w: 10, h: 10 }, expected: Rect{ x: 5, y: 5, w: 5, h: 5 } },
+        RectPairCase{ a: Rect{ x: 0, y: 0, w: 10, h: 10 }, b: Rect{ x: 10, y: 0, w: 5, h: 5 }, expected: RECT_ZERO },
+        RectPairCase{ a: Rect{ x: 0, y: 0, w: 10, h: 10 }, b: Rect{ x: 0, y: 10, w: 5, h: 5 }, expected: RECT_ZERO },
+        RectPairCase{ a: Rect{ x: -8, y: -6, w: 6, h: 6 }, b: Rect{ x: -10, y: -10, w: 12, h: 12 }, expected: Rect{ x: -8, y: -6, w: 6, h: 6 } },
+        RectPairCase{ a: Rect{ x: -10, y: -10, w: 12, h: 12 }, b: Rect{ x: -8, y: -6, w: 6, h: 6 }, expected: Rect{ x: -8, y: -6, w: 6, h: 6 } },
+        RectPairCase{ a: Rect{ x: 4, y: 4, w: 12, h: 12 }, b: Rect{ x: 6, y: 1, w: 4, h: 20 }, expected: Rect{ x: 6, y: 4, w: 4, h: 12 } },
+        RectPairCase{ a: Rect{ x: 4, y: 4, w: 12, h: 12 }, b: Rect{ x: 1, y: 6, w: 20, h: 4 }, expected: Rect{ x: 4, y: 6, w: 12, h: 4 } },
+        RectPairCase{ a: Rect{ x: 100, y: 40, w: 8, h: 8 }, b: Rect{ x: 96, y: 44, w: 6, h: 2 }, expected: Rect{ x: 100, y: 44, w: 2, h: 2 } },
+        RectPairCase{ a: Rect{ x: 100, y: 40, w: 8, h: 8 }, b: Rect{ x: 96, y: 60, w: 6, h: 2 }, expected: RECT_ZERO },
+        RectPairCase{ a: Rect{ x: 2, y: 2, w: 3, h: 3 }, b: RECT_ZERO, expected: RECT_ZERO },
+        RectPairCase{ a: RECT_ZERO, b: Rect{ x: 2, y: 2, w: 3, h: 3 }, expected: RECT_ZERO },
+        RectPairCase{ a: Rect{ x: -2, y: 3, w: 5, h: 5 }, b: Rect{ x: -4, y: 5, w: 10, h: 1 }, expected: Rect{ x: -2, y: 5, w: 5, h: 1 } },
+    ];
+
+    var i: i32 = 0;
+    while i < 12 {
+        try assert_rect_eq(cases[i].a.intersect(cases[i].b), cases[i].expected);
+        try assert_rect_eq(cases[i].b.intersect(cases[i].a), cases[i].expected);
+        i = i + 1;
+    }
+}
+
+test "rect union matrix covers empty negative and enclosure cases" {
+    var cases: [RectPairCase: 12] = [
+        RectPairCase{ a: Rect{ x: 0, y: 0, w: 10, h: 10 }, b: Rect{ x: 5, y: 5, w: 10, h: 10 }, expected: Rect{ x: 0, y: 0, w: 15, h: 15 } },
+        RectPairCase{ a: Rect{ x: 0, y: 0, w: 10, h: 10 }, b: Rect{ x: 10, y: 0, w: 5, h: 5 }, expected: Rect{ x: 0, y: 0, w: 15, h: 10 } },
+        RectPairCase{ a: Rect{ x: 0, y: 0, w: 10, h: 10 }, b: Rect{ x: -5, y: -5, w: 2, h: 2 }, expected: Rect{ x: -5, y: -5, w: 15, h: 15 } },
+        RectPairCase{ a: Rect{ x: -8, y: -8, w: 4, h: 4 }, b: Rect{ x: -7, y: -7, w: 1, h: 1 }, expected: Rect{ x: -8, y: -8, w: 4, h: 4 } },
+        RectPairCase{ a: Rect{ x: -7, y: -7, w: 1, h: 1 }, b: Rect{ x: -8, y: -8, w: 4, h: 4 }, expected: Rect{ x: -8, y: -8, w: 4, h: 4 } },
+        RectPairCase{ a: RECT_ZERO, b: Rect{ x: 2, y: 3, w: 4, h: 5 }, expected: Rect{ x: 2, y: 3, w: 4, h: 5 } },
+        RectPairCase{ a: Rect{ x: 2, y: 3, w: 4, h: 5 }, b: RECT_ZERO, expected: Rect{ x: 2, y: 3, w: 4, h: 5 } },
+        RectPairCase{ a: Rect{ x: 6, y: 8, w: 4, h: 4 }, b: Rect{ x: 1, y: 2, w: 2, h: 3 }, expected: Rect{ x: 1, y: 2, w: 9, h: 10 } },
+        RectPairCase{ a: Rect{ x: 1, y: 2, w: 2, h: 3 }, b: Rect{ x: 6, y: 8, w: 4, h: 4 }, expected: Rect{ x: 1, y: 2, w: 9, h: 10 } },
+        RectPairCase{ a: Rect{ x: 20, y: 5, w: 5, h: 15 }, b: Rect{ x: 18, y: 12, w: 20, h: 2 }, expected: Rect{ x: 18, y: 5, w: 20, h: 15 } },
+        RectPairCase{ a: Rect{ x: -20, y: 1, w: 3, h: 3 }, b: Rect{ x: 18, y: 12, w: 20, h: 2 }, expected: Rect{ x: -20, y: 1, w: 58, h: 13 } },
+        RectPairCase{ a: Rect{ x: 8, y: -4, w: 6, h: 10 }, b: Rect{ x: 10, y: -10, w: 2, h: 3 }, expected: Rect{ x: 8, y: -10, w: 6, h: 16 } },
+    ];
+
+    var i: i32 = 0;
+    while i < 12 {
+        try assert_rect_eq(cases[i].a.union_rect(cases[i].b), cases[i].expected);
+        try assert_rect_eq(cases[i].b.union_rect(cases[i].a), cases[i].expected);
+        i = i + 1;
+    }
+}
+
+test "rect transform matrix covers inflate shrink and offset cases" {
+    var inflate_cases: [RectPairCase: 8] = [
+        RectPairCase{ a: Rect{ x: 10, y: 10, w: 20, h: 20 }, b: Rect{ x: 0, y: 0, w: 0, h: 0 }, expected: Rect{ x: 8, y: 8, w: 24, h: 24 } },
+        RectPairCase{ a: Rect{ x: 10, y: 10, w: 20, h: 20 }, b: Rect{ x: 0, y: 0, w: 0, h: 0 }, expected: Rect{ x: 5, y: 7, w: 30, h: 26 } },
+        RectPairCase{ a: Rect{ x: -5, y: 8, w: 4, h: 4 }, b: Rect{ x: 0, y: 0, w: 0, h: 0 }, expected: Rect{ x: -6, y: 6, w: 6, h: 8 } },
+        RectPairCase{ a: Rect{ x: 6, y: 6, w: 10, h: 10 }, b: Rect{ x: 0, y: 0, w: 0, h: 0 }, expected: Rect{ x: 9, y: 9, w: 4, h: 4 } },
+        RectPairCase{ a: Rect{ x: 6, y: 6, w: 10, h: 10 }, b: Rect{ x: 0, y: 0, w: 0, h: 0 }, expected: RECT_ZERO },
+        RectPairCase{ a: Rect{ x: 2, y: 2, w: 6, h: 8 }, b: Rect{ x: 0, y: 0, w: 0, h: 0 }, expected: Rect{ x: -2, y: 1, w: 14, h: 10 } },
+        RectPairCase{ a: Rect{ x: -10, y: -10, w: 3, h: 9 }, b: Rect{ x: 0, y: 0, w: 0, h: 0 }, expected: Rect{ x: -9, y: -15, w: 1, h: 19 } },
+        RectPairCase{ a: RECT_ZERO, b: Rect{ x: 0, y: 0, w: 0, h: 0 }, expected: Rect{ x: -3, y: -3, w: 6, h: 6 } },
+    ];
+    var inflate_dx: [i16: 8] = [2, 5, 1, -3, -5, 4, -1, 3];
+    var inflate_dy: [i16: 8] = [2, 3, 2, -3, -5, 1, 5, 3];
+
+    var i: i32 = 0;
+    while i < 8 {
+        try assert_rect_eq(inflate_cases[i].a.inflate(inflate_dx[i], inflate_dy[i]), inflate_cases[i].expected);
+        i = i + 1;
+    }
+
+    var offset_cases: [RectOffsetCase: 8] = [
+        RectOffsetCase{ rect: Rect{ x: 0, y: 0, w: 10, h: 10 }, dx: 0, dy: 0, expected: Rect{ x: 0, y: 0, w: 10, h: 10 } },
+        RectOffsetCase{ rect: Rect{ x: 0, y: 0, w: 10, h: 10 }, dx: 5, dy: -3, expected: Rect{ x: 5, y: -3, w: 10, h: 10 } },
+        RectOffsetCase{ rect: Rect{ x: -5, y: 7, w: 4, h: 8 }, dx: -3, dy: 2, expected: Rect{ x: -8, y: 9, w: 4, h: 8 } },
+        RectOffsetCase{ rect: Rect{ x: 100, y: -20, w: 1, h: 1 }, dx: -100, dy: 20, expected: Rect{ x: 0, y: 0, w: 1, h: 1 } },
+        RectOffsetCase{ rect: Rect{ x: 3, y: 4, w: 0, h: 9 }, dx: 8, dy: 8, expected: Rect{ x: 11, y: 12, w: 0, h: 9 } },
+        RectOffsetCase{ rect: Rect{ x: 3, y: 4, w: 9, h: 0 }, dx: -8, dy: -8, expected: Rect{ x: -5, y: -4, w: 9, h: 0 } },
+        RectOffsetCase{ rect: RECT_ZERO, dx: 9, dy: 9, expected: Rect{ x: 9, y: 9, w: 0, h: 0 } },
+        RectOffsetCase{ rect: Rect{ x: -12, y: -12, w: 24, h: 24 }, dx: 6, dy: 6, expected: Rect{ x: -6, y: -6, w: 24, h: 24 } },
+    ];
+
+    i = 0;
+    while i < 8 {
+        try assert_rect_eq(offset_cases[i].rect.offset(offset_cases[i].dx, offset_cases[i].dy), offset_cases[i].expected);
+        i = i + 1;
+    }
+}

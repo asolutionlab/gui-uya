@@ -1,0 +1,136 @@
+use gui.core.event.Event;
+use gui.core.point.Point;
+use gui.platform.fb.indev_fb_common.FbHostEvent;
+use gui.platform.fb.indev_fb_common.fb_hover_point_default;
+use gui.platform.fb.indev_fb_common.fb_feed_host_event;
+use gui.platform.fb.indev_fb_common.fb_host_event_none;
+use gui.platform.indev.EncoderDriver;
+use gui.platform.indev.IInputDev;
+use gui.platform.indev.InputManager;
+use gui.platform.indev.KeyDriver;
+use gui.platform.indev.TouchDriver;
+use gui.platform.indev.encoder_driver_new;
+use gui.platform.indev.input_manager_new;
+use gui.platform.indev.key_driver_new;
+use gui.platform.indev.touch_driver_new;
+use gui.sim.runtime_core.IRuntimeInput;
+
+extern fn uya_gui_sim_fb_input_open(input_path: &const byte, tty_path: &const byte, width: i32, height: i32) &void;
+extern fn uya_gui_sim_fb_input_close(handle: &void) void;
+extern fn uya_gui_sim_fb_input_poll_event(handle: &void, out_evt: &FbHostEvent) i32;
+extern fn uya_gui_sim_fb_input_last_error() &byte;
+
+export struct FbInputSystem : IRuntimeInput {
+    manager: InputManager,
+    touch: TouchDriver,
+    key: KeyDriver,
+    encoder: EncoderDriver,
+    touch_dev: IInputDev,
+    key_dev: IInputDev,
+    encoder_dev: IInputDev,
+    host: &void,
+    hover_pending: bool,
+    hover_point: Point,
+
+    fn attach_default_devices(self: &Self) void {
+        var touch_iface: IInputDev = self.touch;
+        var key_iface: IInputDev = self.key;
+        var encoder_iface: IInputDev = self.encoder;
+        self.touch_dev = touch_iface;
+        self.key_dev = key_iface;
+        self.encoder_dev = encoder_iface;
+        self.manager = input_manager_new();
+        _ = self.manager.attach(&self.touch_dev);
+        _ = self.manager.attach(&self.key_dev);
+        _ = self.manager.attach(&self.encoder_dev);
+    }
+
+    fn init(self: &Self, input_path: &const byte, tty_path: &const byte, width: u16, height: u16) bool {
+        self.attach_default_devices();
+        self.hover_pending = false;
+        self.hover_point = fb_hover_point_default();
+        self.host = uya_gui_sim_fb_input_open(input_path, tty_path, width as i32, height as i32);
+        return self.host != null;
+    }
+
+    fn shutdown(self: &Self) void {
+        if self.host != null {
+            uya_gui_sim_fb_input_close(self.host);
+            self.host = null;
+        }
+    }
+
+    fn consume_host_event(self: &Self, raw: &FbHostEvent, timestamp: u32) void {
+        fb_feed_host_event(&self.touch, &self.key, &self.encoder, raw, timestamp, &self.hover_pending, &self.hover_point);
+    }
+
+    fn pump(self: &Self, timestamp: u32) i32 {
+        if self.host == null {
+            return 0;
+        }
+
+        var pumped: i32 = 0;
+        var raw: FbHostEvent = fb_host_event_none();
+        while uya_gui_sim_fb_input_poll_event(self.host, &raw) != 0 {
+            pumped = pumped + 1;
+            self.consume_host_event(&raw, timestamp);
+            raw = fb_host_event_none();
+        }
+        return pumped;
+    }
+
+    fn poll(self: &Self, out_evt: &Event) bool {
+        return self.manager.poll(out_evt);
+    }
+
+    fn poll_hover_coords(self: &Self, out_x: &i16, out_y: &i16) bool {
+        if !self.hover_pending || out_x == null || out_y == null {
+            return false;
+        }
+        out_x[0] = self.hover_point.x;
+        out_y[0] = self.hover_point.y;
+        self.hover_pending = false;
+        return true;
+    }
+
+    fn wait(self: &Self, timeout_ms: i32) bool {
+        _ = self;
+        _ = timeout_ms;
+        return false;
+    }
+
+    fn quit_requested(self: &Self) bool {
+        _ = self;
+        return false;
+    }
+
+    fn pointer_down_active(self: &Self) bool {
+        _ = self;
+        return false;
+    }
+}
+
+/// 创建 Framebuffer 输入系统实例。
+export fn fb_input_system_new() FbInputSystem {
+    return FbInputSystem{
+        manager: input_manager_new(),
+        touch: touch_driver_new(),
+        key: key_driver_new(),
+        encoder: encoder_driver_new(),
+        touch_dev: touch_driver_new(),
+        key_dev: key_driver_new(),
+        encoder_dev: encoder_driver_new(),
+        host: null,
+        hover_pending: false,
+        hover_point: fb_hover_point_default(),
+    };
+}
+
+/// 返回最近一次 Framebuffer 输入系统错误信息。
+export fn fb_input_last_error() &const byte {
+    const err: &byte = uya_gui_sim_fb_input_last_error();
+    if err == null {
+        return "unknown" as &const byte;
+    }
+    return err as &const byte;
+}

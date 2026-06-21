@@ -1,0 +1,173 @@
+use gui.anim.timeline.AnimManager;
+use gui.anim.timeline.anim_manager_new;
+use gui.anim.tween.AnimProp;
+use gui.anim.tween.Tween;
+use gui.anim.tween.anim_value_i32;
+use gui.core.color.Color;
+use gui.core.dirty_region.MAX_DIRTY_PRECISE;
+use gui.core.dirty_region.DirtyRegion;
+use gui.core.dirty_region.DirtyRegionView;
+use gui.core.dirty_region.dirty_region_new;
+use gui.core.event_dispatch.EventDispatcher;
+use gui.core.event_dispatch.event_dispatcher_new;
+use gui.core.obj.GuiObj;
+use gui.core.obj.gui_obj_default;
+use gui.core.obj.gui_obj_register;
+use gui.core.obj.gui_obj_reset_registry;
+use gui.core.obj_tree.ObjTree;
+use gui.core.obj_tree.obj_tree_new;
+use gui.core.point.Point;
+use gui.core.rect.Rect;
+use gui.platform.disp.DisplayCtx;
+use gui.platform.disp.FrameBuffer;
+use gui.platform.disp.PixelFormat;
+use gui.platform.disp.display_ctx_new;
+use gui.platform.disp.framebuffer_new;
+use gui.render.batch.DrawBatch;
+use gui.render.batch.draw_batch_new;
+use gui.render.ctx.RenderCtx;
+use gui.render.ctx.ctx_pixel;
+use gui.render.ctx.render_ctx_new;
+use gui.render.gpu.IGpuCtx;
+use gui.render.gpu.gpu_execute_batch;
+use gui.render.gpu_software.SoftwareGpuCtx;
+use gui.render.gpu_software.software_gpu_new;
+use gui.render.img.ImageData;
+use gui.render.img.image_data_new;
+use gui.render.zerocopy.ZeroCopyCtx;
+use gui.render.zerocopy.zerocopy_ctx_new;
+use gui.res.cache.ImageCache;
+use gui.res.cache.image_cache_new;
+use std.testing.assert_eq_bool;
+use std.testing.assert_eq_i32;
+use std.testing.expect;
+
+export const TEST_PHASE5_RUNTIME_MODULE: i32 = 1;
+
+test "dirty region compacts and tracks coverage without forcing full refresh" {
+    var dirty: DirtyRegion = dirty_region_new();
+    dirty.add(Rect{ x: 0, y: 0, w: 10, h: 10 });
+    dirty.add(Rect{ x: 2, y: 2, w: 2, h: 2 });
+
+    var i: i32 = 0;
+    while i < MAX_DIRTY_PRECISE + 4 {
+        dirty.add(Rect{ x: i as i16, y: 20, w: 1, h: 1 });
+        i = i + 1;
+    }
+    dirty.merge();
+
+    const view: DirtyRegionView = dirty.get_regions();
+    try assert_eq_i32(view.len, 2);
+    try assert_eq_bool(dirty.force_full, false);
+    try expect(dirty.precise_count <= MAX_DIRTY_PRECISE);
+    try assert_eq_i32(dirty.coverage_percent(Rect{ x: 0, y: 0, w: 20, h: 20 }) as i32, 30);
+    try assert_eq_bool(dirty.merge_ops > 0u32, true);
+}
+
+test "gpu batch execution accelerates rects and falls back for lines" {
+    var bytes: [byte: 256] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 8, 8, 32, PixelFormat.ARGB8888));
+    var batch: DrawBatch = draw_batch_new();
+    const red_a: Color = Color{ r: 255, g: 0, b: 0, a: 255 };
+    const red_b: Color = Color{ r: 255, g: 0, b: 0, a: 255 };
+    const red_expected: Color = Color{ r: 255, g: 0, b: 0, a: 255 };
+    const green_a: Color = Color{ r: 0, g: 255, b: 0, a: 255 };
+    const green_b: Color = Color{ r: 0, g: 255, b: 0, a: 255 };
+    const green_expected: Color = Color{ r: 0, g: 255, b: 0, a: 255 };
+
+    batch.push_fill_rect(Rect{ x: 0, y: 0, w: 2, h: 2 }, red_a);
+    batch.push_fill_rect(Rect{ x: 2, y: 0, w: 2, h: 2 }, red_b);
+    batch.push_line(0, 4, 3, 4, green_a, 1);
+    batch.push_line(4, 4, 7, 4, green_b, 1);
+    batch.optimize();
+
+    var gpu: SoftwareGpuCtx = software_gpu_new(&ctx);
+    var gpu_iface: IGpuCtx = gpu;
+    gpu_execute_batch(&gpu_iface, &batch);
+
+    try assert_eq_i32(batch.count as i32, 2);
+    try assert_eq_i32(gpu.sync_count as i32, 1);
+    try assert_eq_bool(ctx_pixel(&ctx, 3, 0) == red_expected, true);
+    try assert_eq_bool(ctx_pixel(&ctx, 7, 4) == green_expected, true);
+}
+
+test "zerocopy presents merged dirty regions" {
+    var front_bytes: [byte: 256] = [];
+    var back_bytes: [byte: 256] = [];
+    const front: FrameBuffer = framebuffer_new(&front_bytes[0], 8, 8, 32, PixelFormat.ARGB8888);
+    const back: FrameBuffer = framebuffer_new(&back_bytes[0], 8, 8, 32, PixelFormat.ARGB8888);
+    var display: DisplayCtx = display_ctx_new(front, back);
+    var zc: ZeroCopyCtx = zerocopy_ctx_new(&display);
+    var dirty: DirtyRegion = dirty_region_new();
+
+    dirty.add(Rect{ x: 0, y: 0, w: 2, h: 2 });
+    dirty.add(Rect{ x: 2, y: 0, w: 2, h: 2 });
+    dirty.merge();
+    zc.present_dirty(&dirty, Rect{ x: 0, y: 0, w: 8, h: 8 });
+
+    try assert_eq_i32(display.frame_id as i32, 1);
+    try assert_eq_i32(zc.completed as i32, 1);
+    try assert_eq_i32(zc.completed_regions as i32, 1);
+    try assert_eq_i32(zc.completed_bytes as i32, 8);
+}
+
+test "image cache exposes pressure hit rate and eviction stats" {
+    var pixels_a: [byte: 12] = [255, 0, 0,   0, 255, 0,   0, 0, 255,   255, 255, 255];
+    var pixels_b: [byte: 12] = [0, 0, 0,   128, 128, 128,   255, 255, 255,   64, 64, 64];
+    var pixels_c: [byte: 12] = [10, 20, 30,   40, 50, 60,   70, 80, 90,   100, 110, 120];
+    var cache: ImageCache = image_cache_new(2, 24u32);
+    const img_a: ImageData = image_data_new(&pixels_a[0], 2, 2, 6, PixelFormat.RGB888);
+    const img_b: ImageData = image_data_new(&pixels_b[0], 2, 2, 6, PixelFormat.RGB888);
+    const img_c: ImageData = image_data_new(&pixels_c[0], 2, 2, 6, PixelFormat.RGB888);
+    var out: ImageData = image_data_new(&pixels_a[0], 2, 2, 6, PixelFormat.RGB888);
+
+    cache.put(1u32, img_a);
+    cache.put(2u32, img_b);
+    try assert_eq_i32(cache.pressure_percent() as i32, 100);
+    try assert_eq_i32(cache.budget_remaining() as i32, 0);
+
+    cache.reset_stats();
+    try assert_eq_bool(cache.get(1u32, &out), true);
+    try assert_eq_bool(cache.get(99u32, &out), false);
+    try assert_eq_i32(cache.hit_rate_percent() as i32, 50);
+
+    cache.put(3u32, img_c);
+    try assert_eq_bool(cache.contains(3u32), true);
+    try assert_eq_bool(cache.eviction_count >= 1u32, true);
+}
+
+test "animation updates stay stable while dispatching interleaved input" {
+    gui_obj_reset_registry();
+
+    var root: GuiObj = gui_obj_default();
+    var child: GuiObj = gui_obj_default();
+    root.set_area(Rect{ x: 0, y: 0, w: 120, h: 40 });
+    child.set_area(Rect{ x: 0, y: 0, w: 20, h: 20 });
+    child.flags.clickable = true;
+
+    _ = gui_obj_register(0, &root);
+    _ = gui_obj_register(1, &child);
+
+    var tree: ObjTree = obj_tree_new();
+    tree.set_root(0, &root);
+    tree.attach(0, 1);
+
+    var manager: AnimManager = anim_manager_new();
+    var tween: Tween = Tween.new(1, AnimProp.X, anim_value_i32(40), 96u32);
+    tween.with_from_i32(0);
+    _ = try manager.start_tween(&tween);
+
+    var dispatcher: EventDispatcher = event_dispatcher_new();
+    var dispatched: i32 = 0;
+    var step: i32 = 0;
+    while step < 6 {
+        manager.update_all(16u32);
+        const tap_point: Point = Point{ x: child.x + 1, y: 1 };
+        dispatched = dispatched + dispatcher.process_touch(&tree, tap_point, true, (step * 2) as u32);
+        dispatched = dispatched + dispatcher.process_touch(&tree, tap_point, false, (step * 2 + 1) as u32);
+        step = step + 1;
+    }
+
+    try assert_eq_bool(dispatched > 0, true);
+    try assert_eq_bool(child.x > 0, true);
+}

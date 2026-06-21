@@ -9,9 +9,9 @@
 
 示例可参考：
 
-- [gauge.uya](/home/winger/uya/gui-uya/gui/examples/custom/gauge.uya:1)
-- [keyboard.uya](/home/winger/uya/gui-uya/gui/examples/custom/keyboard.uya:1)
-- [canvas.uya](/home/winger/uya/gui-uya/gui/widget/canvas.uya:1)
+- [gauge.uya](/home/winger/uya/gui-uya/examples/custom/gauge.uya:1)
+- [keyboard.uya](/home/winger/uya/gui-uya/examples/custom/keyboard.uya:1)
+- [canvas.uya](/home/winger/uya/gui-uya/src/gui/widget/canvas.uya:1)
 
 ## 路径一：组合现有 Widget
 

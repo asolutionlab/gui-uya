@@ -1,0 +1,8 @@
+use std.runtime.entry;
+
+use gui.sim.runner.run_simulator;
+
+/// 模块入口，启动 Linux 模拟器程序。
+export fn main() i32 {
+    return run_simulator();
+}

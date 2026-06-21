@@ -60,7 +60,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--generator", required=True)
     parser.add_argument("--font", required=True)
-    parser.add_argument("--examples-root", default="gui/examples")
+    parser.add_argument("--examples-root", default="examples")
     parser.add_argument("--out-dir", required=True)
     args = parser.parse_args()
 

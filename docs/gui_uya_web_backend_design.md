@@ -9,13 +9,13 @@
 ## 0. 当前落地情况
 
 - 已落地文件：
-  - `gui/platform/web/disp_web.uya`
-  - `gui/platform/web/indev_web.uya`
-  - `gui/platform/web/web_common.uya`
-  - `gui/platform/web/web_host.c`
-  - `gui/sim/runtime_core.uya`
-  - `gui/sim/runner_web.uya`
-  - `gui/sim_web_main.uya`
+  - `src/gui/platform/web/disp_web.uya`
+  - `src/gui/platform/web/indev_web.uya`
+  - `src/gui/platform/web/web_common.uya`
+  - `src/gui/platform/web/web_host.c`
+  - `src/gui/sim/runtime_core.uya`
+  - `src/gui/sim/runner_web.uya`
+  - `apps/sim_web_main.uya`
   - `tools/build_gui_web.sh`
   - `tools/serve_gui_web.sh`
 - 已落地策略：
@@ -35,7 +35,7 @@
 ## 1. 目标
 
 - 在浏览器中运行当前 `sim`/demo 逻辑，不单独维护一套网页版 GUI 逻辑。
-- Web 构建使用独立入口 `gui/sim_web_main.uya`，但继续复用 `SimApp`、`render/*`、`widget/*`、`core/*`。
+- Web 构建使用独立入口 `apps/sim_web_main.uya`，但继续复用 `SimApp`、`render/*`、`widget/*`、`core/*`。
 - 沿用当前 `platform/* + sim/* + render/*` 的职责边界，新增 `platform/web/disp_web.uya` 与 `platform/web/indev_web.uya`。
 - 复用已有 `FrameBuffer`、`DirtyRegion`、`RenderCtx`、`SimApp`、`retained render`、截图/录制/profiler 逻辑。
 - 先落地稳定的软件显示链路，再考虑 WebGL/WebGPU 加速。
@@ -52,20 +52,20 @@
 
 当前仓库已经具备的条件：
 
-- `gui/platform/disp.uya`
+- `src/gui/platform/disp.uya`
   - 已有 `FrameBuffer`、`DisplayCtx`、像素格式、清屏/读写像素、双缓冲复制等基线。
-- `gui/render/*`
+- `src/gui/render/*`
   - 渲染核心已经面向 framebuffer，而不是直接面向 SDL 窗口。
-- `gui/sim/app.uya`
+- `src/gui/sim/app.uya`
   - demo 选择、交互、截图、profiler、录制与 retained 渲染入口已经具备。
-- `gui/sim/config.uya`
+- `src/gui/sim/config.uya`
   - 已有 `backend/gpu/cpu-render/demo/size/scale/fps/screenshot` 等运行参数。
-- `gui/sim/runner.uya`
+- `src/gui/sim/runner.uya`
   - 已有 `SDL2` 与 `Framebuffer` 两套 host runner。
   - 目前主循环仍是宿主内同步 `while true` 模式。
-- `gui/platform/sdl2/*`
+- `src/gui/platform/sdl2/*`
   - 现有 `disp_sdl.uya + indev_sdl.uya + sdl_host.c` 提供了最直接的仿照对象。
-- `gui/platform/fb/*`
+- `src/gui/platform/fb/*`
   - 现有 `disp_fb.uya + indev_fb.uya + fb_host.c` 提供了“第二套后端如何复用 sim runtime”的参考。
 
 结论：
@@ -98,14 +98,14 @@
 
 ```text
 desktop:
-  gui/sim_main.uya
+  apps/sim_main.uya
     -> sim.runner.run_simulator()
       -> sim.config
       -> sim.runtime_core
       -> sdl2 / fb runner
 
 web:
-  gui/sim_web_main.uya
+  apps/sim_web_main.uya
     -> sim.runner_web.run_simulator_web_bootstrap()
       -> sim.config
       -> sim.runtime_core
@@ -160,21 +160,21 @@ docs/
 
 各文件职责：
 
-- `gui/platform/web/disp_web.uya`
+- `src/gui/platform/web/disp_web.uya`
   - 仿照 `disp_sdl.uya`，维护 front/back framebuffer、present/full/dirty、标题、全屏、resize 状态。
-- `gui/platform/web/indev_web.uya`
+- `src/gui/platform/web/indev_web.uya`
   - 仿照 `indev_sdl.uya`，从 host 原始事件队列读取并转发给 `TouchDriver` / `KeyDriver` / `EncoderDriver`。
-- `gui/platform/web/web_common.uya`
+- `src/gui/platform/web/web_common.uya`
   - 定义 `WebHostEvent`、事件 kind 常量、hover/drag 辅助逻辑。
-- `gui/platform/web/web_host.c`
+- `src/gui/platform/web/web_host.c`
   - 浏览器宿主 glue。
   - 负责 Emscripten / canvas / DOM 事件 / `requestAnimationFrame` / 下载 / 持久化桥接。
-- `gui/sim_web_main.uya`
+- `apps/sim_web_main.uya`
   - Web 专用程序入口。
   - 只负责调用 `run_simulator_web_bootstrap()`，不引入 SDL2 / FB 依赖。
-- `gui/sim/runtime_core.uya`
+- `src/gui/sim/runtime_core.uya`
   - 把当前 `runner.uya` 里与 backend 无关的 shared frame flow 抽出来。
-- `gui/sim/runner_web.uya`
+- `src/gui/sim/runner_web.uya`
   - Web backend 初始化、生命周期管理、导出给 `web_host.c` 的 frame callback。
   - 必须只依赖 `runtime_core.uya` 与 `platform/web/*`，不得 `use platform/sdl2/*` 或 `platform/fb/*`。
 - `tools/build_gui_web.sh`
@@ -312,16 +312,16 @@ Web 方案必须显式解决“桌面后端被一并编进 Wasm”的问题。
 
 约束如下：
 
-- `gui/sim_main.uya`
+- `apps/sim_main.uya`
   - 保持桌面入口，只服务 `SDL2` / `FB` 构建。
-- `gui/sim_web_main.uya`
+- `apps/sim_web_main.uya`
   - 作为 Web 唯一入口。
-- `gui/sim/runner.uya`
+- `src/gui/sim/runner.uya`
   - 允许继续 `use platform/sdl2/*`、`platform/fb/*`。
-- `gui/sim/runner_web.uya`
+- `src/gui/sim/runner_web.uya`
   - 不允许依赖 `runner.uya`。
   - 不允许依赖 `platform/sdl2/*`、`platform/fb/*`。
-- `gui/sim/runtime_core.uya`
+- `src/gui/sim/runtime_core.uya`
   - 必须保持 backend-agnostic。
   - 不允许依赖 `platform/web/*`、`platform/sdl2/*`、`platform/fb/*`。
 
@@ -621,7 +621,7 @@ Web 生命周期的 ownership 需要固定为：
 
 推荐启动顺序：
 
-1. `gui/sim_web_main.uya.main()`
+1. `apps/sim_web_main.uya.main()`
 2. `run_simulator_web_bootstrap()`
 3. 初始化 `SimConfig` / `SimApp` / `WebDisplay` / `WebInputSystem` / `SimRuntimeCore`
 4. 调用 host 提供的 `uya_gui_web_host_start_loop()`
@@ -634,10 +634,10 @@ Web 生命周期的 ownership 需要固定为：
 提案：
 
 ```uya
-// gui/sim_web_main.uya
+// apps/sim_web_main.uya
 export fn main() i32
 
-// gui/sim/runner_web.uya
+// src/gui/sim/runner_web.uya
 export fn run_simulator_web_bootstrap() i32
 export fn sim_web_frame(now_ms: f64) i32
 export fn sim_web_shutdown() void
@@ -778,7 +778,7 @@ host 层再决定是否：
 推荐链路：
 
 ```text
-uya build gui/sim_web_main.uya --c99 --no-split-c
+uya build apps/sim_web_main.uya --c99 --no-split-c
   -> generated C
   -> emcc
   -> gui_uya_web.js + gui_uya_web.wasm + html shell
@@ -795,14 +795,14 @@ tools/build_gui_web.sh
 职责：
 
 - 调用 `uya build`
-- 入口必须固定为 `APP=gui/sim_web_main.uya`
-- 编译 `gui/platform/web/web_host.c`
+- 入口必须固定为 `APP=apps/sim_web_main.uya`
+- 编译 `src/gui/platform/web/web_host.c`
 - 若存在 `imports.sh` sidecar，必须继续编译并链接，但编译器从 `cc` 切换为 `emcc`
 - 链接 wasm/js/html
 - 打包资源到 MEMFS
 - 绝不编译/链接：
-  - `gui/platform/sdl2/sdl_host.c`
-  - `gui/platform/fb/fb_host.c`
+  - `src/gui/platform/sdl2/sdl_host.c`
+  - `src/gui/platform/fb/fb_host.c`
 - 产出到 `build/web/`
 
 建议产物：
@@ -854,11 +854,11 @@ build/web/
 
 建议新增：
 
-- `gui/tests/test_web_input_mapping.uya`
+- `tests/test_web_input_mapping.uya`
   - 验证 CSS rect 到 framebuffer 坐标映射
-- `gui/tests/test_web_present_plan.uya`
+- `tests/test_web_present_plan.uya`
   - 验证 dirty/full 退化策略
-- `gui/tests/test_web_config.uya`
+- `tests/test_web_config.uya`
   - 验证 `backend=web`、`root=/app`、web 参数解析
 
 ### 15.2 浏览器 smoke
@@ -893,7 +893,7 @@ build/web/
 ### 16.2 关键决策
 
 - 必须先抽 `sim/runtime_core.uya`，否则 Web 会成为第三套主循环分叉。
-- 必须使用独立 Web 入口 `gui/sim_web_main.uya`，否则 Web 构建很容易把桌面后端 extern 一并拖入。
+- 必须使用独立 Web 入口 `apps/sim_web_main.uya`，否则 Web 构建很容易把桌面后端 extern 一并拖入。
 - 首版显示只做 `Canvas2D` 软件路径。
 - 资源默认打包进 MEMFS，`--persist-data` 再单独启用 `IDBFS`。
 - 必须替换当前 `Makefile` 资源根探针，改用 backend-neutral sentinel 文件。

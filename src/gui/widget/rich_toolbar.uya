@@ -1,0 +1,388 @@
+use gui.core.color.Color;
+use gui.core.color.TRANSPARENT;
+use gui.core.color.WHITE;
+use gui.core.event.Event;
+use gui.core.event.EventType;
+use gui.core.obj.GuiObj;
+use gui.core.obj.IGuiInputCallback;
+use gui.core.obj.IGuiRenderCallback;
+use gui.core.point.Point;
+use gui.core.rect.Rect;
+use gui.render.ctx.RenderCtx;
+use gui.render.font.Font;
+use gui.render.font.draw_text;
+use gui.style.StyleProp;
+use gui.widget.base.Widget;
+use gui.widget.base.WidgetState;
+use gui.widget.base.WIDGET_TYPE_RICH_TOOLBAR;
+use gui.widget.base.widget_bind_callbacks;
+use gui.widget.base.widget_draw_surface;
+use gui.widget.base.widget_font;
+use gui.widget.base.widget_measure_text;
+use gui.widget.base.widget_new;
+use gui.widget.base.widget_text_len;
+use gui.widget.rich_text_input.RichCommand;
+use gui.widget.rich_text_input.RichCommandKind;
+use gui.widget.rich_text_input.RichTextInput;
+use gui.richtext.document.RICH_MARK_BOLD;
+use gui.richtext.document.RICH_MARK_INLINE_CODE;
+use gui.richtext.document.RICH_MARK_ITALIC;
+use gui.richtext.document.RICH_MARK_STRIKE;
+use gui.richtext.document.RICH_MARK_UNDERLINE;
+use gui.richtext.document.RichBlockType;
+
+export const RICH_TOOLBAR_MAX_FORMATS: i32 = 16;
+
+export enum RichToolbarFormatKind {
+    Bold,
+    Italic,
+    Underline,
+    Strike,
+    InlineCode,
+    Heading1,
+    Quote,
+    BulletList,
+    OrderedList,
+    CodeBlock,
+    Mention,
+    Image,
+    Embed,
+    Custom,
+}
+
+export struct RichToolbarFormatSpec {
+    kind: RichToolbarFormatKind,
+    label: &const byte,
+    label_len: usize,
+    command: RichCommandKind,
+    mark_bit: u16,
+    block_type: RichBlockType,
+    enabled: bool,
+}
+
+export struct RichFormatRegistry {
+    formats: [RichToolbarFormatSpec: 16],
+    count: u8,
+    mention_reserved: bool,
+    image_reserved: bool,
+    embed_reserved: bool,
+}
+
+fn rich_toolbar_format_spec(
+    kind: RichToolbarFormatKind,
+    label: &const byte,
+    command: RichCommandKind,
+    mark_bit: u16,
+    block_type: RichBlockType,
+) RichToolbarFormatSpec {
+    return RichToolbarFormatSpec{
+        kind: kind,
+        label: label,
+        label_len: widget_text_len(label),
+        command: command,
+        mark_bit: mark_bit,
+        block_type: block_type,
+        enabled: true,
+    };
+}
+
+export fn rich_format_registry_new() RichFormatRegistry {
+    var registry: RichFormatRegistry = RichFormatRegistry{
+        formats: [],
+        count: 0u8,
+        mention_reserved: true,
+        image_reserved: true,
+        embed_reserved: true,
+    };
+    _ = registry.register(rich_toolbar_format_spec(RichToolbarFormatKind.Bold, "粗体" as &const byte, RichCommandKind.ToggleBold, RICH_MARK_BOLD, RichBlockType.Paragraph));
+    _ = registry.register(rich_toolbar_format_spec(RichToolbarFormatKind.Italic, "斜体" as &const byte, RichCommandKind.ToggleItalic, RICH_MARK_ITALIC, RichBlockType.Paragraph));
+    _ = registry.register(rich_toolbar_format_spec(RichToolbarFormatKind.Underline, "下划线" as &const byte, RichCommandKind.ToggleUnderline, RICH_MARK_UNDERLINE, RichBlockType.Paragraph));
+    _ = registry.register(rich_toolbar_format_spec(RichToolbarFormatKind.Strike, "删除线" as &const byte, RichCommandKind.ToggleStrike, RICH_MARK_STRIKE, RichBlockType.Paragraph));
+    _ = registry.register(rich_toolbar_format_spec(RichToolbarFormatKind.InlineCode, "代码" as &const byte, RichCommandKind.ToggleInlineCode, RICH_MARK_INLINE_CODE, RichBlockType.Paragraph));
+    _ = registry.register(rich_toolbar_format_spec(RichToolbarFormatKind.Heading1, "标题" as &const byte, RichCommandKind.SetHeading1, 0u16, RichBlockType.Heading1));
+    _ = registry.register(rich_toolbar_format_spec(RichToolbarFormatKind.Quote, "引用" as &const byte, RichCommandKind.ToggleQuote, 0u16, RichBlockType.Quote));
+    _ = registry.register(rich_toolbar_format_spec(RichToolbarFormatKind.BulletList, "列表" as &const byte, RichCommandKind.ToggleBulletList, 0u16, RichBlockType.BulletItem));
+    return registry;
+}
+
+RichFormatRegistry {
+    fn register(self: &Self, spec: RichToolbarFormatSpec) bool {
+        if self.count as i32 >= RICH_TOOLBAR_MAX_FORMATS {
+            return false;
+        }
+        self.formats[self.count as usize] = spec;
+        self.count = self.count + 1u8;
+        return true;
+    }
+
+    fn reserve_mention(self: &Self, enabled: bool) &RichFormatRegistry {
+        self.mention_reserved = enabled;
+        return self;
+    }
+
+    fn reserve_image(self: &Self, enabled: bool) &RichFormatRegistry {
+        self.image_reserved = enabled;
+        return self;
+    }
+
+    fn reserve_embed(self: &Self, enabled: bool) &RichFormatRegistry {
+        self.embed_reserved = enabled;
+        return self;
+    }
+}
+
+struct RichToolbarRenderAdapter : IGuiRenderCallback {}
+struct RichToolbarInputAdapter : IGuiInputCallback {}
+
+var RICH_TOOLBAR_RENDER_ADAPTER: IGuiRenderCallback = RichToolbarRenderAdapter{};
+var RICH_TOOLBAR_INPUT_ADAPTER: IGuiInputCallback = RichToolbarInputAdapter{};
+
+export struct RichToolbar {
+    widget: Widget,
+    editor: &RichTextInput,
+    registry: RichFormatRegistry,
+    item_w: u16,
+    item_gap: u16,
+    pressed_index: i8,
+    last_trigger_index: i8,
+    last_trigger_timestamp: u32,
+}
+
+RichToolbarRenderAdapter {
+    fn invoke(self: &Self, obj: &GuiObj, ctx: &RenderCtx, user_data: &void) void {
+        _ = self;
+        _ = obj;
+        const toolbar: &RichToolbar = user_data as &RichToolbar;
+        if toolbar != null {
+            toolbar.render(ctx);
+        }
+    }
+}
+
+RichToolbarInputAdapter {
+    fn invoke(self: &Self, obj: &GuiObj, evt: &Event, user_data: &void) bool {
+        _ = self;
+        _ = obj;
+        const toolbar: &RichToolbar = user_data as &RichToolbar;
+        if toolbar == null {
+            return false;
+        }
+        return toolbar.handle_event(evt);
+    }
+}
+
+fn rich_toolbar_command_for_spec(spec: RichToolbarFormatSpec) RichCommand {
+    return RichCommand{
+        kind: spec.command,
+        text_ptr: null,
+        text_len: 0usize,
+    };
+}
+
+fn rich_toolbar_block_active(spec: RichToolbarFormatSpec, block_type: RichBlockType) bool {
+    if spec.kind == RichToolbarFormatKind.Heading1 {
+        return block_type == RichBlockType.Heading1
+            || block_type == RichBlockType.Heading2
+            || block_type == RichBlockType.Heading3;
+    }
+    if spec.kind == RichToolbarFormatKind.BulletList || spec.kind == RichToolbarFormatKind.OrderedList {
+        return block_type == RichBlockType.BulletItem || block_type == RichBlockType.OrderedItem;
+    }
+    return spec.block_type != RichBlockType.Paragraph && block_type == spec.block_type;
+}
+
+RichToolbar {
+    fn new(editor: &RichTextInput) RichToolbar {
+        // Toolbar clicks should not steal focus from the editor, otherwise the
+        // current selection highlight disappears even though the range still exists.
+        var widget: Widget = widget_new("RichToolbar", WIDGET_TYPE_RICH_TOOLBAR, true, false);
+        widget.size(420, 38);
+        widget.base.style.set_color(StyleProp.BgColor, Color{ r: 248, g: 250, b: 252, a: 255 });
+        widget.base.style.set_color(StyleProp.BgHoverColor, Color{ r: 241, g: 245, b: 249, a: 255 });
+        widget.base.style.set_color(StyleProp.BgPressColor, Color{ r: 219, g: 234, b: 254, a: 255 });
+        widget.base.style.set_color(StyleProp.BgFocusColor, Color{ r: 37, g: 99, b: 235, a: 255 });
+        widget.base.style.set_color(StyleProp.FgColor, Color{ r: 15, g: 23, b: 42, a: 255 });
+        widget.base.style.set_color(StyleProp.BorderColor, Color{ r: 203, g: 213, b: 225, a: 255 });
+        widget.base.style.set_u32(StyleProp.BorderWidth, 1u32);
+        widget.base.style.set_u32(StyleProp.Radius, 8u32);
+        widget.base.style.set_u32(StyleProp.PaddingLeft, 6u32);
+        widget.base.style.set_u32(StyleProp.PaddingRight, 6u32);
+        widget.base.style.set_u32(StyleProp.PaddingTop, 5u32);
+        widget.base.style.set_u32(StyleProp.PaddingBottom, 5u32);
+        widget.base.style.set_u32(StyleProp.FontSize, 12u32);
+        return RichToolbar{
+            widget: widget,
+            editor: editor,
+            registry: rich_format_registry_new(),
+            item_w: 46u16,
+            item_gap: 4u16,
+            pressed_index: -1i8,
+            last_trigger_index: -1i8,
+            last_trigger_timestamp: 0u32,
+        };
+    }
+
+    fn obj(self: &Self) &GuiObj {
+        if self.editor != null {
+            _ = self.editor.bind_format_observer(&self.widget.base);
+        }
+        return widget_bind_callbacks(&self.widget.base, &RICH_TOOLBAR_RENDER_ADAPTER, &RICH_TOOLBAR_INPUT_ADAPTER, self as &void);
+    }
+
+    fn bind_editor(self: &Self, editor: &RichTextInput) &RichToolbar {
+        self.editor = editor;
+        if editor != null {
+            _ = editor.bind_format_observer(&self.widget.base);
+        }
+        self.widget.base.invalidate();
+        return self;
+    }
+
+    fn format_count(self: &Self) u8 {
+        return self.registry.count;
+    }
+
+    fn format_rect(self: &Self, index: u8, inner: Rect) Rect {
+        const step: i32 = self.item_w as i32 + self.item_gap as i32;
+        return Rect{
+            x: inner.x + (index as i32 * step) as i16,
+            y: inner.y,
+            w: self.item_w,
+            h: inner.h,
+        };
+    }
+
+    fn hit_format_index(self: &Self, point_x: i16, point_y: i16) i32 {
+        const inner: Rect = self.widget.base.screen_area();
+        const point: Point = Point{ x: point_x, y: point_y };
+        if !inner.contains(point) {
+            return -1;
+        }
+        const draw_inner: Rect = Rect{
+            x: inner.x + 6,
+            y: inner.y + 5,
+            w: (inner.w as i32 - 12) as u16,
+            h: (inner.h as i32 - 10) as u16,
+        };
+        var idx: u8 = 0u8;
+        while idx < self.registry.count {
+            const rect: Rect = self.format_rect(idx, draw_inner);
+            if rect.contains(point) {
+                return idx as i32;
+            }
+            idx = idx + 1u8;
+        }
+        return -1;
+    }
+
+    fn format_active(self: &Self, spec: RichToolbarFormatSpec) bool {
+        if self.editor == null {
+            return false;
+        }
+        if spec.mark_bit != 0u16 {
+            return self.editor.format_has_mark(spec.mark_bit);
+        }
+        return rich_toolbar_block_active(spec, self.editor.format_block_type());
+    }
+
+    fn trigger_format(self: &Self, index: i32) bool {
+        if self.editor == null || index < 0 || index >= self.registry.count as i32 {
+            return false;
+        }
+        const spec: RichToolbarFormatSpec = self.registry.formats[index as usize];
+        if !spec.enabled {
+            return false;
+        }
+        const cmd: RichCommand = rich_toolbar_command_for_spec(spec);
+        const handled: bool = self.editor.exec(cmd);
+        if handled {
+            self.editor.restore_focus_after_external_action();
+            self.widget.base.invalidate();
+        }
+        return handled;
+    }
+
+    fn trigger_format_for_event(self: &Self, index: i32, timestamp: u32) bool {
+        const handled: bool = self.trigger_format(index);
+        if handled {
+            self.last_trigger_index = (index as! i8).value;
+            self.last_trigger_timestamp = timestamp;
+        }
+        return handled;
+    }
+
+    fn handle_event(self: &Self, evt: &Event) bool {
+        const base_handled: bool = self.widget.handle_input(evt);
+        if evt.event_type == EventType.Press {
+            const point: Point = evt.point();
+            const hit: i32 = self.hit_format_index(point.x, point.y);
+            if hit >= 0 {
+                self.pressed_index = (hit as! i8).value;
+                return true;
+            }
+            self.pressed_index = -1i8;
+            return base_handled;
+        }
+        if evt.event_type == EventType.Release {
+            const point: Point = evt.point();
+            const hit: i32 = self.hit_format_index(point.x, point.y);
+            const pressed_index: i32 = self.pressed_index as i32;
+            self.pressed_index = -1i8;
+            if hit >= 0 && hit == pressed_index {
+                return self.trigger_format_for_event(hit, evt.timestamp);
+            }
+            return base_handled;
+        }
+        if evt.event_type == EventType.Click {
+            const point: Point = evt.point();
+            const hit: i32 = self.hit_format_index(point.x, point.y);
+            if hit >= 0 {
+                if self.last_trigger_index as i32 == hit && self.last_trigger_timestamp == evt.timestamp {
+                    return true;
+                }
+                return self.trigger_format_for_event(hit, evt.timestamp);
+            }
+        }
+        return base_handled;
+    }
+
+    fn render(self: &Self, ctx: &RenderCtx) void {
+        const inner: Rect = widget_draw_surface(&self.widget, ctx);
+        const font: &Font = widget_font(&self.widget.base.style);
+        const fg: Color = self.widget.base.style.get_color_or(StyleProp.FgColor, Color{ r: 15, g: 23, b: 42, a: 255 });
+        const border: Color = self.widget.base.style.get_color_or(StyleProp.BorderColor, Color{ r: 203, g: 213, b: 225, a: 255 });
+        const active_bg: Color = self.widget.base.style.get_color_or(StyleProp.BgFocusColor, Color{ r: 37, g: 99, b: 235, a: 255 });
+        const active_border: Color = Color{ r: 29, g: 78, b: 216, a: 255 };
+        const active_fg: Color = WHITE;
+        const inactive_bg: Color = WHITE;
+        var idx: u8 = 0u8;
+        while idx < self.registry.count {
+            const spec: RichToolbarFormatSpec = self.registry.formats[idx as usize];
+            if spec.enabled {
+                const rect: Rect = self.format_rect(idx, inner);
+                var bg: Color = inactive_bg;
+                var stroke: Color = border;
+                var stroke_w: u8 = 1u8;
+                var text_color: Color = fg;
+                if self.format_active(spec) {
+                    bg = active_bg;
+                    stroke = active_border;
+                    stroke_w = 2u8;
+                    text_color = active_fg;
+                }
+                ctx.fill_round_rect(rect, 6, bg);
+                ctx.draw_round_rect(rect, 6, stroke, stroke_w);
+                if spec.label_len > 0usize {
+                    const text_w: u16 = widget_measure_text(spec.label, font);
+                    const text_x: i16 = rect.x + ((rect.w as i32 - text_w as i32) / 2) as i16;
+                    const text_y: i16 = rect.y + ((rect.h as i32 - font.glyph_height as i32) / 2) as i16;
+                    draw_text(ctx, text_x, text_y, spec.label, spec.label_len, font, text_color);
+                }
+            }
+            idx = idx + 1u8;
+        }
+        if self.editor == null {
+            ctx.draw_round_rect(inner, 6, TRANSPARENT, 0u8);
+        }
+    }
+}

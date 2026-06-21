@@ -1,9 +1,0 @@
-// lib/std/uip/uip.uya - UIP 协议栈模块入口
-// 模块路径：use std.uip.uip
-
-use std.uip.errors;
-use std.uip.types;
-use std.uip.wire;
-use std.uip.resolver;
-use std.uip.tcp;
-use std.uip.session;

@@ -1,0 +1,228 @@
+use gui.core.obj.GuiObj;
+use gui.core.rect.RECT_ZERO;
+use gui.core.rect.Rect;
+
+export const RICH_TEXT_HOST_CMD_NONE: u8 = 0u8;
+export const RICH_TEXT_HOST_CMD_INSERT_TEXT: u8 = 1u8;
+export const RICH_TEXT_HOST_CMD_COMPOSITION_START: u8 = 2u8;
+export const RICH_TEXT_HOST_CMD_COMPOSITION_UPDATE: u8 = 3u8;
+export const RICH_TEXT_HOST_CMD_COMPOSITION_END: u8 = 4u8;
+export const RICH_TEXT_HOST_CMD_PASTE_TEXT: u8 = 5u8;
+export const RICH_TEXT_HOST_CMD_CUT: u8 = 6u8;
+export const RICH_TEXT_HOST_CMD_COPY: u8 = 7u8;
+export const RICH_TEXT_HOST_CMD_BLUR: u8 = 8u8;
+export const RICH_TEXT_HOST_QUEUE_CAPACITY: i32 = 32;
+export const RICH_TEXT_HOST_TEXT_BYTES: i32 = 4096;
+
+export struct RichTextHostCommand {
+    kind: u8,
+    session_id: u32,
+    text_len: u16,
+    text_bytes: [byte: 4096],
+}
+
+var g_rich_text_host_queue: [RichTextHostCommand: 32] = [];
+var g_rich_text_host_read_idx: u8 = 0u8;
+var g_rich_text_host_write_idx: u8 = 0u8;
+var g_rich_text_host_count: u8 = 0u8;
+var g_rich_text_host_active_session: u32 = 0u32;
+var g_rich_text_host_active_obj: &GuiObj = null;
+var g_rich_text_host_caret_rect: Rect = RECT_ZERO;
+var g_rich_text_host_selection_len: u16 = 0u16;
+var g_rich_text_host_selection_bytes: [byte: 4096] = [];
+
+fn rich_text_host_copy_text(dst: &byte, src: &const byte, len: usize) usize {
+    if dst == null || src == null {
+        return 0usize;
+    }
+    var copy_len: usize = len;
+    if copy_len >= RICH_TEXT_HOST_TEXT_BYTES as usize {
+        copy_len = RICH_TEXT_HOST_TEXT_BYTES as usize - 1usize;
+    }
+    var idx: usize = 0usize;
+    while idx < copy_len {
+        dst[idx] = src[idx];
+        idx = idx + 1usize;
+    }
+    dst[copy_len] = 0u8;
+    return copy_len;
+}
+
+fn rich_text_host_command_none() RichTextHostCommand {
+    return RichTextHostCommand{
+        kind: RICH_TEXT_HOST_CMD_NONE,
+        session_id: 0u32,
+        text_len: 0u16,
+        text_bytes: [],
+    };
+}
+
+fn rich_text_host_command_copy(src: &RichTextHostCommand) RichTextHostCommand {
+    var out: RichTextHostCommand = rich_text_host_command_none();
+    if src == null {
+        return out;
+    }
+    out.kind = src.kind;
+    out.session_id = src.session_id;
+    out.text_len = src.text_len;
+    var copy_len: usize = src.text_len as usize;
+    if copy_len >= RICH_TEXT_HOST_TEXT_BYTES as usize {
+        copy_len = RICH_TEXT_HOST_TEXT_BYTES as usize - 1usize;
+    }
+    var idx: usize = 0usize;
+    while idx < copy_len {
+        out.text_bytes[idx] = src.text_bytes[idx];
+        idx = idx + 1usize;
+    }
+    out.text_bytes[copy_len] = 0u8;
+    return out;
+}
+
+fn rich_text_host_queue_push(cmd: RichTextHostCommand) bool {
+    var write_idx: u8 = g_rich_text_host_write_idx;
+    if g_rich_text_host_count as i32 >= RICH_TEXT_HOST_QUEUE_CAPACITY {
+        if g_rich_text_host_read_idx as i32 >= RICH_TEXT_HOST_QUEUE_CAPACITY {
+            return false;
+        }
+        write_idx = g_rich_text_host_read_idx;
+        g_rich_text_host_read_idx = (((g_rich_text_host_read_idx as i32 + 1) % RICH_TEXT_HOST_QUEUE_CAPACITY) as! u8).value;
+    } else {
+        if g_rich_text_host_write_idx as i32 >= RICH_TEXT_HOST_QUEUE_CAPACITY {
+            return false;
+        }
+        g_rich_text_host_write_idx = (((g_rich_text_host_write_idx as i32 + 1) % RICH_TEXT_HOST_QUEUE_CAPACITY) as! u8).value;
+        g_rich_text_host_count = g_rich_text_host_count + 1u8;
+    }
+    if write_idx as i32 >= RICH_TEXT_HOST_QUEUE_CAPACITY {
+        return false;
+    }
+    g_rich_text_host_queue[write_idx as usize] = rich_text_host_command_copy(&cmd);
+    return true;
+}
+
+fn rich_text_host_queue_pop(out_cmd: &RichTextHostCommand) bool {
+    if out_cmd == null || g_rich_text_host_count == 0u8 {
+        return false;
+    }
+    if g_rich_text_host_read_idx as i32 >= RICH_TEXT_HOST_QUEUE_CAPACITY {
+        return false;
+    }
+    out_cmd[0] = g_rich_text_host_queue[g_rich_text_host_read_idx as usize];
+    g_rich_text_host_read_idx = (((g_rich_text_host_read_idx as i32 + 1) % RICH_TEXT_HOST_QUEUE_CAPACITY) as! u8).value;
+    g_rich_text_host_count = g_rich_text_host_count - 1u8;
+    return true;
+}
+
+fn rich_text_host_invalidate_active() void {
+    if g_rich_text_host_active_obj != null {
+        g_rich_text_host_active_obj[0].invalidate();
+    }
+}
+
+export fn rich_text_host_activate(session_id: u32, obj: &GuiObj) void {
+    if session_id == 0u32 {
+        return;
+    }
+    g_rich_text_host_active_session = session_id;
+    g_rich_text_host_active_obj = obj;
+}
+
+export fn rich_text_host_deactivate(session_id: u32) void {
+    if session_id == 0u32 || g_rich_text_host_active_session != session_id {
+        return;
+    }
+    g_rich_text_host_active_session = 0u32;
+    g_rich_text_host_active_obj = null;
+    g_rich_text_host_caret_rect = RECT_ZERO;
+    g_rich_text_host_selection_len = 0u16;
+    g_rich_text_host_selection_bytes[0] = 0u8;
+}
+
+export fn rich_text_host_active_session() u32 {
+    return g_rich_text_host_active_session;
+}
+
+export fn rich_text_host_caret_rect() Rect {
+    return g_rich_text_host_caret_rect;
+}
+
+export fn rich_text_host_caret_rect_x() i16 {
+    return g_rich_text_host_caret_rect.x;
+}
+
+export fn rich_text_host_caret_rect_y() i16 {
+    return g_rich_text_host_caret_rect.y;
+}
+
+export fn rich_text_host_caret_rect_w() u16 {
+    return g_rich_text_host_caret_rect.w;
+}
+
+export fn rich_text_host_caret_rect_h() u16 {
+    return g_rich_text_host_caret_rect.h;
+}
+
+export fn rich_text_host_selection_text_ptr() &const byte {
+    return &g_rich_text_host_selection_bytes[0];
+}
+
+export fn rich_text_host_selection_text_len() usize {
+    return g_rich_text_host_selection_len as usize;
+}
+
+export fn rich_text_host_set_caret_rect(session_id: u32, rect: Rect) void {
+    if session_id == 0u32 || g_rich_text_host_active_session != session_id {
+        return;
+    }
+    g_rich_text_host_caret_rect = rect;
+}
+
+export fn rich_text_host_set_selection_text(session_id: u32, text: &const byte, len: usize) void {
+    if session_id == 0u32 || g_rich_text_host_active_session != session_id {
+        return;
+    }
+    const copied: usize = rich_text_host_copy_text(&g_rich_text_host_selection_bytes[0], text, len);
+    g_rich_text_host_selection_len = (copied as! u16).value;
+}
+
+export fn rich_text_host_feed_command(kind: u8) bool {
+    if kind == RICH_TEXT_HOST_CMD_NONE || g_rich_text_host_active_session == 0u32 {
+        return false;
+    }
+    _ = rich_text_host_queue_push(RichTextHostCommand{
+        kind: kind,
+        session_id: g_rich_text_host_active_session,
+        text_len: 0u16,
+        text_bytes: [],
+    });
+    rich_text_host_invalidate_active();
+    return true;
+}
+
+export fn rich_text_host_feed_text_command(kind: u8, text: &const byte, len: usize) bool {
+    if kind == RICH_TEXT_HOST_CMD_NONE || g_rich_text_host_active_session == 0u32 {
+        return false;
+    }
+    var cmd: RichTextHostCommand = rich_text_host_command_none();
+    cmd.kind = kind;
+    cmd.session_id = g_rich_text_host_active_session;
+    cmd.text_len = (rich_text_host_copy_text(&cmd.text_bytes[0], text, len) as! u16).value;
+    _ = rich_text_host_queue_push(cmd);
+    rich_text_host_invalidate_active();
+    return true;
+}
+
+export fn rich_text_host_poll_for_session(session_id: u32, out_cmd: &RichTextHostCommand) bool {
+    if out_cmd == null || session_id == 0u32 {
+        return false;
+    }
+    var next: RichTextHostCommand = rich_text_host_command_none();
+    while rich_text_host_queue_pop(&next) {
+        if next.session_id == session_id {
+            out_cmd[0] = rich_text_host_command_copy(&next);
+            return true;
+        }
+        next = rich_text_host_command_none();
+    }
+    return false;
+}

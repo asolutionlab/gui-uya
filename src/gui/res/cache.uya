@@ -1,0 +1,296 @@
+use gui.render.img.ImageData;
+use gui.render.img.empty_image;
+use gui.render.img.image_release;
+use gui.render.img.image_retain;
+use gui.render.img.image_size_bytes;
+use std.async.Future;
+
+export const IMAGE_CACHE_CAPACITY: i32 = 16;
+
+export enum CacheEntryState {
+    Empty,
+    Loading,
+    Ready,
+    Error,
+}
+
+export struct CacheEntry {
+    used: bool,
+    state: CacheEntryState,
+    key: u32,
+    age: u32,
+    bytes: u32,
+    pin_count: u16,
+    image: ImageData,
+}
+
+export struct ImageCache {
+    entries: [CacheEntry: 16],
+    capacity: u8,
+    used_count: u8,
+    budget_bytes: u32,
+    used_bytes: u32,
+    tick: u32,
+    hit_count: u32,
+    miss_count: u32,
+    eviction_count: u32,
+    loading_count: u16,
+
+    fn find_slot(self: &Self, key: u32) i32 {
+        var i: i32 = 0;
+        while i < self.capacity as i32 {
+            if self.entries[i].used && self.entries[i].key == key {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    fn contains(self: &Self, key: u32) bool {
+        return self.find_slot(key) >= 0;
+    }
+
+    fn get(self: &Self, key: u32, out: &ImageData) bool {
+        const slot: i32 = self.find_slot(key);
+        if slot < 0 || self.entries[slot].state != CacheEntryState.Ready {
+            self.miss_count = self.miss_count + 1u32;
+            return false;
+        }
+        self.tick = self.tick + 1u32;
+        self.entries[slot].age = self.tick;
+        out[0] = self.entries[slot].image;
+        self.hit_count = self.hit_count + 1u32;
+        return true;
+    }
+
+    fn retain(self: &Self, key: u32) bool {
+        const slot: i32 = self.find_slot(key);
+        if slot < 0 || self.entries[slot].state != CacheEntryState.Ready {
+            return false;
+        }
+        self.entries[slot].pin_count = self.entries[slot].pin_count + 1;
+        return true;
+    }
+
+    fn release(self: &Self, key: u32) bool {
+        const slot: i32 = self.find_slot(key);
+        if slot < 0 || self.entries[slot].pin_count == 0 {
+            return false;
+        }
+        self.entries[slot].pin_count = self.entries[slot].pin_count - 1;
+        return true;
+    }
+
+    fn begin_load(self: &Self, key: u32) bool {
+        const existing: i32 = self.find_slot(key);
+        if existing >= 0 {
+            if self.entries[existing].state == CacheEntryState.Loading {
+                return true;
+            }
+            self.remove_slot(existing);
+        }
+
+        const slot: i32 = self.reserve_slot();
+        if slot < 0 {
+            return false;
+        }
+
+        self.tick = self.tick + 1u32;
+        self.entries[slot] = CacheEntry{
+            key: key,
+            image: empty_image(),
+            age: self.tick,
+            bytes: 0u32,
+            pin_count: 0,
+            state: CacheEntryState.Loading,
+            used: true,
+        };
+        self.loading_count = self.loading_count + 1;
+        return true;
+    }
+
+    fn finish_load(self: &Self, key: u32, image: ImageData) bool {
+        const slot: i32 = self.find_slot(key);
+        if slot < 0 {
+            return false;
+        }
+
+        const bytes: u32 = image_size_bytes(&image);
+        while self.used_bytes + bytes > self.budget_bytes && self.used_count > 0 {
+            if !self.evict_oldest() {
+                return false;
+            }
+        }
+
+        var stored: ImageData = image;
+        image_retain(&stored);
+        if self.entries[slot].state == CacheEntryState.Loading && self.loading_count > 0 {
+            self.loading_count = self.loading_count - 1;
+        }
+        self.tick = self.tick + 1u32;
+        self.entries[slot].image = stored;
+        self.entries[slot].age = self.tick;
+        self.entries[slot].bytes = bytes;
+        self.entries[slot].state = CacheEntryState.Ready;
+        self.used_bytes = self.used_bytes + bytes;
+        return true;
+    }
+
+    fn fail_load(self: &Self, key: u32) bool {
+        const slot: i32 = self.find_slot(key);
+        if slot < 0 {
+            return false;
+        }
+        if self.entries[slot].state == CacheEntryState.Loading && self.loading_count > 0 {
+            self.loading_count = self.loading_count - 1;
+        }
+        self.entries[slot].state = CacheEntryState.Error;
+        return true;
+    }
+
+    fn is_loading(self: &Self, key: u32) bool {
+        const slot: i32 = self.find_slot(key);
+        return slot >= 0 && self.entries[slot].state == CacheEntryState.Loading;
+    }
+
+    fn budget_remaining(self: &Self) u32 {
+        if self.used_bytes >= self.budget_bytes {
+            return 0u32;
+        }
+        return self.budget_bytes - self.used_bytes;
+    }
+
+    fn pressure_percent(self: &Self) u8 {
+        if self.budget_bytes == 0u32 {
+            return 0;
+        }
+        var percent: u32 = (self.used_bytes * 100u32) / self.budget_bytes;
+        if percent > 100u32 {
+            percent = 100u32;
+        }
+        return (percent as! u8).value;
+    }
+
+    fn hit_rate_percent(self: &Self) u8 {
+        const total: u32 = self.hit_count + self.miss_count;
+        if total == 0u32 {
+            return 0;
+        }
+        return (((self.hit_count * 100u32) / total) as! u8).value;
+    }
+
+    fn reset_stats(self: &Self) void {
+        self.hit_count = 0u32;
+        self.miss_count = 0u32;
+        self.eviction_count = 0u32;
+    }
+
+    fn put(self: &Self, key: u32, image: ImageData) void {
+        if !self.begin_load(key) {
+            return;
+        }
+        _ = self.finish_load(key, image);
+    }
+
+    fn reserve_slot(self: &Self) i32 {
+        var free_slot: i32 = -1;
+        var i: i32 = 0;
+        while i < self.capacity as i32 {
+            if !self.entries[i].used {
+                free_slot = i;
+                break;
+            }
+            i = i + 1;
+        }
+        if free_slot >= 0 {
+            if self.used_count < self.capacity {
+                self.used_count = self.used_count + 1;
+            }
+            return free_slot;
+        }
+        if self.evict_oldest() {
+            i = 0;
+            while i < self.capacity as i32 {
+                if !self.entries[i].used {
+                    if self.used_count < self.capacity {
+                        self.used_count = self.used_count + 1;
+                    }
+                    return i;
+                }
+                i = i + 1;
+            }
+        }
+        return -1;
+    }
+
+    fn remove_slot(self: &Self, slot: i32) void {
+        if slot < 0 || slot >= self.capacity as i32 || !self.entries[slot].used {
+            return;
+        }
+        if self.entries[slot].state == CacheEntryState.Loading && self.loading_count > 0 {
+            self.loading_count = self.loading_count - 1;
+        }
+        if self.entries[slot].state == CacheEntryState.Ready {
+            self.used_bytes = self.used_bytes - self.entries[slot].bytes;
+            image_release(&self.entries[slot].image);
+        }
+        self.entries[slot] = CacheEntry{
+            key: 0u32,
+            image: empty_image(),
+            age: 0u32,
+            bytes: 0u32,
+            pin_count: 0,
+            state: CacheEntryState.Empty,
+            used: false,
+        };
+        if self.used_count > 0 {
+            self.used_count = self.used_count - 1;
+        }
+    }
+
+    fn evict_oldest(self: &Self) bool {
+        var oldest_slot: i32 = -1;
+        var oldest_age: u32 = 0u32;
+        var i: i32 = 0;
+        while i < self.capacity as i32 {
+            if self.entries[i].used
+                && self.entries[i].state == CacheEntryState.Ready
+                && self.entries[i].pin_count == 0
+                && (oldest_slot < 0 || self.entries[i].age < oldest_age) {
+                oldest_slot = i;
+                oldest_age = self.entries[i].age;
+            }
+            i = i + 1;
+        }
+        if oldest_slot < 0 {
+            return false;
+        }
+        self.eviction_count = self.eviction_count + 1u32;
+        self.remove_slot(oldest_slot);
+        return true;
+    }
+}
+
+export @async_fn fn image_cache_put_async(cache: &ImageCache, key: u32, image: ImageData) Future<!bool> {
+    if !cache.begin_load(key) {
+        return false;
+    }
+    return cache.finish_load(key, image);
+}
+
+/// 创建图像缓存实例。
+export fn image_cache_new(capacity: u8, budget_bytes: u32) ImageCache {
+    return ImageCache{
+        entries: [],
+        capacity: capacity,
+        used_count: 0,
+        budget_bytes: budget_bytes,
+        used_bytes: 0u32,
+        tick: 0u32,
+        hit_count: 0u32,
+        miss_count: 0u32,
+        eviction_count: 0u32,
+        loading_count: 0,
+    };
+}

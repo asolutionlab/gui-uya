@@ -1,0 +1,172 @@
+use gui.core.color.BLACK;
+use gui.core.color.BLUE;
+use gui.core.color.Color;
+use gui.core.color.GREEN;
+use gui.core.color.RED;
+use gui.core.color.TRANSPARENT;
+use gui.core.color.WHITE;
+use std.testing.assert_eq_bool;
+use std.testing.assert_eq_i32;
+use std.testing.assert_eq_u64;
+use std.testing.expect;
+
+export const TEST_COLOR_MODULE: i32 = 1;
+
+struct ColorLerpCase {
+    from: Color,
+    to: Color,
+    t: f64,
+    expected: Color,
+}
+
+struct ColorPackCase {
+    color: Color,
+    rgb565: u16,
+    argb8888: u32,
+}
+
+struct ColorAlphaCase {
+    color: Color,
+    alpha: u8,
+    expected: Color,
+}
+
+fn assert_color_eq(actual: Color, expected: Color) !void {
+    try expect(actual == expected);
+}
+
+test "color constants and macro" {
+    try expect(BLACK == Color{ r: 0, g: 0, b: 0, a: 255 });
+    try expect(WHITE == Color{ r: 255, g: 255, b: 255, a: 255 });
+    try expect(RED == Color{ r: 255, g: 0, b: 0, a: 255 });
+    try expect(GREEN == Color{ r: 0, g: 255, b: 0, a: 255 });
+    try expect(BLUE == Color{ r: 0, g: 0, b: 255, a: 255 });
+    try expect(TRANSPARENT == Color{ r: 0, g: 0, b: 0, a: 0 });
+    try expect(Color{ r: 0x11, g: 0x22, b: 0x33, a: 255 } == Color{ r: 0x11, g: 0x22, b: 0x33, a: 255 });
+}
+
+test "color blend" {
+    const dst: Color = Color{ r: 10, g: 20, b: 30, a: 255 };
+    const src_half: Color = Color{ r: 250, g: 20, b: 30, a: 128 };
+    const src_full: Color = Color{ r: 1, g: 2, b: 3, a: 255 };
+
+    try expect(dst.blend(src_full) == src_full);
+    try expect(dst.blend(TRANSPARENT) == dst);
+
+    const mixed: Color = dst.blend(src_half);
+    try assert_eq_i32(mixed.g as i32, 20);
+    try assert_eq_i32(mixed.b as i32, 30);
+    try assert_eq_bool(mixed.a >= 128u8, true);
+    try assert_eq_bool(mixed.r > dst.r, true);
+}
+
+test "color conversions and lerp" {
+    const c: Color = Color{ r: 255, g: 128, b: 0, a: 255 };
+    try assert_eq_i32(c.to_rgb565() as i32, 0xFC00);
+    try assert_eq_u64(c.to_argb8888() as u64, 0xFFFF8000u64);
+
+    const mid: Color = BLACK.lerp(WHITE, 0.5);
+    try expect(mid == Color{ r: 128, g: 128, b: 128, a: 255 });
+    try expect(RED.lerp(BLUE, 0.0) == RED);
+    try expect(RED.lerp(BLUE, 1.0) == BLUE);
+}
+
+test "color alpha helpers support premultiplied effects" {
+    const translucent: Color = Color{ r: 200, g: 120, b: 40, a: 128 };
+    const modulated: Color = translucent.modulate_alpha(128u8);
+    const premul: Color = translucent.premultiply();
+
+    try assert_eq_i32(modulated.a as i32, 64);
+    try assert_eq_i32(premul.a as i32, 128);
+    try assert_eq_bool(premul.r < translucent.r, true);
+    try assert_eq_bool(premul.g < translucent.g, true);
+    try assert_eq_bool(premul.b < translucent.b, true);
+}
+
+test "color lerp matrix clamps and rounds channels" {
+    var cases: [ColorLerpCase: 10] = [
+        ColorLerpCase{ from: BLACK, to: WHITE, t: 0.0, expected: BLACK },
+        ColorLerpCase{ from: BLACK, to: WHITE, t: 0.25, expected: Color{ r: 64, g: 64, b: 64, a: 255 } },
+        ColorLerpCase{ from: BLACK, to: WHITE, t: 0.5, expected: Color{ r: 128, g: 128, b: 128, a: 255 } },
+        ColorLerpCase{ from: BLACK, to: WHITE, t: 0.75, expected: Color{ r: 191, g: 191, b: 191, a: 255 } },
+        ColorLerpCase{ from: BLACK, to: WHITE, t: 1.0, expected: WHITE },
+        ColorLerpCase{ from: RED, to: BLUE, t: -1.0, expected: RED },
+        ColorLerpCase{ from: RED, to: BLUE, t: 2.0, expected: BLUE },
+        ColorLerpCase{ from: Color{ r: 10, g: 20, b: 30, a: 40 }, to: Color{ r: 30, g: 40, b: 50, a: 60 }, t: 0.5, expected: Color{ r: 20, g: 30, b: 40, a: 50 } },
+        ColorLerpCase{ from: Color{ r: 0, g: 128, b: 255, a: 0 }, to: Color{ r: 255, g: 128, b: 0, a: 255 }, t: 0.5, expected: Color{ r: 128, g: 128, b: 128, a: 128 } },
+        ColorLerpCase{ from: Color{ r: 1, g: 2, b: 3, a: 4 }, to: Color{ r: 2, g: 3, b: 4, a: 5 }, t: 0.5, expected: Color{ r: 2, g: 3, b: 4, a: 5 } },
+    ];
+
+    var i: i32 = 0;
+    while i < 10 {
+        try assert_color_eq(cases[i].from.lerp(cases[i].to, cases[i].t), cases[i].expected);
+        i = i + 1;
+    }
+}
+
+test "color conversion matrix covers primary grayscale and alpha packings" {
+    var cases: [ColorPackCase: 8] = [
+        ColorPackCase{ color: BLACK, rgb565: 0x0000u16, argb8888: 0xFF000000u32 },
+        ColorPackCase{ color: WHITE, rgb565: 0xFFFFu16, argb8888: 0xFFFFFFFFu32 },
+        ColorPackCase{ color: RED, rgb565: 0xF800u16, argb8888: 0xFFFF0000u32 },
+        ColorPackCase{ color: GREEN, rgb565: 0x07E0u16, argb8888: 0xFF00FF00u32 },
+        ColorPackCase{ color: BLUE, rgb565: 0x001Fu16, argb8888: 0xFF0000FFu32 },
+        ColorPackCase{ color: Color{ r: 255, g: 128, b: 0, a: 255 }, rgb565: 0xFC00u16, argb8888: 0xFFFF8000u32 },
+        ColorPackCase{ color: Color{ r: 128, g: 128, b: 128, a: 128 }, rgb565: 0x8410u16, argb8888: 0x80808080u32 },
+        ColorPackCase{ color: Color{ r: 12, g: 34, b: 56, a: 78 }, rgb565: 0x0907u16, argb8888: 0x4E0C2238u32 },
+    ];
+
+    var i: i32 = 0;
+    while i < 8 {
+        try assert_eq_i32(cases[i].color.to_rgb565() as i32, cases[i].rgb565 as i32);
+        try assert_eq_u64(cases[i].color.to_argb8888() as u64, cases[i].argb8888 as u64);
+        i = i + 1;
+    }
+}
+
+test "color alpha modulation matrix preserves rgb and scales alpha" {
+    var cases: [ColorAlphaCase: 8] = [
+        ColorAlphaCase{ color: TRANSPARENT, alpha: 255u8, expected: TRANSPARENT },
+        ColorAlphaCase{ color: RED, alpha: 0u8, expected: TRANSPARENT },
+        ColorAlphaCase{ color: RED, alpha: 255u8, expected: RED },
+        ColorAlphaCase{ color: Color{ r: 90, g: 80, b: 70, a: 200 }, alpha: 128u8, expected: Color{ r: 90, g: 80, b: 70, a: 100 } },
+        ColorAlphaCase{ color: Color{ r: 90, g: 80, b: 70, a: 200 }, alpha: 64u8, expected: Color{ r: 90, g: 80, b: 70, a: 50 } },
+        ColorAlphaCase{ color: Color{ r: 20, g: 30, b: 40, a: 128 }, alpha: 128u8, expected: Color{ r: 20, g: 30, b: 40, a: 64 } },
+        ColorAlphaCase{ color: Color{ r: 20, g: 30, b: 40, a: 255 }, alpha: 1u8, expected: Color{ r: 20, g: 30, b: 40, a: 1 } },
+        ColorAlphaCase{ color: Color{ r: 20, g: 30, b: 40, a: 255 }, alpha: 200u8, expected: Color{ r: 20, g: 30, b: 40, a: 200 } },
+    ];
+
+    var i: i32 = 0;
+    while i < 8 {
+        try assert_color_eq(cases[i].color.modulate_alpha(cases[i].alpha), cases[i].expected);
+        i = i + 1;
+    }
+}
+
+test "color premultiply matrix uses lut rounding consistently" {
+    var cases: [ColorAlphaCase: 6] = [
+        ColorAlphaCase{ color: TRANSPARENT, alpha: 0u8, expected: TRANSPARENT },
+        ColorAlphaCase{ color: WHITE, alpha: 0u8, expected: WHITE },
+        ColorAlphaCase{ color: RED, alpha: 0u8, expected: RED },
+        ColorAlphaCase{ color: Color{ r: 200, g: 120, b: 40, a: 128 }, alpha: 0u8, expected: Color{ r: 100, g: 60, b: 20, a: 128 } },
+        ColorAlphaCase{ color: Color{ r: 255, g: 255, b: 255, a: 64 }, alpha: 0u8, expected: Color{ r: 64, g: 64, b: 64, a: 64 } },
+        ColorAlphaCase{ color: Color{ r: 10, g: 30, b: 90, a: 200 }, alpha: 0u8, expected: Color{ r: 8, g: 24, b: 71, a: 200 } },
+    ];
+
+    var i: i32 = 0;
+    while i < 6 {
+        try assert_color_eq(cases[i].color.premultiply(), cases[i].expected);
+        i = i + 1;
+    }
+}
+
+test "color blend matrix handles transparent opaque and translucent layers" {
+    try assert_color_eq(Color{ r: 255, g: 255, b: 255, a: 255 }.blend(Color{ r: 0, g: 0, b: 0, a: 0 }), Color{ r: 255, g: 255, b: 255, a: 255 });
+    try assert_color_eq(Color{ r: 255, g: 255, b: 255, a: 255 }.blend(Color{ r: 0, g: 0, b: 0, a: 255 }), Color{ r: 0, g: 0, b: 0, a: 255 });
+    try assert_color_eq(TRANSPARENT.blend(Color{ r: 255, g: 0, b: 0, a: 128 }), Color{ r: 255, g: 0, b: 0, a: 128 });
+    try assert_color_eq(Color{ r: 0, g: 0, b: 0, a: 255 }.blend(Color{ r: 255, g: 255, b: 255, a: 128 }), Color{ r: 128, g: 128, b: 128, a: 255 });
+    try assert_color_eq(Color{ r: 255, g: 255, b: 255, a: 255 }.blend(Color{ r: 0, g: 0, b: 0, a: 128 }), Color{ r: 127, g: 127, b: 127, a: 255 });
+    try assert_color_eq(BLUE.blend(Color{ r: 255, g: 0, b: 0, a: 128 }), Color{ r: 128, g: 0, b: 127, a: 255 });
+    try assert_color_eq(RED.blend(Color{ r: 0, g: 255, b: 0, a: 64 }), Color{ r: 191, g: 64, b: 0, a: 255 });
+    try assert_eq_bool(Color{ r: 40, g: 80, b: 160, a: 200 }.blend(Color{ r: 240, g: 200, b: 120, a: 96 }).a >= 200u8, true);
+}

@@ -1,0 +1,615 @@
+use gui.core.point.POINT_ZERO;
+use gui.core.point.Point;
+
+export const EVENT_QUEUE_SIZE: i32 = 64;
+export const EVENT_TEXT_INPUT_MAX_BYTES: i32 = 96;
+export const EVENT_MOD_ALT: u16 = 1u16;
+export const EVENT_MOD_CTRL: u16 = 2u16;
+export const EVENT_MOD_META: u16 = 4u16;
+export const EVENT_MOD_SHIFT: u16 = 8u16;
+
+
+fn distance_sq(a: Point, b: Point) i32 {
+    const dx: i32 = a.x as i32 - b.x as i32;
+    const dy: i32 = a.y as i32 - b.y as i32;
+    return dx * dx + dy * dy;
+}
+
+fn abs_i32(v: i32) i32 {
+    if v < 0 {
+        return 0 - v;
+    }
+    return v;
+}
+
+export enum EventType {
+    None,
+    Press,
+    Release,
+    Click,
+    DoubleClick,
+    LongPress,
+    SwipeLeft,
+    SwipeRight,
+    SwipeUp,
+    SwipeDown,
+    DragStart,
+    Drag,
+    DragEnd,
+    HoverEnter,
+    HoverMove,
+    HoverLeave,
+    TextInput,
+    KeyDown,
+    KeyUp,
+    FocusIn,
+    FocusOut,
+    ValueChange,
+    DrawRequest,
+    Resize,
+    Timer,
+    PinchStart,
+    Pinch,
+    PinchEnd,
+    Custom,
+}
+
+export enum EventPhase {
+    Capture,
+    Target,
+    Bubble,
+}
+
+export enum InputDev {
+    Touch,
+    Mouse,
+    Keypad,
+    Text,
+    Encoder,
+    Button,
+}
+
+export struct EventPointValue {
+    point: Point,
+    value: i32,
+}
+
+export struct EventTextValue {
+    len: u16,
+    bytes: [byte: 97],
+}
+
+fn event_utf8_span(first: u8) usize {
+    if (first & 0x80u8) == 0u8 {
+        return 1usize;
+    }
+    if (first & 0xE0u8) == 0xC0u8 {
+        return 2usize;
+    }
+    if (first & 0xF0u8) == 0xE0u8 {
+        return 3usize;
+    }
+    if (first & 0xF8u8) == 0xF0u8 {
+        return 4usize;
+    }
+    return 1usize;
+}
+
+fn event_utf8_cont_byte(value: u8) bool {
+    return (value & 0xC0u8) == 0x80u8;
+}
+
+fn event_text_clamped_len(text: &const byte, len: usize, cap: usize) usize {
+    if text == null || len == 0usize || cap == 0usize {
+        return 0usize;
+    }
+
+    var cursor: usize = 0usize;
+    while cursor < len && cursor < cap {
+        const span: usize = event_utf8_span(text[cursor]);
+        if span <= 1usize {
+            cursor = cursor + 1usize;
+            continue;
+        }
+        if cursor + span > len || cursor + span > cap {
+            break;
+        }
+        var ok: bool = true;
+        var cont_idx: usize = 1usize;
+        while cont_idx < span {
+            if !event_utf8_cont_byte(text[cursor + cont_idx]) {
+                ok = false;
+                break;
+            }
+            cont_idx = cont_idx + 1usize;
+        }
+        if !ok {
+            cursor = cursor + 1usize;
+            continue;
+        }
+        cursor = cursor + span;
+    }
+    return cursor;
+}
+
+export union EventData {
+    None: void,
+    Point: Point,
+    KeyCode: u16,
+    Text: EventTextValue,
+    Value: i32,
+    PointValue: EventPointValue,
+}
+
+export struct Event {
+    event_type: EventType,
+    phase: EventPhase,
+    dev_type: InputDev,
+    target: i32,
+    timestamp: u32,
+    data: EventData,
+    key_repeat: bool,
+    modifiers: u16,
+    stop_bubble: bool,
+    handled: bool,
+    
+    fn point(self: &Self) Point {
+        match self.data {
+            .Point(v) => { return v; },
+            .PointValue(v) => { return v.point; },
+            else => {},
+        };
+        return POINT_ZERO;
+    }
+
+    fn value(self: &Self) i32 {
+        match self.data {
+            .Value(v) => { return v; },
+            .PointValue(v) => { return v.value; },
+            else => {},
+        };
+        return 0;
+    }
+
+    fn key_code(self: &Self) u16 {
+        match self.data {
+            .KeyCode(v) => { return v; },
+            else => {},
+        };
+        return 0;
+    }
+
+    fn has_modifier(self: &Self, mask: u16) bool {
+        return (self.modifiers & mask) != 0u16;
+    }
+
+    fn text_len(self: &Self) usize {
+        match self.data {
+            .Text(v) => { return v.len as usize; },
+            else => {},
+        };
+        return 0usize;
+    }
+
+    fn text_bytes(self: &Self) &const byte {
+        match self.data {
+            .Text(v) => { return &v.bytes[0]; },
+            else => {},
+        };
+        return null;
+    }
+
+    fn copy_text_bytes(self: &Self, dst: &byte, cap: usize) usize {
+        if dst == null || cap == 0usize {
+            return 0usize;
+        }
+        match self.data {
+            .Text(v) => {
+                var copy_len: usize = v.len as usize;
+                if copy_len >= cap {
+                    copy_len = event_text_clamped_len(&v.bytes[0], copy_len, cap - 1usize);
+                }
+                var i: usize = 0usize;
+                while i < copy_len {
+                    dst[i] = v.bytes[i];
+                    i = i + 1usize;
+                }
+                dst[copy_len] = 0u8;
+                return copy_len;
+            },
+            else => {},
+        };
+        dst[0] = 0u8;
+        return 0usize;
+    }
+
+    fn is_key_repeat(self: &Self) bool {
+        return self.key_repeat;
+    }
+}
+
+export struct EventOption {
+    has_value: bool,
+    value: Event,
+}
+
+export struct EventQueue {
+    buffer: [Event: 64],
+    head: i32,
+    tail: i32,
+    count: i32,
+    overflow: u32,
+
+    fn push(self: &Self, evt: Event) bool {
+        if self.is_full() {
+            self.overflow = self.overflow + 1;
+            return false;
+        }
+
+        self.buffer[self.head as usize] = evt;
+        self.head = (self.head + 1) % EVENT_QUEUE_SIZE;
+        self.count = self.count + 1;
+        return true;
+    }
+
+    fn pop(self: &Self) EventOption {
+        if self.is_empty() {
+            return event_option_none();
+        }
+
+        const evt: Event = self.buffer[self.tail as usize];
+        self.tail = (self.tail + 1) % EVENT_QUEUE_SIZE;
+        self.count = self.count - 1;
+        return event_option_some(evt);
+    }
+
+    fn is_empty(self: &Self) bool {
+        return self.count == 0;
+    }
+
+    fn is_full(self: &Self) bool {
+        return self.count >= EVENT_QUEUE_SIZE;
+    }
+
+    fn len(self: &Self) i32 {
+        return self.count;
+    }
+}
+
+export struct GestureDetector {
+    config: GestureConfig,
+    start_point: Point,
+    start_time: u32,
+    last_point: Point,
+    last_click_point: Point,
+    last_release_time: u32,
+    is_pressed: bool,
+    dragging: bool,
+    long_press_fired: bool,
+    pinch_active: bool,
+    pinch_distance_sq: i32,
+
+    fn process_touch(self: &Self, touch_point: Point, is_down: bool, timestamp: u32, target: i32, queue: &EventQueue) void {
+        const drag_threshold_sq: i32 = (self.config.drag_threshold as i32) * (self.config.drag_threshold as i32);
+        const swipe_threshold_sq: i32 = (self.config.swipe_threshold as i32) * (self.config.swipe_threshold as i32);
+
+        if is_down && !self.is_pressed {
+            self.start_point = touch_point;
+            self.last_point = touch_point;
+            self.start_time = timestamp;
+            self.long_press_fired = false;
+            self.is_pressed = true;
+            self.dragging = false;
+            _ = queue.push(event_point(EventType.Press, InputDev.Touch, target, timestamp, touch_point));
+            return;
+        }
+
+        if is_down && self.is_pressed {
+            const moved_sq: i32 = distance_sq(self.start_point, touch_point);
+            if !self.long_press_fired
+                && !self.dragging
+                && moved_sq <= drag_threshold_sq
+                && (timestamp - self.start_time) >= self.config.long_press_duration as u32 {
+                self.long_press_fired = true;
+                _ = queue.push(event_point(EventType.LongPress, InputDev.Touch, target, timestamp, touch_point));
+            }
+
+            if touch_point != self.last_point {
+                if !self.dragging && moved_sq > drag_threshold_sq {
+                    self.dragging = true;
+                    _ = queue.push(event_point(EventType.DragStart, InputDev.Touch, target, timestamp, self.start_point));
+                }
+                if self.dragging {
+                    _ = queue.push(event_point(EventType.Drag, InputDev.Touch, target, timestamp, touch_point));
+                }
+                self.last_point = touch_point;
+            }
+            return;
+        }
+
+        if !is_down && self.is_pressed {
+            const elapsed: u32 = timestamp - self.start_time;
+            const moved_sq: i32 = distance_sq(self.start_point, touch_point);
+
+            _ = queue.push(event_point(EventType.Release, InputDev.Touch, target, timestamp, touch_point));
+            if self.dragging {
+                _ = queue.push(event_point(EventType.DragEnd, InputDev.Touch, target, timestamp, touch_point));
+            }
+
+            if !self.dragging && !self.long_press_fired && moved_sq <= drag_threshold_sq && elapsed <= self.config.click_max_duration as u32 {
+                if self.last_release_time > 0
+                    && (timestamp - self.last_release_time) <= self.config.double_click_interval as u32
+                    && distance_sq(self.last_click_point, touch_point) <= drag_threshold_sq {
+                    _ = queue.push(event_point(EventType.DoubleClick, InputDev.Touch, target, timestamp, touch_point));
+                    self.last_release_time = 0;
+                } else {
+                    _ = queue.push(event_point(EventType.Click, InputDev.Touch, target, timestamp, touch_point));
+                    self.last_release_time = timestamp;
+                    self.last_click_point = touch_point;
+                }
+            } else if !self.dragging && moved_sq >= swipe_threshold_sq {
+                const dx: i32 = touch_point.x as i32 - self.start_point.x as i32;
+                const dy: i32 = touch_point.y as i32 - self.start_point.y as i32;
+                if abs_i32(dx) >= abs_i32(dy) {
+                    if dx >= 0 {
+                        _ = queue.push(event_point(EventType.SwipeRight, InputDev.Touch, target, timestamp, touch_point));
+                    } else {
+                        _ = queue.push(event_point(EventType.SwipeLeft, InputDev.Touch, target, timestamp, touch_point));
+                    }
+                } else if dy >= 0 {
+                    _ = queue.push(event_point(EventType.SwipeDown, InputDev.Touch, target, timestamp, touch_point));
+                } else {
+                    _ = queue.push(event_point(EventType.SwipeUp, InputDev.Touch, target, timestamp, touch_point));
+                }
+            }
+
+            self.is_pressed = false;
+            self.dragging = false;
+            self.long_press_fired = false;
+        }
+    }
+
+    fn process_pinch(self: &Self, first: Point, second: Point, active: bool, timestamp: u32, target: i32, queue: &EventQueue) void {
+        const current_distance_sq: i32 = distance_sq(first, second);
+        const center: Point = Point{
+            x: ((first.x as i32 + second.x as i32) / 2) as i16,
+            y: ((first.y as i32 + second.y as i32) / 2) as i16,
+        };
+
+        if active && !self.pinch_active {
+            self.pinch_active = true;
+            self.pinch_distance_sq = current_distance_sq;
+            _ = queue.push(event_point_value(EventType.PinchStart, InputDev.Touch, target, timestamp, center, current_distance_sq));
+            return;
+        }
+
+        if active && self.pinch_active {
+            const delta_sq: i32 = abs_i32(current_distance_sq - self.pinch_distance_sq);
+            const pinch_threshold_sq: i32 = (self.config.pinch_threshold as i32) * (self.config.pinch_threshold as i32);
+            if delta_sq >= pinch_threshold_sq {
+                self.pinch_distance_sq = current_distance_sq;
+                _ = queue.push(event_point_value(EventType.Pinch, InputDev.Touch, target, timestamp, center, current_distance_sq));
+            }
+            return;
+        }
+
+        if !active && self.pinch_active {
+            self.pinch_active = false;
+            _ = queue.push(event_point_value(EventType.PinchEnd, InputDev.Touch, target, timestamp, center, self.pinch_distance_sq));
+            self.pinch_distance_sq = 0;
+        }
+    }
+}
+
+export struct GestureConfig {
+    click_max_duration: u16,
+    long_press_duration: u16,
+    swipe_threshold: u16,
+    drag_threshold: u16,
+    double_click_interval: u16,
+    pinch_threshold: u16,
+}
+
+/// 返回默认的手势识别配置。
+export fn gesture_config_default() GestureConfig {
+    return GestureConfig{
+        click_max_duration: 500,
+        long_press_duration: 800,
+        swipe_threshold: 30,
+        drag_threshold: 8,
+        double_click_interval: 300,
+        pinch_threshold: 16,
+    };
+}
+
+/// 按指定配置创建手势识别器。
+export fn gesture_detector_with_config(config: GestureConfig) GestureDetector {
+    return GestureDetector{
+        config: config,
+        start_point: POINT_ZERO,
+        start_time: 0,
+        last_point: POINT_ZERO,
+        last_click_point: POINT_ZERO,
+        last_release_time: 0,
+        is_pressed: false,
+        dragging: false,
+        long_press_fired: false,
+        pinch_active: false,
+        pinch_distance_sq: 0,
+    };
+}
+
+/// 返回带有指定传播阶段的事件副本。
+export fn event_with_phase(evt: Event, phase: EventPhase) Event {
+    var next: Event = evt;
+    next.phase = phase;
+    return next;
+}
+
+/// 构造同时携带坐标和值的事件。
+export fn event_point_value(kind: EventType, dev: InputDev, target: i32, timestamp: u32, point: Point, value: i32) Event {
+    return Event{
+        event_type: kind,
+        phase: EventPhase.Target,
+        dev_type: dev,
+        target: target,
+        timestamp: timestamp,
+        data: EventData.PointValue(EventPointValue{
+            point: point,
+            value: value,
+        }),
+        key_repeat: false,
+        modifiers: 0u16,
+        stop_bubble: false,
+        handled: false,
+    };
+}
+
+/// 构造焦点进入或离开事件。
+export fn event_focus(kind: EventType, target: i32, timestamp: u32) Event {
+    return Event{
+        event_type: kind,
+        phase: EventPhase.Target,
+        dev_type: InputDev.Keypad,
+        target: target,
+        timestamp: timestamp,
+        data: EventData.None(),
+        key_repeat: false,
+        modifiers: 0u16,
+        stop_bubble: false,
+        handled: false,
+    };
+}
+
+/// 构造空事件值。
+export fn event_none() Event {
+    return Event{
+        event_type: EventType.None,
+        phase: EventPhase.Target,
+        dev_type: InputDev.Touch,
+        target: -1,
+        timestamp: 0,
+        data: EventData.None(),
+        key_repeat: false,
+        modifiers: 0u16,
+        stop_bubble: false,
+        handled: false,
+    };
+}
+
+/// 构造包含事件值的 `EventOption`。
+export fn event_option_some(evt: Event) EventOption {
+    return EventOption{
+        has_value: true,
+        value: evt,
+    };
+}
+
+/// 构造空的 `EventOption`。
+export fn event_option_none() EventOption {
+    return EventOption{
+        has_value: false,
+        value: event_none(),
+    };
+}
+
+/// 构造携带坐标的事件。
+export fn event_point(kind: EventType, dev: InputDev, target: i32, timestamp: u32, point: Point) Event {
+    return Event{
+        event_type: kind,
+        phase: EventPhase.Target,
+        dev_type: dev,
+        target: target,
+        timestamp: timestamp,
+        data: EventData.Point(point),
+        key_repeat: false,
+        modifiers: 0u16,
+        stop_bubble: false,
+        handled: false,
+    };
+}
+
+/// 构造携带键码的事件。
+export fn event_key(kind: EventType, dev: InputDev, target: i32, timestamp: u32, key_code: u16) Event {
+    return event_key_repeat(kind, dev, target, timestamp, key_code, false);
+}
+
+/// 构造携带键码并标记是否为重复触发的事件。
+export fn event_key_repeat(kind: EventType, dev: InputDev, target: i32, timestamp: u32, key_code: u16, key_repeat: bool) Event {
+    return event_key_modifiers(kind, dev, target, timestamp, key_code, 0u16, key_repeat);
+}
+
+/// 构造携带键码、修饰键和重复触发标记的事件。
+export fn event_key_modifiers(kind: EventType, dev: InputDev, target: i32, timestamp: u32, key_code: u16, modifiers: u16, key_repeat: bool) Event {
+    return Event{
+        event_type: kind,
+        phase: EventPhase.Target,
+        dev_type: dev,
+        target: target,
+        timestamp: timestamp,
+        data: EventData.KeyCode(key_code),
+        key_repeat: key_repeat,
+        modifiers: modifiers,
+        stop_bubble: false,
+        handled: false,
+    };
+}
+
+/// 构造携带 UTF-8 文本的输入事件。
+export fn event_text_input(dev: InputDev, target: i32, timestamp: u32, text: &const byte, len: usize) Event {
+    const clamped_len: usize = event_text_clamped_len(text, len, EVENT_TEXT_INPUT_MAX_BYTES as usize);
+    var value: EventTextValue = EventTextValue{
+        len: clamped_len as u16,
+        bytes: [],
+    };
+    var i: usize = 0usize;
+    while i < clamped_len {
+        value.bytes[i] = text[i];
+        i = i + 1usize;
+    }
+    value.bytes[clamped_len] = 0u8;
+    return Event{
+        event_type: EventType.TextInput,
+        phase: EventPhase.Target,
+        dev_type: dev,
+        target: target,
+        timestamp: timestamp,
+        data: EventData.Text(value),
+        key_repeat: false,
+        modifiers: 0u16,
+        stop_bubble: false,
+        handled: false,
+    };
+}
+
+/// 构造携带数值的事件。
+export fn event_value(kind: EventType, dev: InputDev, target: i32, timestamp: u32, value: i32) Event {
+    return Event{
+        event_type: kind,
+        phase: EventPhase.Target,
+        dev_type: dev,
+        target: target,
+        timestamp: timestamp,
+        data: EventData.Value(value),
+        key_repeat: false,
+        modifiers: 0u16,
+        stop_bubble: false,
+        handled: false,
+    };
+}
+
+/// 创建空的事件队列。
+export fn event_queue_new() EventQueue {
+    return EventQueue{
+        buffer: [],
+        head: 0,
+        tail: 0,
+        count: 0,
+        overflow: 0,
+    };
+}
+
+/// 创建使用默认配置的手势识别器。
+export fn gesture_detector_new() GestureDetector {
+    return gesture_detector_with_config(gesture_config_default());
+}

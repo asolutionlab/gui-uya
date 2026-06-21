@@ -1,0 +1,998 @@
+use gui.core.point.Point;
+use gui.core.rect.Rect;
+use gui.richtext.document.RichBlock;
+use gui.richtext.document.RichBlockType;
+use gui.richtext.document.RichDocument;
+use gui.richtext.document.RichSpan;
+use gui.richtext.document.rich_utf8_codepoint_count;
+use gui.richtext.document.rich_utf8_codepoint_offset_to_byte_offset;
+use gui.richtext.document.rich_utf8_next_index;
+use gui.richtext.selection.RichPos;
+use gui.richtext.selection.RichRange;
+use gui.richtext.selection.rich_pos_compare;
+use gui.richtext.selection.rich_range_is_collapsed;
+use gui.richtext.selection.rich_range_normalized;
+use gui.render.font.Font;
+use gui.render.font.text_width;
+use std.mem.allocator.MallocAllocator;
+use std.mem.allocator.g_allocator;
+
+struct RichLayoutGlyph {
+    text_ptr: &const byte,
+    text_len: usize,
+    width: i16,
+    break_after: bool,
+    whitespace: bool,
+}
+
+struct RichLayoutGlyphBuffer {
+    allocator: &MallocAllocator,
+    glyphs: &RichLayoutGlyph,
+    len: u32,
+    cap: u32,
+}
+
+struct RichBlockLayoutMetrics {
+    left_inset: i16,
+    right_inset: i16,
+    before_gap: i16,
+    after_gap: i16,
+    line_height: i16,
+}
+
+struct RichLayoutLineRange {
+    start: u32,
+    end: u32,
+}
+
+export struct RichVisualLine {
+    block_index: u32,
+    start: RichPos,
+    end: RichPos,
+    x: i16,
+    y: i16,
+    w: u16,
+    h: u16,
+    baseline: i16,
+}
+
+export struct RichLayoutCache {
+    allocator: &MallocAllocator,
+    lines: &RichVisualLine,
+    line_count: u32,
+    line_cap: u32,
+    max_width: u16,
+    total_height: u16,
+    doc_revision: u32,
+    font_height: u8,
+    font_line_height: u8,
+    font_tracking: i8,
+    theme_revision: u32,
+}
+
+fn rich_layout_clamp_u16(value: i32) u16 {
+    if value <= 0 {
+        return 0u16;
+    }
+    if value >= 65535 {
+        return 65535u16;
+    }
+    return (value as! u16).value;
+}
+
+fn rich_layout_clamp_i16(value: i32) i16 {
+    if value <= -32768 {
+        return -32768i16;
+    }
+    if value >= 32767 {
+        return 32767i16;
+    }
+    return (value as! i16).value;
+}
+
+fn rich_layout_glyph_buffer_new(allocator: &MallocAllocator) RichLayoutGlyphBuffer {
+    return RichLayoutGlyphBuffer{
+        allocator: allocator,
+        glyphs: null,
+        len: 0u32,
+        cap: 0u32,
+    };
+}
+
+fn rich_layout_glyph_buffer_drop(buf: &RichLayoutGlyphBuffer) void {
+    if buf.glyphs != null {
+        buf.allocator.dealloc(buf.glyphs as &byte);
+    }
+    buf.glyphs = null;
+    buf.len = 0u32;
+    buf.cap = 0u32;
+}
+
+fn rich_layout_glyph_buffer_clear(buf: &RichLayoutGlyphBuffer) void {
+    buf.len = 0u32;
+}
+
+fn rich_layout_glyph_buffer_ensure_capacity(buf: &RichLayoutGlyphBuffer, needed_count: u32) !void {
+    if needed_count <= buf.cap {
+        return;
+    }
+    var new_cap: u32 = buf.cap;
+    if new_cap == 0u32 {
+        new_cap = 8u32;
+    }
+    while new_cap < needed_count {
+        new_cap = new_cap * 2u32;
+    }
+    const new_bytes: usize = @size_of(RichLayoutGlyph) as usize * new_cap as usize;
+    if buf.glyphs == null {
+        buf.glyphs = (try buf.allocator.alloc(new_bytes)) as &RichLayoutGlyph;
+    } else {
+        buf.glyphs = (try buf.allocator.realloc(buf.glyphs as &byte, new_bytes)) as &RichLayoutGlyph;
+    }
+    buf.cap = new_cap;
+}
+
+fn rich_layout_glyph_buffer_push(buf: &RichLayoutGlyphBuffer, glyph: RichLayoutGlyph) !void {
+    try rich_layout_glyph_buffer_ensure_capacity(buf, buf.len + 1u32);
+    buf.glyphs[buf.len as usize] = glyph;
+    buf.len = buf.len + 1u32;
+}
+
+fn rich_layout_ascii_break_after(ch: u8) bool {
+    return ch == ' ' || ch == '\t' || ch == '-' || ch == '/' || ch == ',' || ch == '.' || ch == ';' || ch == ':';
+}
+
+fn rich_layout_ascii_whitespace(ch: u8) bool {
+    return ch == ' ' || ch == '\t';
+}
+
+fn rich_layout_glyph_whitespace(text_ptr: &const byte, text_len: usize) bool {
+    if text_ptr == null || text_len != 1usize {
+        return false;
+    }
+    return rich_layout_ascii_whitespace(text_ptr[0]);
+}
+
+fn rich_layout_glyph_break_after(text_ptr: &const byte, text_len: usize) bool {
+    if text_ptr == null || text_len == 0usize {
+        return false;
+    }
+    if text_len == 1usize {
+        return rich_layout_ascii_break_after(text_ptr[0]);
+    }
+    return true;
+}
+
+fn rich_layout_trim_line_end(glyphs: &RichLayoutGlyph, start: u32, end: u32) u32 {
+    var trimmed: u32 = end;
+    while trimmed > start {
+        if !glyphs[trimmed as usize - 1usize].whitespace {
+            break;
+        }
+        trimmed = trimmed - 1u32;
+    }
+    if trimmed == start {
+        return end;
+    }
+    return trimmed;
+}
+
+fn rich_layout_skip_leading_whitespace(glyphs: &RichLayoutGlyph, start: u32, end: u32) u32 {
+    var cursor: u32 = start;
+    while cursor < end && glyphs[cursor as usize].whitespace {
+        cursor = cursor + 1u32;
+    }
+    return cursor;
+}
+
+fn rich_layout_width_between(glyphs: &RichLayoutGlyph, start: u32, end: u32) i32 {
+    var total: i32 = 0;
+    var idx: u32 = start;
+    while idx < end {
+        total = total + glyphs[idx as usize].width as i32;
+        idx = idx + 1u32;
+    }
+    return total;
+}
+
+fn rich_layout_virtual_break_width(font: &Font) i32 {
+    const space_width: i16 = text_width(" " as &const byte, 1usize, font);
+    if space_width > 0i16 {
+        return space_width as i32;
+    }
+    return 1;
+}
+
+fn rich_layout_block_text_codepoints(block: &RichBlock) u32 {
+    if block == null {
+        return 0u32;
+    }
+    var total: u32 = 0u32;
+    var span_idx: u16 = 0u16;
+    while span_idx < block.span_count {
+        const span: &RichSpan = &block.spans[span_idx as usize];
+        total = total + rich_utf8_codepoint_count(span.text_ptr as &const byte, span.text_len);
+        span_idx = span_idx + 1u16;
+    }
+    return total;
+}
+
+fn rich_layout_block_end_pos(block: &RichBlock, block_index: u32) RichPos {
+    if block == null || block.span_count == 0u16 {
+        return RichPos{
+            block_index: block_index,
+            span_index: 0u16,
+            utf8_offset: 0u32,
+            affinity: 0u8,
+        };
+    }
+    const last_idx: u16 = block.span_count - 1u16;
+    return RichPos{
+        block_index: block_index,
+        span_index: last_idx,
+        utf8_offset: block.spans[last_idx as usize].text_len as u32,
+        affinity: 0u8,
+    };
+}
+
+fn rich_layout_measure_between_positions(block: &RichBlock, start: RichPos, end: RichPos, font: &Font) i32 {
+    if block == null || font == null {
+        return 0;
+    }
+    if start.block_index != end.block_index || start.span_index > end.span_index {
+        return 0;
+    }
+    if start.span_index == end.span_index && start.utf8_offset >= end.utf8_offset {
+        return 0;
+    }
+    if start.span_index >= block.span_count || end.span_index >= block.span_count {
+        return 0;
+    }
+
+    var total: i32 = 0;
+    var span_idx: u16 = start.span_index;
+    while span_idx <= end.span_index {
+        const span: &RichSpan = &block.spans[span_idx as usize];
+        var byte_start: usize = 0usize;
+        var byte_end: usize = span.text_len;
+        if span_idx == start.span_index {
+            byte_start = start.utf8_offset as usize;
+        }
+        if span_idx == end.span_index {
+            byte_end = end.utf8_offset as usize;
+        }
+        if byte_end > byte_start {
+            total = total + text_width(@ptr_from_usize(@usize_from_ptr(span.text_ptr as &void) + byte_start) as &const byte, byte_end - byte_start, font) as i32;
+        }
+        if span_idx == end.span_index {
+            break;
+        }
+        span_idx = span_idx + 1u16;
+    }
+    return total;
+}
+
+fn rich_layout_find_pos_in_block(block: &RichBlock, block_index: u32, codepoint_offset: u32) !RichPos {
+    if block == null || block.span_count == 0u16 {
+        return RichPos{
+            block_index: block_index,
+            span_index: 0u16,
+            utf8_offset: 0u32,
+            affinity: 0u8,
+        };
+    }
+
+    var remaining: u32 = codepoint_offset;
+    var span_idx: u16 = 0u16;
+    while span_idx < block.span_count {
+        const span: &RichSpan = &block.spans[span_idx as usize];
+        const span_codepoints: u32 = rich_utf8_codepoint_count(span.text_ptr as &const byte, span.text_len);
+        if remaining <= span_codepoints {
+            const byte_offset: usize = try rich_utf8_codepoint_offset_to_byte_offset(span.text_ptr as &const byte, span.text_len, remaining);
+            return RichPos{
+                block_index: block_index,
+                span_index: span_idx,
+                utf8_offset: byte_offset as u32,
+                affinity: 0u8,
+            };
+        }
+        remaining = remaining - span_codepoints;
+        span_idx = span_idx + 1u16;
+    }
+    return rich_layout_block_end_pos(block, block_index);
+}
+
+fn rich_layout_block_metrics(block_type: RichBlockType, indent: u8, font: &Font) RichBlockLayoutMetrics {
+    const indent_px: i16 = indent as i16 * 12i16;
+    var metrics: RichBlockLayoutMetrics = RichBlockLayoutMetrics{
+        left_inset: indent_px,
+        right_inset: 0i16,
+        before_gap: 0i16,
+        after_gap: 0i16,
+        line_height: font.line_height as i16,
+    };
+    if block_type == RichBlockType.Heading1 {
+        metrics.before_gap = 6i16;
+        metrics.after_gap = 4i16;
+        metrics.line_height = font.line_height as i16 + 8i16;
+        return metrics;
+    }
+    if block_type == RichBlockType.Heading2 {
+        metrics.before_gap = 4i16;
+        metrics.after_gap = 3i16;
+        metrics.line_height = font.line_height as i16 + 6i16;
+        return metrics;
+    }
+    if block_type == RichBlockType.Heading3 {
+        metrics.before_gap = 3i16;
+        metrics.after_gap = 2i16;
+        metrics.line_height = font.line_height as i16 + 4i16;
+        return metrics;
+    }
+    if block_type == RichBlockType.Quote {
+        metrics.left_inset = metrics.left_inset + 16i16;
+        metrics.right_inset = 4i16;
+        metrics.before_gap = 2i16;
+        metrics.after_gap = 2i16;
+        return metrics;
+    }
+    if block_type == RichBlockType.BulletItem {
+        metrics.left_inset = metrics.left_inset + 18i16;
+        return metrics;
+    }
+    if block_type == RichBlockType.OrderedItem {
+        metrics.left_inset = metrics.left_inset + 22i16;
+        return metrics;
+    }
+    if block_type == RichBlockType.CodeBlock {
+        metrics.left_inset = metrics.left_inset + 12i16;
+        metrics.right_inset = 12i16;
+        metrics.before_gap = 4i16;
+        metrics.after_gap = 4i16;
+        metrics.line_height = font.line_height as i16 + 2i16;
+        return metrics;
+    }
+    return metrics;
+}
+
+fn rich_layout_collect_block_glyphs(block: &RichBlock, font: &Font, out: &RichLayoutGlyphBuffer) !void {
+    rich_layout_glyph_buffer_clear(out);
+    if block == null {
+        return;
+    }
+
+    var span_idx: u16 = 0u16;
+    while span_idx < block.span_count {
+        const span: &RichSpan = &block.spans[span_idx as usize];
+        var byte_idx: usize = 0usize;
+        while byte_idx < span.text_len {
+            const next_byte_idx: usize = rich_utf8_next_index(span.text_ptr as &const byte, span.text_len, byte_idx);
+            const glyph_ptr: &const byte = @ptr_from_usize(@usize_from_ptr(span.text_ptr as &void) + byte_idx) as &const byte;
+            const glyph_len: usize = next_byte_idx - byte_idx;
+            try rich_layout_glyph_buffer_push(out, RichLayoutGlyph{
+                text_ptr: glyph_ptr,
+                text_len: glyph_len,
+                width: text_width(glyph_ptr, glyph_len, font),
+                break_after: rich_layout_glyph_break_after(glyph_ptr, glyph_len),
+                whitespace: rich_layout_glyph_whitespace(glyph_ptr, glyph_len),
+            });
+            byte_idx = next_byte_idx;
+        }
+        span_idx = span_idx + 1u16;
+    }
+}
+
+fn rich_layout_append_block_lines(
+    out: &RichLayoutCache,
+    doc: &RichDocument,
+    block_idx: u32,
+    font: &Font,
+    max_width: u16,
+    y_cursor_before_block: i32,
+    glyphs: &RichLayoutGlyphBuffer,
+) !i32 {
+    if out == null || doc == null || font == null || glyphs == null || block_idx >= doc.block_count {
+        return y_cursor_before_block;
+    }
+
+    const block: &RichBlock = &doc.blocks[block_idx as usize];
+    const metrics: RichBlockLayoutMetrics = rich_layout_block_metrics(block.block_type, block.indent, font);
+    var y_cursor: i32 = y_cursor_before_block + metrics.before_gap as i32;
+    const line_y: i16 = rich_layout_clamp_i16(y_cursor);
+    const baseline_pad: i16 = (metrics.line_height - font.line_height as i16) / 2i16;
+    const available_width_raw: i32 = max_width as i32 - metrics.left_inset as i32 - metrics.right_inset as i32;
+    var available_width: i32 = available_width_raw;
+    if available_width < 1 {
+        available_width = 1;
+    }
+
+    try rich_layout_collect_block_glyphs(block, font, glyphs);
+    if glyphs.len == 0u32 {
+        try out.push_line(RichVisualLine{
+            block_index: block_idx,
+            start: RichPos{
+                block_index: block_idx,
+                span_index: 0u16,
+                utf8_offset: 0u32,
+                affinity: 0u8,
+            },
+            end: RichPos{
+                block_index: block_idx,
+                span_index: 0u16,
+                utf8_offset: 0u32,
+                affinity: 0u8,
+            },
+            x: metrics.left_inset,
+            y: line_y,
+            w: 0u16,
+            h: rich_layout_clamp_u16(metrics.line_height as i32),
+            baseline: line_y + baseline_pad + font.baseline as i16,
+        });
+        return y_cursor + metrics.line_height as i32 + metrics.after_gap as i32;
+    }
+
+    var line_start: u32 = 0u32;
+    var cursor: u32 = 0u32;
+    var current_width: i32 = 0;
+    var last_break: u32 = 0u32;
+    var has_break: bool = false;
+    var width_at_break: i32 = 0;
+    var current_line_y: i16 = line_y;
+    while cursor < glyphs.len {
+        const glyph: RichLayoutGlyph = glyphs.glyphs[cursor as usize];
+        const next_width: i32 = current_width + glyph.width as i32;
+        if next_width <= available_width || cursor == line_start {
+            current_width = next_width;
+            if glyph.break_after {
+                last_break = cursor + 1u32;
+                has_break = true;
+                width_at_break = current_width;
+            }
+            cursor = cursor + 1u32;
+            continue;
+        }
+
+        var emit_end: u32 = cursor;
+        if has_break && last_break > line_start {
+            emit_end = rich_layout_trim_line_end(glyphs.glyphs, line_start, last_break);
+            cursor = rich_layout_skip_leading_whitespace(glyphs.glyphs, last_break, glyphs.len);
+        } else {
+            if glyph.whitespace && current_width > 0 {
+                cursor = cursor + 1u32;
+            }
+            emit_end = rich_layout_trim_line_end(glyphs.glyphs, line_start, cursor);
+        }
+
+        if emit_end <= line_start {
+            emit_end = cursor;
+        }
+        const emit_width: i32 = rich_layout_width_between(glyphs.glyphs, line_start, emit_end);
+        try out.push_line(RichVisualLine{
+            block_index: block_idx,
+            start: try rich_layout_find_pos_in_block(block, block_idx, line_start),
+            end: try rich_layout_find_pos_in_block(block, block_idx, emit_end),
+            x: metrics.left_inset,
+            y: current_line_y,
+            w: rich_layout_clamp_u16(emit_width),
+            h: rich_layout_clamp_u16(metrics.line_height as i32),
+            baseline: current_line_y + baseline_pad + font.baseline as i16,
+        });
+
+        line_start = cursor;
+        current_width = rich_layout_width_between(glyphs.glyphs, line_start, cursor);
+        has_break = false;
+        width_at_break = 0;
+        _ = width_at_break;
+        last_break = line_start;
+        current_line_y = current_line_y + metrics.line_height;
+    }
+
+    const final_end: u32 = rich_layout_trim_line_end(glyphs.glyphs, line_start, glyphs.len);
+    const final_width: i32 = rich_layout_width_between(glyphs.glyphs, line_start, final_end);
+    try out.push_line(RichVisualLine{
+        block_index: block_idx,
+        start: try rich_layout_find_pos_in_block(block, block_idx, line_start),
+        end: try rich_layout_find_pos_in_block(block, block_idx, final_end),
+        x: metrics.left_inset,
+        y: current_line_y,
+        w: rich_layout_clamp_u16(final_width),
+        h: rich_layout_clamp_u16(metrics.line_height as i32),
+        baseline: current_line_y + baseline_pad + font.baseline as i16,
+    });
+    return current_line_y as i32 + metrics.line_height as i32 + metrics.after_gap as i32;
+}
+
+export fn rich_layout_cache_new() RichLayoutCache {
+    return rich_layout_cache_new_with_allocator(&g_allocator);
+}
+
+export fn rich_layout_cache_new_with_allocator(allocator: &MallocAllocator) RichLayoutCache {
+    return RichLayoutCache{
+        allocator: allocator,
+        lines: null,
+        line_count: 0u32,
+        line_cap: 0u32,
+        max_width: 0u16,
+        total_height: 0u16,
+        doc_revision: 0u32,
+        font_height: 0u8,
+        font_line_height: 0u8,
+        font_tracking: 0,
+        theme_revision: 0u32,
+    };
+}
+
+RichLayoutCache {
+    fn dispose(self: &Self) void {
+        if self.lines != null {
+            self.allocator.dealloc(self.lines as &byte);
+        }
+        self.lines = null;
+        self.line_count = 0u32;
+        self.line_cap = 0u32;
+        self.max_width = 0u16;
+        self.total_height = 0u16;
+        self.doc_revision = 0u32;
+        self.font_height = 0u8;
+        self.font_line_height = 0u8;
+        self.font_tracking = 0;
+        self.theme_revision = 0u32;
+    }
+
+    fn clear(self: &Self) void {
+        self.line_count = 0u32;
+        self.total_height = 0u16;
+    }
+
+    fn ensure_line_capacity(self: &Self, needed_count: u32) !void {
+        if needed_count <= self.line_cap {
+            return;
+        }
+        var new_cap: u32 = self.line_cap;
+        if new_cap == 0u32 {
+            new_cap = 8u32;
+        }
+        while new_cap < needed_count {
+            new_cap = new_cap * 2u32;
+        }
+        const new_bytes: usize = @size_of(RichVisualLine) as usize * new_cap as usize;
+        if self.lines == null {
+            self.lines = (try self.allocator.alloc(new_bytes)) as &RichVisualLine;
+        } else {
+            self.lines = (try self.allocator.realloc(self.lines as &byte, new_bytes)) as &RichVisualLine;
+        }
+        self.line_cap = new_cap;
+    }
+
+    fn push_line(self: &Self, line: RichVisualLine) !void {
+        try self.ensure_line_capacity(self.line_count + 1u32);
+        self.lines[self.line_count as usize] = line;
+        self.line_count = self.line_count + 1u32;
+    }
+
+    fn line_has_trailing_block_break(self: &Self, doc: &RichDocument, line_index: u32) bool {
+        if doc == null || line_index >= self.line_count {
+            return false;
+        }
+        const line: &RichVisualLine = &self.lines[line_index as usize];
+        if line.block_index + 1u32 >= doc.block_count {
+            return false;
+        }
+        if line_index + 1u32 >= self.line_count {
+            return true;
+        }
+        return self.lines[line_index as usize + 1usize].block_index != line.block_index;
+    }
+
+    fn line_index_for_pos(self: &Self, pos: RichPos) !u32 {
+        if self.line_count == 0u32 {
+            return error.RichTextOutOfBounds;
+        }
+
+        var block_line_end: u32 = 0u32;
+        var found_block: bool = false;
+        var line_idx: u32 = 0u32;
+        while line_idx < self.line_count {
+            const line: &RichVisualLine = &self.lines[line_idx as usize];
+            if line.block_index == pos.block_index {
+                if !found_block {
+                    found_block = true;
+                }
+                block_line_end = line_idx;
+                if rich_pos_compare(pos, line.start) >= 0 && rich_pos_compare(pos, line.end) <= 0 {
+                    return line_idx;
+                }
+            } else if found_block && line.block_index > pos.block_index {
+                break;
+            }
+            line_idx = line_idx + 1u32;
+        }
+
+        if found_block {
+            return block_line_end;
+        }
+        return error.RichTextOutOfBounds;
+    }
+
+    fn block_line_range(self: &Self, start_block: u32, block_count: u32) RichLayoutLineRange {
+        var range: RichLayoutLineRange = RichLayoutLineRange{
+            start: self.line_count,
+            end: self.line_count,
+        };
+        if block_count == 0u32 {
+            var insert_idx: u32 = 0u32;
+            while insert_idx < self.line_count && self.lines[insert_idx as usize].block_index < start_block {
+                insert_idx = insert_idx + 1u32;
+            }
+            range.start = insert_idx;
+            range.end = insert_idx;
+            return range;
+        }
+
+        const block_end_exclusive: u32 = start_block + block_count;
+        var line_idx: u32 = 0u32;
+        while line_idx < self.line_count {
+            const block_index: u32 = self.lines[line_idx as usize].block_index;
+            if block_index >= start_block {
+                range.start = line_idx;
+                break;
+            }
+            line_idx = line_idx + 1u32;
+        }
+        range.end = range.start;
+        while range.end < self.line_count && self.lines[range.end as usize].block_index < block_end_exclusive {
+            range.end = range.end + 1u32;
+        }
+        return range;
+    }
+
+    fn y_cursor_before_block(self: &Self, doc: &RichDocument, font: &Font, block_index: u32) !i32 {
+        if block_index == 0u32 {
+            return 0;
+        }
+        const prev_block_index: u32 = block_index - 1u32;
+        const prev_line_index: u32 = try self.line_index_for_pos(rich_layout_block_end_pos(&doc.blocks[prev_block_index as usize], prev_block_index));
+        const prev_line: &RichVisualLine = &self.lines[prev_line_index as usize];
+        const prev_block: &RichBlock = &doc.blocks[prev_block_index as usize];
+        const prev_metrics: RichBlockLayoutMetrics = rich_layout_block_metrics(prev_block.block_type, prev_block.indent, font);
+        return prev_line.y as i32 + prev_line.h as i32 + prev_metrics.after_gap as i32;
+    }
+
+    fn total_height_from_tail(self: &Self, doc: &RichDocument, font: &Font) !u16 {
+        if self.line_count == 0u32 {
+            return 0u16;
+        }
+        const last_line: &RichVisualLine = &self.lines[self.line_count as usize - 1usize];
+        if last_line.block_index >= doc.block_count {
+            return error.RichTextOutOfBounds;
+        }
+        const last_block: &RichBlock = &doc.blocks[last_line.block_index as usize];
+        const last_metrics: RichBlockLayoutMetrics = rich_layout_block_metrics(last_block.block_type, last_block.indent, font);
+        return rich_layout_clamp_u16(last_line.y as i32 + last_line.h as i32 + last_metrics.after_gap as i32);
+    }
+
+    fn line_index_for_point(self: &Self, point: Point) !u32 {
+        if self.line_count == 0u32 {
+            return error.RichTextOutOfBounds;
+        }
+        const point_y: i32 = point.y as i32;
+        if point.y <= self.lines[0].y {
+            return 0u32;
+        }
+
+        var line_idx: u32 = 0u32;
+        while line_idx + 1u32 < self.line_count {
+            const line: &RichVisualLine = &self.lines[line_idx as usize];
+            const next_line: &RichVisualLine = &self.lines[line_idx as usize + 1usize];
+            const line_bottom: i32 = line.y as i32 + line.h as i32;
+            if point_y < line_bottom {
+                return line_idx;
+            }
+            if point_y < next_line.y as i32 {
+                const gap_mid: i32 = line_bottom + ((next_line.y as i32 - line_bottom) / 2);
+                if point_y <= gap_mid {
+                    return line_idx;
+                }
+                return line_idx + 1u32;
+            }
+            line_idx = line_idx + 1u32;
+        }
+        return self.line_count - 1u32;
+    }
+
+    fn line_x_for_pos(self: &Self, doc: &RichDocument, font: &Font, line_index: u32, pos: RichPos) !i16 {
+        if doc == null || font == null || line_index >= self.line_count {
+            return error.RichTextOutOfBounds;
+        }
+        const line: &RichVisualLine = &self.lines[line_index as usize];
+        if pos.block_index != line.block_index {
+            return error.RichTextOutOfBounds;
+        }
+        if rich_pos_compare(pos, line.start) < 0 || rich_pos_compare(pos, line.end) > 0 {
+            return error.RichTextOutOfBounds;
+        }
+        if line.block_index >= doc.block_count {
+            return error.RichTextOutOfBounds;
+        }
+        const block: &RichBlock = &doc.blocks[line.block_index as usize];
+        return (line.x as i32 + rich_layout_measure_between_positions(block, line.start, pos, font)) as i16;
+    }
+
+    fn selection_rects(self: &Self, doc: &RichDocument, font: &Font, range: RichRange, out_rects: &Rect, rect_cap: u32) !u32 {
+        if doc == null || font == null || self.line_count == 0u32 || rich_range_is_collapsed(range) {
+            return 0u32;
+        }
+        const normalized: RichRange = rich_range_normalized(range);
+        const start_offset: u32 = try doc.pos_to_linear_offset(normalized.anchor);
+        const end_offset: u32 = try doc.pos_to_linear_offset(normalized.focus);
+        if end_offset <= start_offset {
+            return 0u32;
+        }
+
+        const break_width: i32 = rich_layout_virtual_break_width(font);
+        var rect_count: u32 = 0u32;
+        var line_idx: u32 = 0u32;
+        while line_idx < self.line_count {
+            const line: &RichVisualLine = &self.lines[line_idx as usize];
+            if line.block_index >= doc.block_count {
+                return error.RichTextOutOfBounds;
+            }
+            const line_start_offset: u32 = try doc.pos_to_linear_offset(line.start);
+            const line_end_offset: u32 = try doc.pos_to_linear_offset(line.end);
+            const has_trailing_break: bool = self.line_has_trailing_block_break(doc, line_idx);
+            var line_limit: u32 = line_end_offset;
+            if has_trailing_break {
+                line_limit = line_limit + 1u32;
+            }
+
+            if end_offset <= line_start_offset || start_offset >= line_limit {
+                line_idx = line_idx + 1u32;
+                continue;
+            }
+
+            var seg_start: u32 = start_offset;
+            if seg_start < line_start_offset {
+                seg_start = line_start_offset;
+            }
+            var seg_end: u32 = end_offset;
+            if seg_end > line_limit {
+                seg_end = line_limit;
+            }
+            if seg_end <= seg_start {
+                line_idx = line_idx + 1u32;
+                continue;
+            }
+
+            var start_x: i32 = line.x as i32;
+            if seg_start < line_end_offset {
+                start_x = (try self.line_x_for_pos(doc, font, line_idx, try doc.linear_offset_to_pos(seg_start))) as i32;
+            } else {
+                start_x = line.x as i32 + line.w as i32;
+            }
+
+            var end_x: i32 = line.x as i32;
+            if seg_end <= line_end_offset {
+                end_x = (try self.line_x_for_pos(doc, font, line_idx, try doc.linear_offset_to_pos(seg_end))) as i32;
+            } else {
+                end_x = line.x as i32 + line.w as i32 + break_width;
+            }
+
+            if end_x <= start_x {
+                line_idx = line_idx + 1u32;
+                continue;
+            }
+
+            if out_rects != null && rect_count < rect_cap {
+                out_rects[rect_count as usize] = Rect{
+                    x: start_x as i16,
+                    y: line.y,
+                    w: rich_layout_clamp_u16(end_x - start_x),
+                    h: line.h,
+                };
+            }
+            rect_count = rect_count + 1u32;
+            line_idx = line_idx + 1u32;
+        }
+
+        return rect_count;
+    }
+
+    fn point_to_pos(self: &Self, doc: &RichDocument, font: &Font, point: Point) !RichPos {
+        if doc == null || font == null || self.line_count == 0u32 {
+            return error.RichTextOutOfBounds;
+        }
+        const point_x: i32 = point.x as i32;
+
+        const line_index: u32 = try self.line_index_for_point(point);
+        const line: &RichVisualLine = &self.lines[line_index as usize];
+        if point.x <= line.x || rich_pos_compare(line.start, line.end) >= 0 {
+            return line.start;
+        }
+
+        const line_right: i32 = line.x as i32 + line.w as i32;
+        if point_x >= line_right {
+            return line.end;
+        }
+
+        var cursor: RichPos = line.start;
+        var cursor_x: i16 = line.x;
+        var cursor_offset: u32 = try doc.pos_to_linear_offset(line.start);
+        const end_offset: u32 = try doc.pos_to_linear_offset(line.end);
+        while cursor_offset < end_offset {
+            const next_pos: RichPos = try doc.move_right(cursor);
+            const next_x: i16 = try self.line_x_for_pos(doc, font, line_index, next_pos);
+            const boundary: i16 = rich_layout_clamp_i16(cursor_x as i32 + ((next_x as i32 - cursor_x as i32) / 2));
+            if point.x < boundary {
+                return cursor;
+            }
+            cursor = next_pos;
+            cursor_x = next_x;
+            cursor_offset = cursor_offset + 1u32;
+        }
+        return line.end;
+    }
+
+    fn hit_test(self: &Self, doc: &RichDocument, font: &Font, point: Point) !RichPos {
+        return self.point_to_pos(doc, font, point);
+    }
+
+    fn relayout_block_range(
+        self: &Self,
+        doc: &RichDocument,
+        font: &Font,
+        max_width: u16,
+        theme_revision: u32,
+        start_block: u32,
+        old_block_count: u32,
+        new_block_count: u32,
+    ) !void {
+        if doc == null || font == null {
+            self.clear();
+            return;
+        }
+        if self.line_count == 0u32
+            || self.max_width != max_width
+            || self.font_height != font.height
+            || self.font_line_height != font.line_height
+            || self.font_tracking != font.tracking
+            || self.theme_revision != theme_revision {
+            try self.relayout(doc, font, max_width, theme_revision);
+            return;
+        }
+        if start_block > doc.block_count {
+            return error.RichTextOutOfBounds;
+        }
+        if start_block + new_block_count > doc.block_count {
+            return error.RichTextOutOfBounds;
+        }
+
+        const remove_range: RichLayoutLineRange = self.block_line_range(start_block, old_block_count);
+        var patch: RichLayoutCache = rich_layout_cache_new_with_allocator(self.allocator);
+        defer patch.dispose();
+
+        var glyphs: RichLayoutGlyphBuffer = rich_layout_glyph_buffer_new(self.allocator);
+        defer rich_layout_glyph_buffer_drop(&glyphs);
+
+        var y_cursor: i32 = try self.y_cursor_before_block(doc, font, start_block);
+        var block_idx: u32 = start_block;
+        const new_block_end_exclusive: u32 = start_block + new_block_count;
+        while block_idx < new_block_end_exclusive {
+            y_cursor = try rich_layout_append_block_lines(&patch, doc, block_idx, font, max_width, y_cursor, &glyphs);
+            block_idx = block_idx + 1u32;
+        }
+
+        var old_tail_anchor: i32 = self.total_height as i32;
+        const tail_start_block: u32 = start_block + new_block_count;
+        if remove_range.end < self.line_count {
+            if tail_start_block >= doc.block_count {
+                return error.RichTextOutOfBounds;
+            }
+            const tail_block: &RichBlock = &doc.blocks[tail_start_block as usize];
+            const tail_metrics: RichBlockLayoutMetrics = rich_layout_block_metrics(tail_block.block_type, tail_block.indent, font);
+            old_tail_anchor = self.lines[remove_range.end as usize].y as i32 - tail_metrics.before_gap as i32;
+        }
+
+        const removed_line_count: u32 = remove_range.end - remove_range.start;
+        const inserted_line_count: u32 = patch.line_count;
+        const final_line_count: u32 = self.line_count - removed_line_count + inserted_line_count;
+        if final_line_count > self.line_count {
+            try self.ensure_line_capacity(final_line_count);
+        }
+
+        if inserted_line_count > removed_line_count {
+            const grow: u32 = inserted_line_count - removed_line_count;
+            var move_idx: u32 = self.line_count;
+            while move_idx > remove_range.end {
+                move_idx = move_idx - 1u32;
+                self.lines[move_idx as usize + grow as usize] = self.lines[move_idx as usize];
+            }
+        } else if inserted_line_count < removed_line_count {
+            const shrink: u32 = removed_line_count - inserted_line_count;
+            var move_idx: u32 = remove_range.end;
+            while move_idx < self.line_count {
+                self.lines[move_idx as usize - shrink as usize] = self.lines[move_idx as usize];
+                move_idx = move_idx + 1u32;
+            }
+        }
+
+        var copy_idx: u32 = 0u32;
+        while copy_idx < inserted_line_count {
+            self.lines[remove_range.start as usize + copy_idx as usize] = patch.lines[copy_idx as usize];
+            copy_idx = copy_idx + 1u32;
+        }
+
+        const tail_line_start: u32 = remove_range.start + inserted_line_count;
+        const block_delta: i32 = new_block_count as i32 - old_block_count as i32;
+        const y_delta: i32 = y_cursor - old_tail_anchor;
+        var tail_idx: u32 = tail_line_start;
+        while tail_idx < final_line_count {
+            if block_delta != 0 {
+                self.lines[tail_idx as usize].block_index = (self.lines[tail_idx as usize].block_index as i32 + block_delta) as u32;
+                self.lines[tail_idx as usize].start.block_index = (self.lines[tail_idx as usize].start.block_index as i32 + block_delta) as u32;
+                self.lines[tail_idx as usize].end.block_index = (self.lines[tail_idx as usize].end.block_index as i32 + block_delta) as u32;
+            }
+            if y_delta != 0 {
+                self.lines[tail_idx as usize].y = rich_layout_clamp_i16(self.lines[tail_idx as usize].y as i32 + y_delta);
+                self.lines[tail_idx as usize].baseline = rich_layout_clamp_i16(self.lines[tail_idx as usize].baseline as i32 + y_delta);
+            }
+            tail_idx = tail_idx + 1u32;
+        }
+
+        self.line_count = final_line_count;
+        if tail_line_start >= final_line_count {
+            self.total_height = rich_layout_clamp_u16(y_cursor);
+        } else {
+            self.total_height = try self.total_height_from_tail(doc, font);
+        }
+        self.max_width = max_width;
+        self.doc_revision = doc.revision;
+        self.font_height = font.height;
+        self.font_line_height = font.line_height;
+        self.font_tracking = font.tracking;
+        self.theme_revision = theme_revision;
+    }
+
+    fn is_current(self: &Self, doc: &RichDocument, font: &Font, max_width: u16, theme_revision: u32) bool {
+        return self.doc_revision == doc.revision
+            && self.max_width == max_width
+            && self.font_height == font.height
+            && self.font_line_height == font.line_height
+            && self.font_tracking == font.tracking
+            && self.theme_revision == theme_revision
+            && self.line_count > 0u32;
+    }
+
+    fn relayout(self: &Self, doc: &RichDocument, font: &Font, max_width: u16, theme_revision: u32) !void {
+        if doc == null || font == null {
+            self.clear();
+            return;
+        }
+        if self.is_current(doc, font, max_width, theme_revision) {
+            return;
+        }
+
+        self.clear();
+        self.max_width = max_width;
+        self.doc_revision = doc.revision;
+        self.font_height = font.height;
+        self.font_line_height = font.line_height;
+        self.font_tracking = font.tracking;
+        self.theme_revision = theme_revision;
+
+        if doc.block_count == 0u32 {
+            return;
+        }
+
+        var glyphs: RichLayoutGlyphBuffer = rich_layout_glyph_buffer_new(self.allocator);
+        defer rich_layout_glyph_buffer_drop(&glyphs);
+
+        var y_cursor: i32 = 0;
+        var block_idx: u32 = 0u32;
+        while block_idx < doc.block_count {
+            y_cursor = try rich_layout_append_block_lines(self, doc, block_idx, font, max_width, y_cursor, &glyphs);
+            block_idx = block_idx + 1u32;
+        }
+
+        self.total_height = rich_layout_clamp_u16(y_cursor);
+    }
+}

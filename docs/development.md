@@ -2,13 +2,13 @@
 
 ## Toolchain
 
-This repository bundles the compiler at `./uya/bin/uya`.
-The current bundled version is `v0.9.4`, which satisfies the Phase 0 baseline.
+Use the `uya` compiler from `PATH`.
+The current manifest requires at least `v0.9.4`; this workspace was verified with `v0.10.0`.
 
 Useful checks:
 
 ```bash
-./uya/bin/uya --version
+uya --version
 make build
 make test
 make bench

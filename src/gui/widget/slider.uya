@@ -1,0 +1,202 @@
+use gui.core.color.Color;
+use gui.core.event.Event;
+use gui.core.event.EventType;
+use gui.core.obj.GuiObj;
+use gui.core.obj.IGuiInputCallback;
+use gui.core.obj.IGuiRenderCallback;
+use gui.core.rect.Rect;
+use gui.render.ctx.RenderCtx;
+use gui.style.StyleProp;
+use gui.widget.base.IWidgetValueCallback;
+use gui.widget.base.Widget;
+use gui.widget.base.WidgetOrientation;
+use gui.widget.base.WIDGET_TYPE_SLIDER;
+use gui.widget.base.widget_bind_callbacks;
+use gui.widget.base.widget_draw_surface;
+use gui.widget.base.widget_inner_rect;
+use gui.widget.base.widget_new;
+
+fn slider_clamp_i32(v: i32, min: i32, max: i32) i32 {
+    if v < min {
+        return min;
+    }
+    if v > max {
+        return max;
+    }
+    return v;
+}
+
+struct SliderRenderAdapter : IGuiRenderCallback {}
+struct SliderInputAdapter : IGuiInputCallback {}
+
+var SLIDER_RENDER_ADAPTER: IGuiRenderCallback = SliderRenderAdapter{};
+var SLIDER_INPUT_ADAPTER: IGuiInputCallback = SliderInputAdapter{};
+
+export struct Slider {
+    widget: Widget,
+    min: i32,
+    max: i32,
+    value: i32,
+    step: i32,
+    orientation: WidgetOrientation,
+    track_color: Color,
+    progress_color: Color,
+    thumb_color: Color,
+}
+
+SliderRenderAdapter {
+    fn invoke(self: &Self, obj: &GuiObj, ctx: &RenderCtx, user_data: &void) void {
+        _ = self;
+        _ = obj;
+        const slider: &Slider = user_data as &Slider;
+        if slider != null {
+            slider.render(ctx);
+        }
+    }
+}
+
+SliderInputAdapter {
+    fn invoke(self: &Self, obj: &GuiObj, evt: &Event, user_data: &void) bool {
+        _ = self;
+        _ = obj;
+        const slider: &Slider = user_data as &Slider;
+        if slider == null {
+            return false;
+        }
+        return slider.handle_event(evt);
+    }
+}
+
+Slider {
+    fn new(min: i32, max: i32, value: i32) Slider {
+        var widget: Widget = widget_new("Slider", WIDGET_TYPE_SLIDER, true, true);
+        widget.size(160, 28);
+        widget.base.style.set_u32(StyleProp.PaddingLeft, 10u32);
+        widget.base.style.set_u32(StyleProp.PaddingRight, 10u32);
+        widget.base.style.set_u32(StyleProp.PaddingTop, 8u32);
+        widget.base.style.set_u32(StyleProp.PaddingBottom, 8u32);
+        widget.base.style.set_color(StyleProp.BgColor, Color{ r: 246, g: 248, b: 252, a: 255 });
+        widget.base.style.set_color(StyleProp.BorderColor, Color{ r: 212, g: 218, b: 230, a: 255 });
+        widget.base.style.set_u32(StyleProp.BorderWidth, 1u32);
+        widget.base.style.set_u32(StyleProp.Radius, 12u32);
+        return Slider{
+            widget: widget,
+            min: min,
+            max: max,
+            value: slider_clamp_i32(value, min, max),
+            step: 1,
+            orientation: WidgetOrientation.Horizontal,
+            track_color: Color{ r: 205, g: 212, b: 224, a: 255 },
+            progress_color: Color{ r: 37, g: 99, b: 235, a: 255 },
+            thumb_color: Color{ r: 255, g: 255, b: 255, a: 255 },
+        };
+    }
+
+    fn obj(self: &Self) &GuiObj {
+        return widget_bind_callbacks(&self.widget.base, &SLIDER_RENDER_ADAPTER, &SLIDER_INPUT_ADAPTER, self as &void);
+    }
+
+    fn set_value(self: &Self, value: i32) void {
+        var next: i32 = slider_clamp_i32(value, self.min, self.max);
+        if self.step > 1 {
+            next = self.min + ((next - self.min) / self.step) * self.step;
+        }
+        if self.value == next {
+            return;
+        }
+        self.value = next;
+        self.widget.emit_value_change(next);
+        self.widget.base.invalidate();
+    }
+
+    fn get_value(self: &Self) i32 {
+        return self.value;
+    }
+
+    fn on_change(self: &Self, callback: &IWidgetValueCallback, user_data: &void) &Slider {
+        self.widget.on_value_change(callback, user_data);
+        return self;
+    }
+
+    fn value_ratio(self: &Self) f64 {
+        if self.max <= self.min {
+            return 0.0;
+        }
+        return (self.value - self.min) as f64 / (self.max - self.min) as f64;
+    }
+
+    fn handle_drag(self: &Self, evt: &Event) void {
+        const area: Rect = widget_inner_rect(&self.widget);
+        if self.orientation == WidgetOrientation.Vertical {
+            const span: i32 = area.h as i32;
+            if span <= 0 {
+                return;
+            }
+            const local: i32 = slider_clamp_i32(area.y as i32 + area.h as i32 - evt.point().y as i32, 0, span);
+            self.set_value(self.min + ((self.max - self.min) * local) / span);
+        } else {
+            const span2: i32 = area.w as i32;
+            if span2 <= 0 {
+                return;
+            }
+            const local2: i32 = slider_clamp_i32(evt.point().x as i32 - area.x as i32, 0, span2);
+            self.set_value(self.min + ((self.max - self.min) * local2) / span2);
+        }
+    }
+
+    fn handle_event(self: &Self, evt: &Event) bool {
+        _ = self.widget.handle_input(evt);
+        if evt.event_type == EventType.Press || evt.event_type == EventType.Drag || evt.event_type == EventType.Click {
+            self.handle_drag(evt);
+            return true;
+        }
+        if evt.event_type == EventType.Release {
+            return true;
+        }
+        return false;
+    }
+
+    fn render(self: &Self, ctx: &RenderCtx) void {
+        const inner: Rect = widget_draw_surface(&self.widget, ctx);
+        const ratio: f64 = self.value_ratio();
+        if self.orientation == WidgetOrientation.Vertical {
+            const track: Rect = Rect{
+                x: inner.x + ((inner.w as i32 - 6) / 2) as i16,
+                y: inner.y,
+                w: 6,
+                h: inner.h,
+            };
+            const progress_h: u16 = (track.h as f64 * ratio) as u16;
+            const progress: Rect = Rect{
+                x: track.x,
+                y: track.y + track.h as i16 - progress_h as i16,
+                w: track.w,
+                h: progress_h,
+            };
+            const thumb_y: i16 = progress.y;
+            ctx.fill_round_rect(track, 3, self.track_color);
+            ctx.fill_round_rect(progress, 3, self.progress_color);
+            ctx.fill_circle(track.x + 3, thumb_y, 8, self.thumb_color);
+            ctx.draw_circle(track.x + 3, thumb_y, 8, self.progress_color);
+        } else {
+            const track: Rect = Rect{
+                x: inner.x,
+                y: inner.y + ((inner.h as i32 - 6) / 2) as i16,
+                w: inner.w,
+                h: 6,
+            };
+            const progress_w: u16 = (track.w as f64 * ratio) as u16;
+            const progress: Rect = Rect{
+                x: track.x,
+                y: track.y,
+                w: progress_w,
+                h: track.h,
+            };
+            const thumb_x: i16 = track.x + progress_w as i16;
+            ctx.fill_round_rect(track, 3, self.track_color);
+            ctx.fill_round_rect(progress, 3, self.progress_color);
+            ctx.fill_circle(thumb_x, track.y + 3, 8, self.thumb_color);
+            ctx.draw_circle(thumb_x, track.y + 3, 8, self.progress_color);
+        }
+    }
+}

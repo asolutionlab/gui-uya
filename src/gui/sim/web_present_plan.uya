@@ -1,0 +1,40 @@
+use gui.core.dirty_region.DirtyRegion;
+use gui.core.dirty_region.DirtyRegionView;
+use gui.core.rect.Rect;
+use gui.platform.disp.FrameBuffer;
+use gui.platform.disp.framebuffer_rect;
+
+export enum WebPresentMode {
+    None,
+    Full,
+    Dirty,
+}
+
+export struct WebPresentPlan {
+    mode: WebPresentMode,
+    rect_count: i32,
+}
+
+export fn web_build_present_plan(fb: &FrameBuffer, dirty: &DirtyRegion) WebPresentPlan {
+    var plan: WebPresentPlan = WebPresentPlan{
+        mode: WebPresentMode.None,
+        rect_count: 0,
+    };
+    if fb == null || dirty == null {
+        return plan;
+    }
+    dirty.merge();
+    const screen: Rect = framebuffer_rect(fb);
+    if dirty.should_full_refresh(screen) {
+        plan.mode = WebPresentMode.Full;
+        plan.rect_count = 1;
+        return plan;
+    }
+    const view: DirtyRegionView = dirty.get_regions();
+    if view.is_empty() {
+        return plan;
+    }
+    plan.mode = WebPresentMode.Dirty;
+    plan.rect_count = view.len;
+    return plan;
+}

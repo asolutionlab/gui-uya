@@ -28,7 +28,7 @@
 
 | 条目 | 状态 | 说明 |
 |------|------|------|
-| 单行文本输入 | [x] 已有基线 | `gui/widget/lbl.uya` 已有 `TextInput` |
+| 单行文本输入 | [x] 已有基线 | `src/gui/widget/lbl.uya` 已有 `TextInput` |
 | 输入事件抽象 | [x] 已有基线 | `TextInput` / `KeyDown` / `FocusIn` 等事件已存在 |
 | 文本渲染 | [x] 已有基线 | `RenderCtx` / `font.uya` 已可绘制 UTF-8 文本 |
 | 多段落编辑模型 | [x] W2 已落地 | 已有 `RichDocument` / `RichDelta` / `RichHistory` |
@@ -73,14 +73,14 @@
 ### TODO
 
 - [x] 确认最终目录布局
-  - [x] `gui/richtext/document.uya`
-  - [x] `gui/richtext/delta.uya`
-  - [x] `gui/richtext/selection.uya`
-  - [x] `gui/richtext/layout.uya`
-  - [x] `gui/richtext/render.uya`
-  - [x] `gui/richtext/history.uya`
-  - [x] `gui/widget/rich_text_input.uya`
-  - [x] `gui/platform/text_host.uya`
+  - [x] `src/gui/richtext/document.uya`
+  - [x] `src/gui/richtext/delta.uya`
+  - [x] `src/gui/richtext/selection.uya`
+  - [x] `src/gui/richtext/layout.uya`
+  - [x] `src/gui/richtext/render.uya`
+  - [x] `src/gui/richtext/history.uya`
+  - [x] `src/gui/widget/rich_text_input.uya`
+  - [x] `src/gui/platform/text_host.uya`
 - [x] 确认首版内建格式集合
   - [x] `bold`
   - [x] `italic`
@@ -230,7 +230,7 @@
 ### TODO
 
 - [x] 新增 `WIDGET_TYPE_RICH_TEXT_INPUT`
-- [x] 新增 `gui/widget/rich_text_input.uya`
+- [x] 新增 `src/gui/widget/rich_text_input.uya`
 - [x] 提供 `new()`
 - [x] 提供 `obj()`
 - [x] 提供 `set_plain_text()`
@@ -245,12 +245,12 @@
 - [x] 处理鼠标点击定位
 - [x] 处理拖拽选区
 - [x] 处理滚动跟随光标
-- [x] 更新 `gui/widget/base.uya`
+- [x] 更新 `src/gui/widget/base.uya`
   - [x] 新增 `WIDGET_TYPE_RICH_TEXT_INPUT`
   - [x] 更新 opaque culling 白名单
 - [x] 更新手工 render/type dispatch 点
-  - [x] `gui/widget/panel.uya`
-  - [x] `gui/widget/page.uya`
+  - [x] `src/gui/widget/panel.uya`
+  - [x] `src/gui/widget/page.uya`
   - [x] 其他手工 `type_tag` 分发点
 
 ### 验收
@@ -297,7 +297,7 @@
 
 ### TODO
 
-- [x] 在 `gui/platform/web/shell.html` 的 overlay 内创建隐藏 `textarea`
+- [x] 在 `src/gui/platform/web/shell.html` 的 overlay 内创建隐藏 `textarea`
 - [x] 焦点进入时同步激活隐藏输入层
 - [x] 焦点离开时回收隐藏输入层
 - [x] 同步 caret rect 到宿主
@@ -339,7 +339,7 @@
 - [x] 评估 SDL IME caret 定位是否纳入当前版本
   评估结论：纳入当前版本。当前环境已提供 `SDL_SetTextInputRect`，且现有 `rich_text_host` 已暴露 caret rect，可先用最小宿主同步改善桌面 IME 候选窗定位。
 - [x] 新增 demo 页面
-- [x] 在 `gui/sim/app.uya` 或独立 demo 中接入 `RichTextInput`
+- [x] 在 `src/gui/sim/app.uya` 或独立 demo 中接入 `RichTextInput`
 - [x] 新增文档层单测
 - [x] 新增布局层单测
 - [x] 新增 HTML 序列化单测

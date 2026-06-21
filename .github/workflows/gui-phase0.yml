@@ -3,7 +3,10 @@ name: gui-ci
 on:
   push:
     paths:
-      - "gui/**"
+      - "apps/**"
+      - "examples/**"
+      - "src/gui/**"
+      - "tests/**"
       - "docs/**"
       - "Makefile"
       - "tools/**"
@@ -11,7 +14,10 @@ on:
       - ".github/workflows/gui-phase0.yml"
   pull_request:
     paths:
-      - "gui/**"
+      - "apps/**"
+      - "examples/**"
+      - "src/gui/**"
+      - "tests/**"
       - "docs/**"
       - "Makefile"
       - "tools/**"
@@ -27,7 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Show compiler version
-        run: ./uya/bin/uya --version
+        run: make uya-version
       - name: Build smoke example
         run: make build
       - name: Run GUI tests

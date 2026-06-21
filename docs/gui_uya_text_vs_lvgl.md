@@ -52,7 +52,7 @@ build/text_compare/lvgl_text_render_samples.bmp
 
 ## 2. 当前 UyaGUI 的文字渲染现状
 
-结合 [gui/render/font.uya](../gui/render/font.uya) 和现有测试，可以确认当前实现具备这些能力：
+结合 [src/gui/render/font.uya](../src/gui/render/font.uya) 和现有测试，可以确认当前实现具备这些能力：
 
 - 内置 ASCII 位图字：默认 `5x7`
 - 内置中文点阵：`U+4E00..U+9FFF` 映射到 `8x8` 点阵

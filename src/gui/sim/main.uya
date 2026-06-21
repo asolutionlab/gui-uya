@@ -1,0 +1,6 @@
+use gui.sim.runner.run_simulator;
+
+/// 作为模拟器子入口运行 `run_simulator`。
+export fn sim_entry() i32 {
+    return run_simulator();
+}

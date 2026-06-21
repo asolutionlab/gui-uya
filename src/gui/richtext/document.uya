@@ -1,0 +1,1088 @@
+use gui.richtext.selection.RichPos;
+use gui.richtext.selection.rich_pos_zero;
+use std.mem.allocator.MallocAllocator;
+use std.mem.allocator.g_allocator;
+
+error RichTextOutOfBounds;
+error RichTextInvalidUtf8Boundary;
+error RichTextTooManyLinks;
+
+export const RICH_MARK_BOLD: u16 = 1u16;
+export const RICH_MARK_ITALIC: u16 = 2u16;
+export const RICH_MARK_UNDERLINE: u16 = 4u16;
+export const RICH_MARK_STRIKE: u16 = 8u16;
+export const RICH_MARK_INLINE_CODE: u16 = 16u16;
+
+export enum RichBlockType {
+    Paragraph,
+    Heading1,
+    Heading2,
+    Heading3,
+    Quote,
+    BulletItem,
+    OrderedItem,
+    CodeBlock,
+}
+
+export struct RichInlineMarks {
+    bits: u16,
+    link_ref: u16,
+}
+
+export struct RichSpan {
+    text_ptr: &byte,
+    text_len: usize,
+    text_cap: usize,
+    marks: RichInlineMarks,
+}
+
+struct RichLinkTarget {
+    url_ptr: &byte,
+    url_len: usize,
+    url_cap: usize,
+}
+
+export struct RichBlock {
+    block_type: RichBlockType,
+    indent: u8,
+    spans: &RichSpan,
+    span_count: u16,
+    span_cap: u16,
+}
+
+export struct RichDocument {
+    allocator: &MallocAllocator,
+    blocks: &RichBlock,
+    block_count: u32,
+    block_cap: u32,
+    links: &RichLinkTarget,
+    link_count: u16,
+    link_cap: u16,
+    revision: u32,
+}
+
+export fn rich_inline_marks_none() RichInlineMarks {
+    return RichInlineMarks{
+        bits: 0u16,
+        link_ref: 0u16,
+    };
+}
+
+export fn rich_inline_marks_eq(a: RichInlineMarks, b: RichInlineMarks) bool {
+    return a.bits == b.bits && a.link_ref == b.link_ref;
+}
+
+export fn rich_inline_marks_has_bit(marks: RichInlineMarks, bit: u16) bool {
+    return (marks.bits & bit) != 0u16;
+}
+
+export fn rich_inline_marks_with_bit(marks: RichInlineMarks, bit: u16) RichInlineMarks {
+    return RichInlineMarks{
+        bits: marks.bits | bit,
+        link_ref: marks.link_ref,
+    };
+}
+
+export fn rich_inline_marks_without_bit(marks: RichInlineMarks, bit: u16) RichInlineMarks {
+    return RichInlineMarks{
+        bits: marks.bits & (~bit),
+        link_ref: marks.link_ref,
+    };
+}
+
+export fn rich_utf8_span(first: u8) usize {
+    if (first & 0x80u8) == 0u8 {
+        return 1usize;
+    }
+    if (first & 0xE0u8) == 0xC0u8 {
+        return 2usize;
+    }
+    if (first & 0xF0u8) == 0xE0u8 {
+        return 3usize;
+    }
+    if (first & 0xF8u8) == 0xF0u8 {
+        return 4usize;
+    }
+    return 1usize;
+}
+
+export fn rich_utf8_cont_byte(value: u8) bool {
+    return (value & 0xC0u8) == 0x80u8;
+}
+
+export fn rich_utf8_is_boundary(text: &const byte, len: usize, offset: usize) bool {
+    if offset == 0usize || offset == len {
+        return true;
+    }
+    if text == null || offset > len {
+        return false;
+    }
+    return !rich_utf8_cont_byte(text[offset]);
+}
+
+export fn rich_utf8_next_index(text: &const byte, len: usize, index: usize) usize {
+    if text == null || index >= len {
+        return len;
+    }
+    const span: usize = rich_utf8_span(text[index]);
+    if span <= 1usize || index + span > len {
+        return index + 1usize;
+    }
+    var cont_idx: usize = 1usize;
+    while cont_idx < span {
+        if !rich_utf8_cont_byte(text[index + cont_idx]) {
+            return index + 1usize;
+        }
+        cont_idx = cont_idx + 1usize;
+    }
+    return index + span;
+}
+
+export fn rich_utf8_prev_index(text: &const byte, len: usize, index: usize) usize {
+    _ = text;
+    if index == 0usize || len == 0usize {
+        return 0usize;
+    }
+    var cursor: usize = index;
+    if cursor > len {
+        cursor = len;
+    }
+    cursor = cursor - 1usize;
+    while cursor > 0usize && rich_utf8_cont_byte(text[cursor]) {
+        cursor = cursor - 1usize;
+    }
+    return cursor;
+}
+
+export fn rich_utf8_codepoint_count(text: &const byte, len: usize) u32 {
+    if text == null || len == 0usize {
+        return 0u32;
+    }
+    var count: u32 = 0u32;
+    var cursor: usize = 0usize;
+    while cursor < len {
+        count = count + 1u32;
+        cursor = rich_utf8_next_index(text, len, cursor);
+    }
+    return count;
+}
+
+export fn rich_utf8_codepoint_offset_to_byte_offset(text: &const byte, len: usize, codepoint_offset: u32) !usize {
+    if codepoint_offset == 0u32 {
+        return 0usize;
+    }
+    var cursor: usize = 0usize;
+    var seen: u32 = 0u32;
+    while cursor < len {
+        if seen == codepoint_offset {
+            return cursor;
+        }
+        cursor = rich_utf8_next_index(text, len, cursor);
+        seen = seen + 1u32;
+    }
+    if seen == codepoint_offset {
+        return len;
+    }
+    return error.RichTextOutOfBounds;
+}
+
+export fn rich_utf8_byte_offset_to_codepoint_offset(text: &const byte, len: usize, byte_offset: usize) !u32 {
+    if byte_offset > len || !rich_utf8_is_boundary(text, len, byte_offset) {
+        return error.RichTextInvalidUtf8Boundary;
+    }
+    var cursor: usize = 0usize;
+    var count: u32 = 0u32;
+    while cursor < byte_offset {
+        cursor = rich_utf8_next_index(text, len, cursor);
+        count = count + 1u32;
+    }
+    return count;
+}
+
+fn rich_span_reset(span: &RichSpan) void {
+    span.text_ptr = null;
+    span.text_len = 0usize;
+    span.text_cap = 0usize;
+    span.marks = rich_inline_marks_none();
+}
+
+fn rich_span_drop(span: &RichSpan, allocator: &MallocAllocator) void {
+    if span == null {
+        return;
+    }
+    if span.text_ptr != null {
+        allocator.dealloc(span.text_ptr);
+    }
+    rich_span_reset(span);
+}
+
+fn rich_link_target_reset(link: &RichLinkTarget) void {
+    link.url_ptr = null;
+    link.url_len = 0usize;
+    link.url_cap = 0usize;
+}
+
+fn rich_link_target_drop(link: &RichLinkTarget, allocator: &MallocAllocator) void {
+    if link == null {
+        return;
+    }
+    if link.url_ptr != null {
+        allocator.dealloc(link.url_ptr);
+    }
+    rich_link_target_reset(link);
+}
+
+fn rich_link_target_ensure_capacity(link: &RichLinkTarget, allocator: &MallocAllocator, needed_len: usize) !void {
+    const needed_cap: usize = needed_len + 1usize;
+    if needed_cap <= link.url_cap {
+        return;
+    }
+    var new_cap: usize = link.url_cap;
+    if new_cap == 0usize {
+        new_cap = 16usize;
+    }
+    while new_cap < needed_cap {
+        new_cap = new_cap * 2usize;
+    }
+    if link.url_ptr == null {
+        link.url_ptr = try allocator.alloc(new_cap);
+    } else {
+        link.url_ptr = try allocator.realloc(link.url_ptr, new_cap);
+    }
+    link.url_cap = new_cap;
+}
+
+fn rich_link_target_set_bytes(link: &RichLinkTarget, allocator: &MallocAllocator, url: &const byte, len: usize) !void {
+    if len == 0usize {
+        if link.url_ptr != null {
+            allocator.dealloc(link.url_ptr);
+        }
+        rich_link_target_reset(link);
+        return;
+    }
+    try rich_link_target_ensure_capacity(link, allocator, len);
+    var idx: usize = 0usize;
+    while idx < len {
+        link.url_ptr[idx] = url[idx];
+        idx = idx + 1usize;
+    }
+    link.url_ptr[len] = 0u8;
+    link.url_len = len;
+}
+
+fn rich_block_init(block: &RichBlock, block_type: RichBlockType, indent: u8) void {
+    block.block_type = block_type;
+    block.indent = indent;
+    block.spans = null;
+    block.span_count = 0u16;
+    block.span_cap = 0u16;
+}
+
+fn rich_block_drop(block: &RichBlock, allocator: &MallocAllocator) void {
+    if block == null {
+        return;
+    }
+    var idx: u16 = 0u16;
+    while idx < block.span_count {
+        rich_span_drop(&block.spans[idx as usize], allocator);
+        idx = idx + 1u16;
+    }
+    if block.spans != null {
+        allocator.dealloc(block.spans as &byte);
+    }
+    rich_block_init(block, RichBlockType.Paragraph, 0u8);
+}
+
+fn rich_document_touch(self: &RichDocument) void {
+    self.revision = self.revision + 1u32;
+}
+
+fn rich_span_ensure_capacity(span: &RichSpan, allocator: &MallocAllocator, needed_len: usize) !void {
+    const needed_cap: usize = needed_len + 1usize;
+    if needed_cap <= span.text_cap {
+        return;
+    }
+    var new_cap: usize = span.text_cap;
+    if new_cap == 0usize {
+        new_cap = 8usize;
+    }
+    while new_cap < needed_cap {
+        new_cap = new_cap * 2usize;
+    }
+    if span.text_ptr == null {
+        span.text_ptr = try allocator.alloc(new_cap);
+    } else {
+        span.text_ptr = try allocator.realloc(span.text_ptr, new_cap);
+    }
+    span.text_cap = new_cap;
+}
+
+fn rich_span_set_bytes(span: &RichSpan, allocator: &MallocAllocator, text: &const byte, len: usize) !void {
+    if len == 0usize {
+        if span.text_ptr != null {
+            allocator.dealloc(span.text_ptr);
+        }
+        span.text_ptr = null;
+        span.text_len = 0usize;
+        span.text_cap = 0usize;
+        return;
+    }
+
+    try rich_span_ensure_capacity(span, allocator, len);
+    var idx: usize = 0usize;
+    while idx < len {
+        span.text_ptr[idx] = text[idx];
+        idx = idx + 1usize;
+    }
+    span.text_ptr[len] = 0u8;
+    span.text_len = len;
+}
+
+fn rich_span_append_bytes(span: &RichSpan, allocator: &MallocAllocator, text: &const byte, len: usize) !void {
+    if len == 0usize {
+        return;
+    }
+    const old_len: usize = span.text_len;
+    try rich_span_ensure_capacity(span, allocator, old_len + len);
+    var idx: usize = 0usize;
+    while idx < len {
+        span.text_ptr[old_len + idx] = text[idx];
+        idx = idx + 1usize;
+    }
+    span.text_len = old_len + len;
+    span.text_ptr[span.text_len] = 0u8;
+}
+
+fn rich_document_ensure_block_capacity(self: &RichDocument, needed_count: u32) !void {
+    if needed_count <= self.block_cap {
+        return;
+    }
+    var new_cap: u32 = self.block_cap;
+    if new_cap == 0u32 {
+        new_cap = 4u32;
+    }
+    while new_cap < needed_count {
+        new_cap = new_cap * 2u32;
+    }
+    const new_bytes: usize = @size_of(RichBlock) as usize * new_cap as usize;
+    if self.blocks == null {
+        self.blocks = (try self.allocator.alloc(new_bytes)) as &RichBlock;
+    } else {
+        self.blocks = (try self.allocator.realloc(self.blocks as &byte, new_bytes)) as &RichBlock;
+    }
+    self.block_cap = new_cap;
+}
+
+fn rich_document_ensure_link_capacity(self: &RichDocument, needed_count: u16) !void {
+    if needed_count <= self.link_cap {
+        return;
+    }
+    var new_cap: u16 = self.link_cap;
+    if new_cap == 0u16 {
+        new_cap = 4u16;
+    }
+    while new_cap < needed_count {
+        if new_cap > 32767u16 {
+            new_cap = 65535u16;
+            break;
+        }
+        new_cap = new_cap * 2u16;
+    }
+    const new_bytes: usize = @size_of(RichLinkTarget) as usize * new_cap as usize;
+    if self.links == null {
+        self.links = (try self.allocator.alloc(new_bytes)) as &RichLinkTarget;
+    } else {
+        self.links = (try self.allocator.realloc(self.links as &byte, new_bytes)) as &RichLinkTarget;
+    }
+    self.link_cap = new_cap;
+}
+
+fn rich_block_ensure_span_capacity(block: &RichBlock, allocator: &MallocAllocator, needed_count: u16) !void {
+    if needed_count <= block.span_cap {
+        return;
+    }
+    var new_cap: u16 = block.span_cap;
+    if new_cap == 0u16 {
+        new_cap = 4u16;
+    }
+    while new_cap < needed_count {
+        new_cap = new_cap * 2u16;
+    }
+    const new_bytes: usize = @size_of(RichSpan) as usize * new_cap as usize;
+    if block.spans == null {
+        block.spans = (try allocator.alloc(new_bytes)) as &RichSpan;
+    } else {
+        block.spans = (try allocator.realloc(block.spans as &byte, new_bytes)) as &RichSpan;
+    }
+    block.span_cap = new_cap;
+}
+
+fn rich_document_block_text_codepoints(block: &RichBlock) u32 {
+    if block == null {
+        return 0u32;
+    }
+    var total: u32 = 0u32;
+    var idx: u16 = 0u16;
+    while idx < block.span_count {
+        const span: &RichSpan = &block.spans[idx as usize];
+        total = total + rich_utf8_codepoint_count(span.text_ptr as &const byte, span.text_len);
+        idx = idx + 1u16;
+    }
+    return total;
+}
+
+fn rich_document_block_end_pos(block: &RichBlock, block_index: u32) RichPos {
+    if block == null || block.span_count == 0u16 {
+        return RichPos{
+            block_index: block_index,
+            span_index: 0u16,
+            utf8_offset: 0u32,
+            affinity: 0u8,
+        };
+    }
+    const last_idx: u16 = block.span_count - 1u16;
+    return RichPos{
+        block_index: block_index,
+        span_index: last_idx,
+        utf8_offset: block.spans[last_idx as usize].text_len as u32,
+        affinity: 0u8,
+    };
+}
+
+fn rich_document_find_pos_in_block(block: &RichBlock, block_index: u32, codepoint_offset: u32) !RichPos {
+    if block == null || block.span_count == 0u16 {
+        return RichPos{
+            block_index: block_index,
+            span_index: 0u16,
+            utf8_offset: 0u32,
+            affinity: 0u8,
+        };
+    }
+
+    var remaining: u32 = codepoint_offset;
+    var span_idx: u16 = 0u16;
+    while span_idx < block.span_count {
+        const span: &RichSpan = &block.spans[span_idx as usize];
+        const span_codepoints: u32 = rich_utf8_codepoint_count(span.text_ptr as &const byte, span.text_len);
+        if remaining <= span_codepoints {
+            const byte_offset: usize = try rich_utf8_codepoint_offset_to_byte_offset(span.text_ptr as &const byte, span.text_len, remaining);
+            return RichPos{
+                block_index: block_index,
+                span_index: span_idx,
+                utf8_offset: byte_offset as u32,
+                affinity: 0u8,
+            };
+        }
+        remaining = remaining - span_codepoints;
+        span_idx = span_idx + 1u16;
+    }
+    return rich_document_block_end_pos(block, block_index);
+}
+
+fn rich_document_pos_block_codepoint_offset(block: &RichBlock, pos: RichPos) !u32 {
+    if block == null || block.span_count == 0u16 {
+        return 0u32;
+    }
+    if pos.span_index >= block.span_count {
+        return error.RichTextOutOfBounds;
+    }
+    var offset: u32 = 0u32;
+    var span_idx: u16 = 0u16;
+    while span_idx < pos.span_index {
+        const span_before: &RichSpan = &block.spans[span_idx as usize];
+        offset = offset + rich_utf8_codepoint_count(span_before.text_ptr as &const byte, span_before.text_len);
+        span_idx = span_idx + 1u16;
+    }
+    const span: &RichSpan = &block.spans[pos.span_index as usize];
+    if pos.utf8_offset as usize > span.text_len {
+        return error.RichTextOutOfBounds;
+    }
+    return offset + try rich_utf8_byte_offset_to_codepoint_offset(span.text_ptr as &const byte, span.text_len, pos.utf8_offset as usize);
+}
+
+export fn rich_document_new() RichDocument {
+    return rich_document_new_with_allocator(&g_allocator);
+}
+
+export fn rich_document_new_with_allocator(allocator: &MallocAllocator) RichDocument {
+    return RichDocument{
+        allocator: allocator,
+        blocks: null,
+        block_count: 0u32,
+        block_cap: 0u32,
+        links: null,
+        link_count: 0u16,
+        link_cap: 0u16,
+        revision: 0u32,
+    };
+}
+
+RichDocument {
+    fn dispose(self: &Self) void {
+        self.clear();
+        if self.blocks != null {
+            self.allocator.dealloc(self.blocks as &byte);
+        }
+        self.blocks = null;
+        self.block_cap = 0u32;
+        if self.links != null {
+            self.allocator.dealloc(self.links as &byte);
+        }
+        self.links = null;
+        self.link_cap = 0u16;
+    }
+
+    fn clear_blocks(self: &Self) void {
+        var idx: u32 = 0u32;
+        while idx < self.block_count {
+            rich_block_drop(&self.blocks[idx as usize], self.allocator);
+            idx = idx + 1u32;
+        }
+        self.block_count = 0u32;
+    }
+
+    fn clear(self: &Self) void {
+        self.clear_blocks();
+        var link_idx: u16 = 0u16;
+        while link_idx < self.link_count {
+            rich_link_target_drop(&self.links[link_idx as usize], self.allocator);
+            link_idx = link_idx + 1u16;
+        }
+        self.link_count = 0u16;
+        rich_document_touch(self);
+    }
+
+    fn ensure_min_block(self: &Self) !void {
+        if self.block_count > 0u32 {
+            return;
+        }
+        _ = try self.insert_block(0u32, RichBlockType.Paragraph, 0u8);
+    }
+
+    fn insert_block(self: &Self, index: u32, block_type: RichBlockType, indent: u8) !u32 {
+        var insert_at: u32 = index;
+        if insert_at > self.block_count {
+            insert_at = self.block_count;
+        }
+        try rich_document_ensure_block_capacity(self, self.block_count + 1u32);
+        var cursor: u32 = self.block_count;
+        while cursor > insert_at {
+            self.blocks[cursor as usize] = self.blocks[(cursor - 1u32) as usize];
+            cursor = cursor - 1u32;
+        }
+        rich_block_init(&self.blocks[insert_at as usize], block_type, indent);
+        self.block_count = self.block_count + 1u32;
+        const block: &RichBlock = &self.blocks[insert_at as usize];
+        try rich_block_ensure_span_capacity(block, self.allocator, 1u16);
+        rich_span_reset(&block.spans[0]);
+        block.span_count = 1u16;
+        rich_document_touch(self);
+        return insert_at;
+    }
+
+    fn append_block(self: &Self, block_type: RichBlockType, indent: u8) !u32 {
+        return self.insert_block(self.block_count, block_type, indent);
+    }
+
+    fn delete_block(self: &Self, index: u32) !bool {
+        if index >= self.block_count {
+            return false;
+        }
+        rich_block_drop(&self.blocks[index as usize], self.allocator);
+        var cursor: u32 = index;
+        while cursor + 1u32 < self.block_count {
+            self.blocks[cursor as usize] = self.blocks[(cursor + 1u32) as usize];
+            cursor = cursor + 1u32;
+        }
+        self.block_count = self.block_count - 1u32;
+        if self.block_count == 0u32 {
+            try self.ensure_min_block();
+        } else {
+            rich_document_touch(self);
+        }
+        return true;
+    }
+
+    fn insert_span(self: &Self, block_index: u32, span_index: u16, text: &const byte, text_len: usize, marks: RichInlineMarks) !u16 {
+        if block_index >= self.block_count {
+            return error.RichTextOutOfBounds;
+        }
+        const block: &RichBlock = &self.blocks[block_index as usize];
+        var insert_at: u16 = span_index;
+        if insert_at > block.span_count {
+            insert_at = block.span_count;
+        }
+        try rich_block_ensure_span_capacity(block, self.allocator, block.span_count + 1u16);
+        var cursor: u16 = block.span_count;
+        while cursor > insert_at {
+            block.spans[cursor as usize] = block.spans[(cursor - 1u16) as usize];
+            cursor = cursor - 1u16;
+        }
+        rich_span_reset(&block.spans[insert_at as usize]);
+        block.spans[insert_at as usize].marks = marks;
+        try rich_span_set_bytes(&block.spans[insert_at as usize], self.allocator, text, text_len);
+        block.span_count = block.span_count + 1u16;
+        rich_document_touch(self);
+        return insert_at;
+    }
+
+    fn append_span(self: &Self, block_index: u32, text: &const byte, text_len: usize, marks: RichInlineMarks) !u16 {
+        if block_index >= self.block_count {
+            return error.RichTextOutOfBounds;
+        }
+        return self.insert_span(block_index, self.blocks[block_index as usize].span_count, text, text_len, marks);
+    }
+
+    fn intern_link(self: &Self, url: &const byte, url_len: usize) !u16 {
+        if url == null || url_len == 0usize {
+            return 0u16;
+        }
+        var link_idx: u16 = 0u16;
+        while link_idx < self.link_count {
+            const link: &RichLinkTarget = &self.links[link_idx as usize];
+            if link.url_len == url_len {
+                var matched: bool = true;
+                var byte_idx: usize = 0usize;
+                while byte_idx < url_len {
+                    if link.url_ptr[byte_idx] != url[byte_idx] {
+                        matched = false;
+                        break;
+                    }
+                    byte_idx = byte_idx + 1usize;
+                }
+                if matched {
+                    return link_idx + 1u16;
+                }
+            }
+            link_idx = link_idx + 1u16;
+        }
+        if self.link_count == 65535u16 {
+            return error.RichTextTooManyLinks;
+        }
+        try rich_document_ensure_link_capacity(self, self.link_count + 1u16);
+        rich_link_target_reset(&self.links[self.link_count as usize]);
+        try rich_link_target_set_bytes(&self.links[self.link_count as usize], self.allocator, url, url_len);
+        self.link_count = self.link_count + 1u16;
+        rich_document_touch(self);
+        return self.link_count;
+    }
+
+    fn set_span_link(self: &Self, block_index: u32, span_index: u16, url: &const byte, url_len: usize) !bool {
+        if block_index >= self.block_count {
+            return false;
+        }
+        const block: &RichBlock = &self.blocks[block_index as usize];
+        if span_index >= block.span_count {
+            return false;
+        }
+        var link_ref: u16 = 0u16;
+        if url != null && url_len > 0usize {
+            link_ref = try self.intern_link(url, url_len);
+        }
+        block.spans[span_index as usize].marks.link_ref = link_ref;
+        rich_document_touch(self);
+        return true;
+    }
+
+    fn link_ptr(self: &Self, link_ref: u16) &const byte {
+        if link_ref == 0u16 {
+            return null;
+        }
+        const index: u16 = link_ref - 1u16;
+        if index >= self.link_count {
+            return null;
+        }
+        return self.links[index as usize].url_ptr as &const byte;
+    }
+
+    fn link_len(self: &Self, link_ref: u16) usize {
+        if link_ref == 0u16 {
+            return 0usize;
+        }
+        const index: u16 = link_ref - 1u16;
+        if index >= self.link_count {
+            return 0usize;
+        }
+        return self.links[index as usize].url_len;
+    }
+
+    fn set_span_text(self: &Self, block_index: u32, span_index: u16, text: &const byte, text_len: usize) !bool {
+        if block_index >= self.block_count {
+            return false;
+        }
+        const block: &RichBlock = &self.blocks[block_index as usize];
+        if span_index >= block.span_count {
+            return false;
+        }
+        try rich_span_set_bytes(&block.spans[span_index as usize], self.allocator, text, text_len);
+        rich_document_touch(self);
+        return true;
+    }
+
+    fn delete_span(self: &Self, block_index: u32, span_index: u16) !bool {
+        if block_index >= self.block_count {
+            return false;
+        }
+        const block: &RichBlock = &self.blocks[block_index as usize];
+        if span_index >= block.span_count {
+            return false;
+        }
+        rich_span_drop(&block.spans[span_index as usize], self.allocator);
+        var cursor: u16 = span_index;
+        while cursor + 1u16 < block.span_count {
+            block.spans[cursor as usize] = block.spans[(cursor + 1u16) as usize];
+            cursor = cursor + 1u16;
+        }
+        block.span_count = block.span_count - 1u16;
+        if block.span_count == 0u16 {
+            try rich_block_ensure_span_capacity(block, self.allocator, 1u16);
+            rich_span_reset(&block.spans[0]);
+            block.span_count = 1u16;
+        }
+        rich_document_touch(self);
+        return true;
+    }
+
+    fn split_span(self: &Self, block_index: u32, span_index: u16, utf8_offset: usize) !u16 {
+        if block_index >= self.block_count {
+            return error.RichTextOutOfBounds;
+        }
+        const block: &RichBlock = &self.blocks[block_index as usize];
+        if span_index >= block.span_count {
+            return error.RichTextOutOfBounds;
+        }
+        const span: &RichSpan = &block.spans[span_index as usize];
+        if utf8_offset > span.text_len || !rich_utf8_is_boundary(span.text_ptr as &const byte, span.text_len, utf8_offset) {
+            return error.RichTextInvalidUtf8Boundary;
+        }
+        if utf8_offset == span.text_len {
+            return span_index + 1u16;
+        }
+        if utf8_offset == 0usize {
+            return span_index;
+        }
+
+        const original_text_ptr: &byte = span.text_ptr;
+        const original_text_len: usize = span.text_len;
+        const right_len: usize = original_text_len - utf8_offset;
+        const marks: RichInlineMarks = span.marks;
+        const right_index: u16 = try self.insert_span(block_index, span_index + 1u16, @ptr_from_usize(@usize_from_ptr(original_text_ptr as &void) + utf8_offset) as &const byte, right_len, marks);
+        try rich_span_set_bytes(&block.spans[span_index as usize], self.allocator, original_text_ptr as &const byte, utf8_offset);
+        rich_document_touch(self);
+        return right_index;
+    }
+
+    fn merge_spans(self: &Self, block_index: u32, left_span_index: u16) !bool {
+        if block_index >= self.block_count {
+            return false;
+        }
+        const block: &RichBlock = &self.blocks[block_index as usize];
+        if left_span_index + 1u16 >= block.span_count {
+            return false;
+        }
+        const left: &RichSpan = &block.spans[left_span_index as usize];
+        const right: &RichSpan = &block.spans[(left_span_index + 1u16) as usize];
+        if !rich_inline_marks_eq(left.marks, right.marks) {
+            return false;
+        }
+        try rich_span_append_bytes(left, self.allocator, right.text_ptr as &const byte, right.text_len);
+        _ = try self.delete_span(block_index, left_span_index + 1u16);
+        rich_document_touch(self);
+        return true;
+    }
+
+    fn normalize(self: &Self) !void {
+        if self.block_count == 0u32 {
+            try self.ensure_min_block();
+        }
+
+        var block_idx: u32 = 0u32;
+        while block_idx < self.block_count {
+            const block: &RichBlock = &self.blocks[block_idx as usize];
+            if block.span_count == 0u16 {
+                try rich_block_ensure_span_capacity(block, self.allocator, 1u16);
+                rich_span_reset(&block.spans[0]);
+                block.span_count = 1u16;
+            }
+
+            var span_idx: u16 = 0u16;
+            while span_idx < block.span_count {
+                const span: &RichSpan = &block.spans[span_idx as usize];
+                if span.text_len == 0usize && block.span_count > 1u16 {
+                    _ = try self.delete_span(block_idx, span_idx);
+                    continue;
+                }
+                if span_idx + 1u16 < block.span_count {
+                    const next: &RichSpan = &block.spans[(span_idx + 1u16) as usize];
+                    if rich_inline_marks_eq(span.marks, next.marks) {
+                        _ = try self.merge_spans(block_idx, span_idx);
+                        continue;
+                    }
+                }
+                span_idx = span_idx + 1u16;
+            }
+
+            if block.span_count == 0u16 {
+                try rich_block_ensure_span_capacity(block, self.allocator, 1u16);
+                rich_span_reset(&block.spans[0]);
+                block.span_count = 1u16;
+            }
+            block_idx = block_idx + 1u32;
+        }
+        rich_document_touch(self);
+    }
+
+    fn set_plain_text(self: &Self, text: &const byte) !void {
+        self.clear();
+        if text == null {
+            try self.ensure_min_block();
+            return;
+        }
+
+        var total_len: usize = 0usize;
+        while text[total_len] != 0u8 {
+            total_len = total_len + 1usize;
+        }
+
+        var start: usize = 0usize;
+        var cursor: usize = 0usize;
+        while cursor <= total_len {
+            if cursor == total_len || text[cursor] == '\n' {
+                const block_index: u32 = try self.append_block(RichBlockType.Paragraph, 0u8);
+                const block: &RichBlock = &self.blocks[block_index as usize];
+                try rich_span_set_bytes(&block.spans[0], self.allocator, @ptr_from_usize(@usize_from_ptr(text as &void) + start) as &const byte, cursor - start);
+                block.spans[0].marks = rich_inline_marks_none();
+                start = cursor + 1usize;
+            }
+            cursor = cursor + 1usize;
+        }
+        try self.normalize();
+        return;
+    }
+
+    fn plain_text_len(self: &Self) usize {
+        if self.block_count == 0u32 {
+            return 0usize;
+        }
+        var total: usize = 0usize;
+        var block_idx: u32 = 0u32;
+        while block_idx < self.block_count {
+            const block: &RichBlock = &self.blocks[block_idx as usize];
+            var span_idx: u16 = 0u16;
+            while span_idx < block.span_count {
+                total = total + block.spans[span_idx as usize].text_len;
+                span_idx = span_idx + 1u16;
+            }
+            if block_idx + 1u32 < self.block_count {
+                total = total + 1usize;
+            }
+            block_idx = block_idx + 1u32;
+        }
+        return total;
+    }
+
+    fn export_plain_text(self: &Self, out: &byte, cap: usize) usize {
+        if out == null || cap == 0usize {
+            return 0usize;
+        }
+        var written: usize = 0usize;
+        var block_idx: u32 = 0u32;
+        while block_idx < self.block_count && written < cap {
+            const block: &RichBlock = &self.blocks[block_idx as usize];
+            var span_idx: u16 = 0u16;
+            while span_idx < block.span_count && written < cap {
+                const span: &RichSpan = &block.spans[span_idx as usize];
+                var byte_idx: usize = 0usize;
+                while byte_idx < span.text_len && written < cap {
+                    out[written] = span.text_ptr[byte_idx];
+                    written = written + 1usize;
+                    byte_idx = byte_idx + 1usize;
+                }
+                span_idx = span_idx + 1u16;
+            }
+            if block_idx + 1u32 < self.block_count && written < cap {
+                out[written] = '\n';
+                written = written + 1usize;
+            }
+            block_idx = block_idx + 1u32;
+        }
+        if written < cap {
+            out[written] = 0u8;
+        } else {
+            out[cap - 1usize] = 0u8;
+        }
+        return written;
+    }
+
+    fn max_cursor_offset(self: &Self) u32 {
+        if self.block_count == 0u32 {
+            return 0u32;
+        }
+        var total: u32 = 0u32;
+        var block_idx: u32 = 0u32;
+        while block_idx < self.block_count {
+            total = total + rich_document_block_text_codepoints(&self.blocks[block_idx as usize]);
+            if block_idx + 1u32 < self.block_count {
+                total = total + 1u32;
+            }
+            block_idx = block_idx + 1u32;
+        }
+        return total;
+    }
+
+    fn pos_to_linear_offset(self: &Self, pos: RichPos) !u32 {
+        if self.block_count == 0u32 {
+            return 0u32;
+        }
+        if pos.block_index >= self.block_count {
+            return error.RichTextOutOfBounds;
+        }
+        var offset: u32 = 0u32;
+        var block_idx: u32 = 0u32;
+        while block_idx < pos.block_index {
+            const block_before: &RichBlock = &self.blocks[block_idx as usize];
+            offset = offset + rich_document_block_text_codepoints(block_before) + 1u32;
+            block_idx = block_idx + 1u32;
+        }
+
+        const block: &RichBlock = &self.blocks[pos.block_index as usize];
+        if block.span_count == 0u16 {
+            return offset;
+        }
+        if pos.span_index >= block.span_count {
+            return error.RichTextOutOfBounds;
+        }
+        var span_idx: u16 = 0u16;
+        while span_idx < pos.span_index {
+            const span_before: &RichSpan = &block.spans[span_idx as usize];
+            offset = offset + rich_utf8_codepoint_count(span_before.text_ptr as &const byte, span_before.text_len);
+            span_idx = span_idx + 1u16;
+        }
+        const span: &RichSpan = &block.spans[pos.span_index as usize];
+        if pos.utf8_offset as usize > span.text_len {
+            return error.RichTextOutOfBounds;
+        }
+        offset = offset + try rich_utf8_byte_offset_to_codepoint_offset(span.text_ptr as &const byte, span.text_len, pos.utf8_offset as usize);
+        return offset;
+    }
+
+    fn linear_offset_to_pos(self: &Self, offset: u32) !RichPos {
+        if self.block_count == 0u32 {
+            return rich_pos_zero();
+        }
+
+        var max_offset: u32 = 0u32;
+        var block_idx: u32 = 0u32;
+        while block_idx < self.block_count {
+            max_offset = max_offset + rich_document_block_text_codepoints(&self.blocks[block_idx as usize]);
+            if block_idx + 1u32 < self.block_count {
+                max_offset = max_offset + 1u32;
+            }
+            block_idx = block_idx + 1u32;
+        }
+        if offset > max_offset {
+            return error.RichTextOutOfBounds;
+        }
+
+        var remaining: u32 = offset;
+        block_idx = 0u32;
+        while block_idx < self.block_count {
+            const block: &RichBlock = &self.blocks[block_idx as usize];
+            const block_text: u32 = rich_document_block_text_codepoints(block);
+            if remaining <= block_text {
+                return rich_document_find_pos_in_block(block, block_idx, remaining);
+            }
+            remaining = remaining - block_text;
+            if block_idx + 1u32 >= self.block_count {
+                return rich_document_block_end_pos(block, block_idx);
+            }
+            remaining = remaining - 1u32;
+            block_idx = block_idx + 1u32;
+        }
+        return rich_document_block_end_pos(&self.blocks[self.block_count as usize - 1usize], self.block_count - 1u32);
+    }
+
+    fn move_left(self: &Self, pos: RichPos) !RichPos {
+        const offset: u32 = try self.pos_to_linear_offset(pos);
+        if offset == 0u32 {
+            return pos;
+        }
+        return self.linear_offset_to_pos(offset - 1u32);
+    }
+
+    fn move_right(self: &Self, pos: RichPos) !RichPos {
+        const offset: u32 = try self.pos_to_linear_offset(pos);
+        const max_offset: u32 = self.max_cursor_offset();
+        if offset >= max_offset {
+            return pos;
+        }
+        return self.linear_offset_to_pos(offset + 1u32);
+    }
+
+    fn move_block_start(self: &Self, pos: RichPos) !RichPos {
+        if self.block_count == 0u32 {
+            return rich_pos_zero();
+        }
+        if pos.block_index >= self.block_count {
+            return error.RichTextOutOfBounds;
+        }
+        return RichPos{
+            block_index: pos.block_index,
+            span_index: 0u16,
+            utf8_offset: 0u32,
+            affinity: 0u8,
+        };
+    }
+
+    fn move_block_end(self: &Self, pos: RichPos) !RichPos {
+        if self.block_count == 0u32 {
+            return rich_pos_zero();
+        }
+        if pos.block_index >= self.block_count {
+            return error.RichTextOutOfBounds;
+        }
+        return rich_document_block_end_pos(&self.blocks[pos.block_index as usize], pos.block_index);
+    }
+
+    fn move_up(self: &Self, pos: RichPos) !RichPos {
+        if self.block_count == 0u32 {
+            return rich_pos_zero();
+        }
+        if pos.block_index >= self.block_count {
+            return error.RichTextOutOfBounds;
+        }
+        if pos.block_index == 0u32 {
+            return pos;
+        }
+        const current_block: &RichBlock = &self.blocks[pos.block_index as usize];
+        var target_offset: u32 = try rich_document_pos_block_codepoint_offset(current_block, pos);
+        const target_block_index: u32 = pos.block_index - 1u32;
+        const target_block: &RichBlock = &self.blocks[target_block_index as usize];
+        const target_block_len: u32 = rich_document_block_text_codepoints(target_block);
+        if target_offset > target_block_len {
+            target_offset = target_block_len;
+        }
+        return rich_document_find_pos_in_block(target_block, target_block_index, target_offset);
+    }
+
+    fn move_down(self: &Self, pos: RichPos) !RichPos {
+        if self.block_count == 0u32 {
+            return rich_pos_zero();
+        }
+        if pos.block_index >= self.block_count {
+            return error.RichTextOutOfBounds;
+        }
+        if pos.block_index + 1u32 >= self.block_count {
+            return pos;
+        }
+        const current_block: &RichBlock = &self.blocks[pos.block_index as usize];
+        var target_offset: u32 = try rich_document_pos_block_codepoint_offset(current_block, pos);
+        const target_block_index: u32 = pos.block_index + 1u32;
+        const target_block: &RichBlock = &self.blocks[target_block_index as usize];
+        const target_block_len: u32 = rich_document_block_text_codepoints(target_block);
+        if target_offset > target_block_len {
+            target_offset = target_block_len;
+        }
+        return rich_document_find_pos_in_block(target_block, target_block_index, target_offset);
+    }
+}

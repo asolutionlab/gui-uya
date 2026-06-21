@@ -1,0 +1,137 @@
+use gui.core.color.Color;
+use gui.core.event.Event;
+use gui.core.event.EventType;
+use gui.core.event.InputDev;
+use gui.core.event.event_point;
+use gui.core.point.Point;
+use gui.core.rect.Rect;
+use gui.platform.disp.DisplayCtx;
+use gui.platform.disp.FrameBuffer;
+use gui.platform.disp.PixelFormat;
+use gui.platform.disp.display_ctx_new;
+use gui.platform.disp.framebuffer_new;
+use gui.render.ctx.RenderCtx;
+use gui.render.ctx.ctx_pixel;
+use gui.render.ctx.render_ctx_new;
+use gui.render.img.ImageData;
+use gui.render.img.image_data_new;
+use gui.render.zerocopy.ZeroCopyCtx;
+use gui.render.zerocopy.zerocopy_ctx_new;
+use gui.style.StyleProp;
+use gui.widget.btn.Button;
+use gui.widget.canvas.Canvas;
+use gui.widget.chart.Chart;
+use gui.widget.grid_view.GridView;
+use gui.widget.img.Image;
+use gui.widget.lbl.Label;
+use gui.widget.list.ListView;
+use gui.widget.page.Page;
+use gui.widget.panel.Panel;
+use gui.widget.slider.Slider;
+use gui.widget.switch.Switch;
+
+/// 运行 `phase3_smoke` 场景并返回退出码。
+export fn run_phase3_smoke() i32 {
+    var front_bytes: [byte: 16384] = [];
+    var back_bytes: [byte: 16384] = [];
+    var image_bytes: [byte: 12] = [255, 0, 0,   0, 255, 0,   0, 0, 255,   255, 255, 255];
+    var canvas_bytes: [byte: 1024] = [];
+
+    const front: FrameBuffer = framebuffer_new(&front_bytes[0], 64, 48, 256, PixelFormat.ARGB8888);
+    const back: FrameBuffer = framebuffer_new(&back_bytes[0], 64, 48, 256, PixelFormat.ARGB8888);
+    var display: DisplayCtx = display_ctx_new(front, back);
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&back_bytes[0], 64, 48, 256, PixelFormat.ARGB8888));
+    var zc: ZeroCopyCtx = zerocopy_ctx_new(&display);
+
+    var page: Page = Page.new("Phase3");
+    var panel: Panel = Panel.new();
+    var label: Label = Label.new("P3");
+    var button: Button = Button.filled("Go");
+    var slider: Slider = Slider.new(0, 100, 60);
+    var sw: Switch = Switch.new(false);
+    var list: ListView = ListView.new();
+    var chart: Chart = Chart.new();
+    var grid: GridView = GridView.new();
+    var grid_a: Button = Button.outlined("A");
+    var grid_b: Button = Button.outlined("B");
+    var img_data: ImageData = image_data_new(&image_bytes[0], 2, 2, 6, PixelFormat.RGB888);
+    var image: Image = Image.from_data(&img_data);
+    var canvas: Canvas = Canvas.with_buffer(&canvas_bytes[0], 8, 8, 32, PixelFormat.ARGB8888);
+
+    page.widget.size(64, 48);
+    page.widget.base.style.set_u32(StyleProp.PaddingLeft, 0u32);
+    page.widget.base.style.set_u32(StyleProp.PaddingRight, 0u32);
+    page.widget.base.style.set_u32(StyleProp.PaddingTop, 0u32);
+    page.widget.base.style.set_u32(StyleProp.PaddingBottom, 0u32);
+    panel.widget.at(2, 2);
+    panel.widget.size(24, 18);
+    panel.widget.base.style.set_u32(StyleProp.PaddingLeft, 2u32);
+    panel.widget.base.style.set_u32(StyleProp.PaddingRight, 2u32);
+    panel.widget.base.style.set_u32(StyleProp.PaddingTop, 2u32);
+    panel.widget.base.style.set_u32(StyleProp.PaddingBottom, 2u32);
+    label.widget.at(2, 2);
+    label.widget.size(18, 8);
+    button.widget.at(2, 10);
+    button.widget.size(18, 6);
+
+    image.widget.at(28, 2);
+    image.widget.size(12, 12);
+    slider.widget.at(2, 22);
+    slider.widget.size(22, 10);
+    sw.widget.at(28, 18);
+    list.widget.at(42, 2);
+    list.widget.size(20, 20);
+    chart.widget.at(2, 34);
+    chart.widget.size(24, 12);
+    canvas.widget.at(28, 34);
+    canvas.widget.size(12, 12);
+    grid.widget.at(42, 24);
+    grid.widget.size(20, 20);
+    grid.columns = 2;
+    grid.item_size.w = 9;
+    grid.item_size.h = 9;
+
+    list.add_item("One");
+    list.add_item("Two");
+    list.add_item("Three");
+    _ = chart.add_point(2);
+    _ = chart.add_point(6);
+    _ = chart.add_point(4);
+    _ = chart.add_point(8);
+    canvas.begin_draw().fill_rect(Rect{ x: 0, y: 0, w: 8, h: 8 }, Color{ r: 0, g: 255, b: 0, a: 255 });
+    canvas.end_draw();
+
+    page.add(panel.obj());
+    page.add(image.obj());
+    page.add(slider.obj());
+    page.add(sw.obj());
+    page.add(list.obj());
+    page.add(chart.obj());
+    page.add(canvas.obj());
+    page.add(grid.obj());
+    panel.add(label.obj());
+    panel.add(button.obj());
+    grid.add_child(grid_a.obj());
+    grid.add_child(grid_b.obj());
+
+    page.render(&ctx);
+
+    var switch_evt: Event = event_point(EventType.Click, InputDev.Touch, -1, 160, Point{ x: 30, y: 20 });
+    _ = sw.handle_event(&switch_evt);
+
+    zc.present(Rect{ x: 0, y: 0, w: 64, h: 48 });
+
+    if display.frame_id != 1u32 {
+        return 1;
+    }
+    if ctx.stats.pixel_ops == 0u32 {
+        return 2;
+    }
+    if ctx_pixel(&ctx, 31, 38) != Color{ r: 0, g: 255, b: 0, a: 255 } {
+        return 3;
+    }
+    if !sw.checked {
+        return 4;
+    }
+    return 0;
+}

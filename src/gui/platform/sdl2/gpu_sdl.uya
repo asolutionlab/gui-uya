@@ -1,0 +1,285 @@
+use gui.core.color.Color;
+use gui.core.rect.Rect;
+use gui.platform.disp.PixelFormat;
+use gui.platform.sdl2.disp_sdl.SdlDisplay;
+use gui.render.ctx.RenderCtx;
+use gui.render.gpu.GpuFillRectCmd;
+use gui.render.gpu.GpuGlyphCmd;
+use gui.render.gpu.GpuImageCmd;
+use gui.render.gpu.GpuLineCmd;
+use gui.render.gpu.GpuStrokeRectCmd;
+use gui.render.gpu.IGpuCtx;
+use gui.render.img.ImageData;
+use gui.render.img.draw_image;
+use gui.render.img.draw_image_clipped;
+use gui.render.img.image_data_new;
+
+export struct SdlGles2GpuCtx : IGpuCtx {
+    display: &SdlDisplay,
+    mirror: &RenderCtx,
+    sync_count: u32,
+
+    fn ensure_direct_frame(self: &Self) bool {
+        if self.display == null {
+            return false;
+        }
+        if self.display.gpu_direct_frame_active() {
+            return true;
+        }
+        return self.display.gpu_begin_frame_from_front();
+    }
+
+    fn accelerated(self: &Self) bool {
+        _ = self;
+        return true;
+    }
+
+    fn clear(self: &Self, color: Color) void {
+        if self.display != null {
+            _ = self.display.gpu_begin_frame(color);
+        }
+        if self.mirror != null {
+            self.mirror.clear(color);
+        }
+    }
+
+    fn set_clip(self: &Self, clip: Rect) void {
+        if self.display != null {
+            _ = self.display.gpu_set_clip(clip);
+        }
+        if self.mirror != null {
+            self.mirror.clip_stack[0] = clip;
+            self.mirror.clip_len = 1;
+        }
+    }
+
+    fn fill_round_shadow(self: &Self, rect: Rect, radius: i32, blur: i32, color: Color) void {
+        if self.display != null && self.ensure_direct_frame() {
+            _ = self.display.gpu_fill_round_shadow(rect, radius, blur, color);
+        }
+        if self.mirror != null {
+            self.mirror.fill_round_shadow(rect, (radius as! u8).value, (blur as! u8).value, color);
+        }
+    }
+
+    fn draw_circle(self: &Self, cx: i32, cy: i32, r: i32, color: Color) void {
+        if self.display != null && self.ensure_direct_frame() {
+            _ = self.display.gpu_draw_circle(cx, cy, r, color);
+        }
+        if self.mirror != null {
+            self.mirror.draw_circle((cx as! i16).value, (cy as! i16).value, (r as! i16).value, color);
+        }
+    }
+
+    fn fill_circle(self: &Self, cx: i32, cy: i32, r: i32, color: Color) void {
+        if self.display != null && self.ensure_direct_frame() {
+            _ = self.display.gpu_fill_circle(cx, cy, r, color);
+        }
+        if self.mirror != null {
+            self.mirror.fill_circle((cx as! i16).value, (cy as! i16).value, (r as! i16).value, color);
+        }
+    }
+
+    fn draw_arc(self: &Self, cx: i32, cy: i32, r: i32, start_deg: i32, end_deg: i32, width: i32, color: Color) void {
+        if self.display != null && self.ensure_direct_frame() {
+            _ = self.display.gpu_draw_arc(cx, cy, r, start_deg, end_deg, width, color);
+        }
+        if self.mirror != null {
+            self.mirror.draw_arc(
+                (cx as! i16).value,
+                (cy as! i16).value,
+                (r as! i16).value,
+                (start_deg as! i16).value,
+                (end_deg as! i16).value,
+                (width as! u8).value,
+                color
+            );
+        }
+    }
+
+    fn fill_arc(self: &Self, cx: i32, cy: i32, r: i32, start_deg: i32, end_deg: i32, color: Color) void {
+        if self.display != null && self.ensure_direct_frame() {
+            _ = self.display.gpu_fill_arc(cx, cy, r, start_deg, end_deg, color);
+        }
+        if self.mirror != null {
+            self.mirror.fill_arc(
+                (cx as! i16).value,
+                (cy as! i16).value,
+                (r as! i16).value,
+                (start_deg as! i16).value,
+                (end_deg as! i16).value,
+                color
+            );
+        }
+    }
+
+    fn fill_round_rect(self: &Self, rect: Rect, radius: i32, color: Color) void {
+        if self.display != null && self.ensure_direct_frame() {
+            _ = self.display.gpu_fill_round_rect(rect, radius, color);
+        }
+        if self.mirror != null {
+            self.mirror.fill_round_rect(rect, (radius as! u8).value, color);
+        }
+    }
+
+    fn draw_round_rect(self: &Self, rect: Rect, radius: i32, color: Color, width: i32) void {
+        if self.display != null && self.ensure_direct_frame() {
+            _ = self.display.gpu_draw_round_rect(rect, radius, color, width);
+        }
+        if self.mirror != null {
+            self.mirror.draw_round_rect(rect, (radius as! u8).value, color, (width as! u8).value);
+        }
+    }
+
+    fn fill_linear_gradient(self: &Self, rect: Rect, start: Color, end: Color, horizontal: bool) void {
+        if self.display != null && self.ensure_direct_frame() {
+            _ = self.display.gpu_fill_linear_gradient(rect, start, end, horizontal);
+        }
+        if self.mirror != null {
+            self.mirror.fill_linear_gradient(rect, start, end, horizontal);
+        }
+    }
+
+    fn fill_radial_gradient(self: &Self, rect: Rect, inner: Color, outer: Color) void {
+        if self.display != null && self.ensure_direct_frame() {
+            _ = self.display.gpu_fill_radial_gradient(rect, inner, outer);
+        }
+        if self.mirror != null {
+            self.mirror.fill_radial_gradient(rect, inner, outer);
+        }
+    }
+
+    fn draw_rects(self: &Self, cmds: &GpuStrokeRectCmd, count: i32) void {
+        if self.display != null && self.ensure_direct_frame() {
+            _ = self.display.gpu_draw_rects(cmds, count);
+        }
+        if self.mirror == null {
+            return;
+        }
+        var i: i32 = 0;
+        while i < count {
+            self.mirror.draw_rect(cmds[i as usize].rect, cmds[i as usize].color, (cmds[i as usize].width as! u8).value);
+            i = i + 1;
+        }
+    }
+
+    fn draw_lines(self: &Self, cmds: &GpuLineCmd, count: i32) void {
+        if self.display != null && self.ensure_direct_frame() {
+            _ = self.display.gpu_draw_lines(cmds, count);
+        }
+        if self.mirror == null {
+            return;
+        }
+        var i: i32 = 0;
+        while i < count {
+            const cmd: GpuLineCmd = cmds[i as usize];
+            self.mirror.draw_line(
+                (cmd.x1 as! i16).value,
+                (cmd.y1 as! i16).value,
+                (cmd.x2 as! i16).value,
+                (cmd.y2 as! i16).value,
+                cmd.color,
+                (cmd.width as! u8).value
+            );
+            i = i + 1;
+        }
+    }
+
+    fn draw_images(self: &Self, cmds: &GpuImageCmd, count: i32) void {
+        if self.display != null && self.ensure_direct_frame() {
+            _ = self.display.gpu_draw_images(cmds, count);
+        }
+        if self.mirror == null {
+            return;
+        }
+        var i: i32 = 0;
+        while i < count {
+            const cmd: GpuImageCmd = cmds[i as usize];
+            const img: ImageData = image_data_new(
+                cmd.pixels,
+                (cmd.image_w as! u16).value,
+                (cmd.image_h as! u16).value,
+                (cmd.stride as! u16).value,
+                cmd.format_tag as PixelFormat
+            );
+            if cmd.has_src != 0 {
+                draw_image_clipped(self.mirror, cmd.dst_rect, &img, cmd.src_rect);
+            } else {
+                draw_image(self.mirror, cmd.dst_rect.x, cmd.dst_rect.y, &img);
+            }
+            i = i + 1;
+        }
+    }
+
+    fn draw_glyphs(self: &Self, cmds: &GpuGlyphCmd, count: i32) void {
+        if self.display != null && self.ensure_direct_frame() {
+            _ = self.display.gpu_draw_glyphs(cmds, count);
+        }
+        if self.mirror == null {
+            return;
+        }
+        var i: i32 = 0;
+        while i < count {
+            const cmd: GpuGlyphCmd = cmds[i as usize];
+            if cmd.pixels != null && cmd.glyph_w > 0 && cmd.glyph_h > 0 && cmd.stride > 0 {
+                var row: i32 = 0;
+                while row < cmd.glyph_h {
+                    var col: i32 = 0;
+                    while col < cmd.glyph_w {
+                        var coverage: u8 = 0u8;
+                        if cmd.format_tag == PixelFormat.A8 as i32 || cmd.format_tag == PixelFormat.L8 as i32 {
+                            coverage = cmd.pixels[row as usize * cmd.stride as usize + col as usize] as u8;
+                        } else if cmd.format_tag == PixelFormat.I1 as i32 {
+                            const packed: u8 = cmd.pixels[row as usize * cmd.stride as usize + (col as usize / 8usize)] as u8;
+                            const mask: u8 = 0x80u8 >> (col % 8);
+                            if (packed & mask) != 0u8 {
+                                coverage = 255u8;
+                            }
+                        } else if cmd.format_tag == PixelFormat.I4 as i32 {
+                            const packed4: u8 = cmd.pixels[row as usize * cmd.stride as usize + (col as usize / 2usize)] as u8;
+                            var nibble: u8 = packed4 & 0x0Fu8;
+                            if (col % 2) == 0 {
+                                nibble = (packed4 >> 4) & 0x0Fu8;
+                            }
+                            coverage = ((((nibble as u16) << 4) | nibble as u16) as! u8).value;
+                        }
+                        if coverage != 0u8 {
+                            const shaded: Color = cmd.color.modulate_alpha(coverage);
+                            self.mirror.draw_pixel(cmd.dst_rect.x + col as i16, cmd.dst_rect.y + row as i16, shaded);
+                        }
+                        col = col + 1;
+                    }
+                    row = row + 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+
+    fn fill_rects(self: &Self, cmds: &GpuFillRectCmd, count: i32) void {
+        if self.display != null && self.ensure_direct_frame() {
+            _ = self.display.gpu_fill_rects(cmds, count);
+        }
+        if self.mirror == null {
+            return;
+        }
+        var i: i32 = 0;
+        while i < count {
+            self.mirror.fill_rect(cmds[i as usize].rect, cmds[i as usize].color);
+            i = i + 1;
+        }
+    }
+
+    fn sync(self: &Self) void {
+        self.sync_count = self.sync_count + 1u32;
+    }
+}
+
+/// 基于 SDL GLES2 display 和共享 framebuffer 创建 GPU 上下文。
+export fn sdl_gles2_gpu_new(display: &SdlDisplay, mirror: &RenderCtx) SdlGles2GpuCtx {
+    return SdlGles2GpuCtx{
+        display: display,
+        mirror: mirror,
+        sync_count: 0u32,
+    };
+}

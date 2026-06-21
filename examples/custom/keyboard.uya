@@ -1,0 +1,31 @@
+use gui.core.color.Color;
+use gui.platform.disp.PixelFormat;
+use gui.platform.disp.framebuffer_new;
+use gui.render.ctx.RenderCtx;
+use gui.render.ctx.render_ctx_new;
+use gui.widget.btn.Button;
+use gui.widget.grid_view.GridView;
+
+/// 运行 `custom_keyboard_example` 示例并返回退出码。
+export fn run_custom_keyboard_example() i32 {
+    var bytes: [byte: 10240] = [];
+    var ctx: RenderCtx = render_ctx_new(framebuffer_new(&bytes[0], 64, 40, 256, PixelFormat.ARGB8888));
+    var grid: GridView = GridView.new();
+    var q: Button = Button.outlined("Q");
+    var w: Button = Button.outlined("W");
+    var e: Button = Button.outlined("E");
+    var r: Button = Button.outlined("R");
+
+    ctx.clear(Color{ r: 244, g: 247, b: 250, a: 255 });
+    grid.widget.at(2, 2);
+    grid.widget.size(60, 36);
+    grid.columns = 4;
+    grid.item_size.w = 14;
+    grid.item_size.h = 14;
+    grid.add_child(q.obj());
+    grid.add_child(w.obj());
+    grid.add_child(e.obj());
+    grid.add_child(r.obj());
+    grid.render(&ctx);
+    return 0;
+}

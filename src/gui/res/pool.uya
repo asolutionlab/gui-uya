@@ -1,0 +1,169 @@
+use gui.core.bitmap.BitmapAllocator;
+use gui.core.bitmap.bitmap_allocator_new;
+
+export const MEM_POOL_BYTES: i32 = 4096;
+const MEM_POOL_QWORDS: i32 = 512;
+const MEM_POOL_MAX_BLOCKS: i32 = 128;
+
+error PoolExhausted;
+error PoolPointerOutOfRange;
+error PoolPointerMisaligned;
+error PoolTypeTooLarge;
+error PoolSizeTooLarge;
+
+fn align_up_u16(value: u16, align: u16) u16 {
+    if align == 0 {
+        return value;
+    }
+    const raw: i32 = value as i32;
+    const a: i32 = align as i32;
+    const aligned: i32 = ((raw + a - 1) / a) * a;
+    return aligned as u16;
+}
+
+fn min_i32(a: i32, b: i32) i32 {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+export struct MemPool {
+    storage: [u64: 512],
+    block_size: u16,
+    block_count: u16,
+    bitmap: BitmapAllocator,
+
+    fn alloc(self: &Self) !&byte {
+        const idx: i32 = self.bitmap.alloc();
+        if idx < 0 {
+            return error.PoolExhausted;
+        }
+
+        const base_addr: usize = @usize_from_ptr(&self.storage[0] as &void);
+        const offset: usize = (idx as usize) * (self.block_size as usize);
+        return @ptr_from_usize(base_addr + offset) as &byte;
+    }
+
+    fn free(self: &Self, ptr: &byte) void {
+        if ptr == null {
+            return;
+        }
+
+        const base_addr: usize = @usize_from_ptr(&self.storage[0] as &void);
+        const ptr_addr: usize = @usize_from_ptr(ptr as &void);
+        const total_bytes: usize = (self.block_size as usize) * (self.block_count as usize);
+
+        if ptr_addr < base_addr || ptr_addr >= base_addr + total_bytes {
+            return;
+        }
+
+        const offset: usize = ptr_addr - base_addr;
+        if (offset % (self.block_size as usize)) != 0 {
+            return;
+        }
+
+        const idx: i32 = (offset / (self.block_size as usize)) as i32;
+        self.bitmap.free(idx);
+    }
+
+    fn used_count(self: &Self) i32 {
+        return self.bitmap.used();
+    }
+
+    fn free_count(self: &Self) i32 {
+        return self.block_count as i32 - self.bitmap.used();
+    }
+}
+
+export struct PoolManager {
+    small_pool: MemPool,
+    medium_pool: MemPool,
+    large_pool: MemPool,
+
+    fn alloc(self: &Self, size: u16) !&byte {
+        if size <= self.small_pool.block_size {
+            return self.small_pool.alloc();
+        }
+        if size <= self.medium_pool.block_size {
+            return self.medium_pool.alloc();
+        }
+        if size <= self.large_pool.block_size {
+            return self.large_pool.alloc();
+        }
+        return error.PoolSizeTooLarge;
+    }
+
+    fn free(self: &Self, ptr: &byte, size: u16) void {
+        if size <= self.small_pool.block_size {
+            self.small_pool.free(ptr);
+            return;
+        }
+        if size <= self.medium_pool.block_size {
+            self.medium_pool.free(ptr);
+            return;
+        }
+        self.large_pool.free(ptr);
+    }
+}
+
+export struct TypedPool<T> {
+    pool: &MemPool,
+
+    fn alloc(self: &Self) !&T {
+        if (self.pool.block_size as i32) < @size_of(T) {
+            return error.PoolTypeTooLarge;
+        }
+        const ptr: &byte = try self.pool.alloc();
+        return ptr as &T;
+    }
+
+    fn free(self: &Self, ptr: &T) void {
+        self.pool.free(ptr as &byte);
+    }
+
+    fn used_count(self: &Self) i32 {
+        return self.pool.used_count();
+    }
+
+    fn free_count(self: &Self) i32 {
+        return self.pool.free_count();
+    }
+}
+
+/// 创建固定块大小的内存池。
+export fn mem_pool_new(block_size: u16, block_count: u16) MemPool {
+    var actual_block_size: u16 = block_size;
+    if actual_block_size == 0 {
+        actual_block_size = 8;
+    }
+    actual_block_size = align_up_u16(actual_block_size, 8);
+
+    const by_size: i32 = MEM_POOL_BYTES / (actual_block_size as i32);
+    var actual_block_count: i32 = min_i32(block_count as i32, by_size);
+    actual_block_count = min_i32(actual_block_count, MEM_POOL_MAX_BLOCKS);
+    if actual_block_count < 0 {
+        actual_block_count = 0;
+    }
+
+    return MemPool{
+        storage: [],
+        block_size: actual_block_size,
+        block_count: actual_block_count as u16,
+        bitmap: bitmap_allocator_new(actual_block_count),
+    };
+}
+
+/// 创建多级内存池管理器。
+export fn pool_manager_new() PoolManager {
+    return PoolManager{
+        small_pool: mem_pool_new(32, 64),
+        medium_pool: mem_pool_new(128, 24),
+        large_pool: mem_pool_new(512, 8),
+    };
+}
+
+/// 将基础内存池包装为指定类型的对象池视图。
+export fn typed_pool<T>(pool: &MemPool) TypedPool<T> {
+    return TypedPool<T>{ pool: pool };
+}
