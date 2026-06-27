@@ -4,7 +4,6 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>UyaGUI Web</title>
-    <script src="openai_config.js"></script>
     <style>
       :root {
         color-scheme: dark;
@@ -283,46 +282,7 @@
         max-height: var(--uya-gui-log-height);
       }
 
-      #uya-gui-mobile-hud {
-        position: absolute;
-        inset: 0;
-        display: none;
-        pointer-events: none;
-      }
-
-      #uya-gui-mobile-fullscreen {
-        position: absolute;
-        right: max(12px, env(safe-area-inset-right));
-        bottom: max(12px, env(safe-area-inset-bottom));
-      }
-
-      body.mobile-doudizhu,
-      body.mobile-doudizhu.loading-visible,
-      body.mobile-doudizhu.debug-panel {
-        grid-template-rows: 1fr;
-        background:
-          radial-gradient(circle at top, rgba(70, 98, 161, 0.2), transparent 42%),
-          linear-gradient(180deg, #121722 0%, #0b0f16 100%);
-      }
-
-      body.mobile-doudizhu #uya-gui-status,
-      body.mobile-doudizhu #uya-gui-log {
-        display: none !important;
-      }
-
-      body.mobile-doudizhu #uya-gui-root {
-        width: 100%;
-        height: 100dvh;
-        min-height: 100dvh;
-        padding: 0;
-      }
-
-      body.mobile-doudizhu #uya-gui-stage-shell {
-        margin: 0;
-      }
-
-      body.uya-gui-fullscreen-active #uya-gui-root,
-      body.mobile-doudizhu.uya-gui-fullscreen-active #uya-gui-root {
+      body.uya-gui-fullscreen-active #uya-gui-root {
         width: 100%;
         min-height: 100%;
         padding: 0;
@@ -332,35 +292,9 @@
         margin: 0;
       }
 
-      body.mobile-doudizhu #uya-gui-stage {
-        border-radius: 18px;
-        overflow: hidden;
-        box-shadow: 0 18px 56px rgba(0, 0, 0, 0.42);
-      }
-
       body.uya-gui-fullscreen-active #uya-gui-stage {
         border-radius: 0;
         box-shadow: none;
-      }
-
-      body.mobile-doudizhu #uya-gui-mobile-hud {
-        display: block;
-      }
-
-      body.mobile-doudizhu #uya-gui-loading {
-        padding:
-          max(18px, env(safe-area-inset-top))
-          max(18px, env(safe-area-inset-right))
-          max(18px, env(safe-area-inset-bottom))
-          max(18px, env(safe-area-inset-left));
-      }
-
-      body.mobile-doudizhu #uya-gui-loading-card {
-        width: min(100%, 420px);
-      }
-
-      body.mobile-doudizhu.uya-gui-fullscreen-active #uya-gui-mobile-fullscreen {
-        display: none;
       }
     </style>
     <script>
@@ -539,260 +473,8 @@
             document.addEventListener('DOMContentLoaded', applyDebugPanelMode, { once: true });
           }
         }
-        function isTruthyQueryValue(value) {
-          return value === '1' || value === 'true' || value === 'yes' || value === 'on';
-        }
-
-        function isFalsyQueryValue(value) {
-          return value === '0' || value === 'false' || value === 'no' || value === 'off';
-        }
-
-        function isLikelyMobileDevice() {
-          if (typeof window === 'undefined') {
-            return false;
-          }
-          try {
-            if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
-              return true;
-            }
-          } catch (err) {
-          }
-          if (typeof navigator !== 'undefined') {
-            if (navigator.maxTouchPoints && navigator.maxTouchPoints > 0) {
-              return true;
-            }
-            if (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '')) {
-              return true;
-            }
-          }
-          return window.innerWidth <= 900 && window.innerHeight <= 900;
-        }
-
-        function applyMobileDoudizhuMode(enabled) {
-          if (typeof document === 'undefined') {
-            return;
-          }
-          if (!document.body) {
-            document.addEventListener('DOMContentLoaded', function() {
-              applyMobileDoudizhuMode(enabled);
-            }, { once: true });
-            return;
-          }
-          if (enabled) {
-            document.body.classList.add('mobile-doudizhu');
-          } else {
-            document.body.classList.remove('mobile-doudizhu');
-          }
-        }
-
-        function trimString(value) {
-          return typeof value === 'string' ? value.trim() : '';
-        }
-
-        function normalizeBoolSetting(value, fallback) {
-          if (value === undefined || value === null || value === '') {
-            return fallback;
-          }
-          if (value === true || value === 1) {
-            return true;
-          }
-          if (value === false || value === 0) {
-            return false;
-          }
-          var text = String(value).trim().toLowerCase();
-          if (isTruthyQueryValue(text)) {
-            return true;
-          }
-          if (isFalsyQueryValue(text)) {
-            return false;
-          }
-          return fallback;
-        }
-
-        function normalizeOpenAiApiPath(value) {
-          var path = trimString(value);
-          if (!path) {
-            return '/ddz/decision';
-          }
-          if (path.charAt(0) !== '/') {
-            return '/' + path;
-          }
-          return path;
-        }
-
-        function normalizeWebOpenAiConfig(raw) {
-          var obj = raw && typeof raw === 'object' ? raw : {};
-          var baseUrl = trimString(obj.baseUrl || obj.base_url || obj.openai_base_url || '');
-          var apiPath = normalizeOpenAiApiPath(obj.apiPath || obj.api_path || obj.openai_api_path || '/ddz/decision');
-          var apiKey = trimString(obj.apiKey || obj.api_key || obj.bearerToken || obj.bearer_token || obj.openai_api_key || '');
-          var model = trimString(obj.model || obj.openai_model || 'gpt-5.4-mini');
-          if (baseUrl) {
-            baseUrl = baseUrl.replace(/\/+$/, '');
-          }
-          var enabled = normalizeBoolSetting(obj.enabled, true);
-          if (!baseUrl) {
-            enabled = false;
-          }
-          return {
-            enabled: enabled,
-            baseUrl: baseUrl,
-            apiPath: apiPath,
-            apiKey: apiKey,
-            model: model || 'gpt-5.4-mini'
-          };
-        }
-
-        function mergeWebOpenAiConfig(baseConfig, overrideConfig) {
-          var base = normalizeWebOpenAiConfig(baseConfig);
-          var merged = {
-            enabled: base.enabled,
-            baseUrl: base.baseUrl,
-            apiPath: base.apiPath,
-            apiKey: base.apiKey,
-            model: base.model
-          };
-          if (!overrideConfig || typeof overrideConfig !== 'object') {
-            return normalizeWebOpenAiConfig(merged);
-          }
-          if (Object.prototype.hasOwnProperty.call(overrideConfig, 'baseUrl') || Object.prototype.hasOwnProperty.call(overrideConfig, 'base_url') || Object.prototype.hasOwnProperty.call(overrideConfig, 'openai_base_url')) {
-            merged.baseUrl = trimString(overrideConfig.baseUrl || overrideConfig.base_url || overrideConfig.openai_base_url || '');
-          }
-          if (Object.prototype.hasOwnProperty.call(overrideConfig, 'apiPath') || Object.prototype.hasOwnProperty.call(overrideConfig, 'api_path') || Object.prototype.hasOwnProperty.call(overrideConfig, 'openai_api_path')) {
-            merged.apiPath = normalizeOpenAiApiPath(overrideConfig.apiPath || overrideConfig.api_path || overrideConfig.openai_api_path || '/ddz/decision');
-          }
-          if (Object.prototype.hasOwnProperty.call(overrideConfig, 'apiKey') || Object.prototype.hasOwnProperty.call(overrideConfig, 'api_key') || Object.prototype.hasOwnProperty.call(overrideConfig, 'bearerToken') || Object.prototype.hasOwnProperty.call(overrideConfig, 'bearer_token') || Object.prototype.hasOwnProperty.call(overrideConfig, 'openai_api_key')) {
-            merged.apiKey = trimString(overrideConfig.apiKey || overrideConfig.api_key || overrideConfig.bearerToken || overrideConfig.bearer_token || overrideConfig.openai_api_key || '');
-          }
-          if (Object.prototype.hasOwnProperty.call(overrideConfig, 'model') || Object.prototype.hasOwnProperty.call(overrideConfig, 'openai_model')) {
-            merged.model = trimString(overrideConfig.model || overrideConfig.openai_model || 'gpt-5.4-mini');
-          }
-          if (Object.prototype.hasOwnProperty.call(overrideConfig, 'enabled')) {
-            merged.enabled = normalizeBoolSetting(overrideConfig.enabled, merged.enabled);
-          }
-          return normalizeWebOpenAiConfig(merged);
-        }
-
-        function webOpenAiStorageKey() {
-          return 'uyaGuiOpenAiConfig.v1';
-        }
-
-        function loadStoredWebOpenAiConfig() {
-          if (typeof window === 'undefined' || !window.localStorage) {
-            return null;
-          }
-          try {
-            var raw = window.localStorage.getItem(webOpenAiStorageKey());
-            if (!raw) {
-              return null;
-            }
-            return JSON.parse(raw);
-          } catch (err) {
-            return null;
-          }
-        }
-
-        function saveStoredWebOpenAiConfig(config) {
-          if (typeof window === 'undefined' || !window.localStorage) {
-            return false;
-          }
-          try {
-            window.localStorage.setItem(webOpenAiStorageKey(), JSON.stringify(normalizeWebOpenAiConfig(config)));
-            return true;
-          } catch (err) {
-            return false;
-          }
-        }
-
-        function clearStoredWebOpenAiConfig() {
-          if (typeof window === 'undefined' || !window.localStorage) {
-            return false;
-          }
-          try {
-            window.localStorage.removeItem(webOpenAiStorageKey());
-            return true;
-          } catch (err) {
-            return false;
-          }
-        }
-
-        function readQueryWebOpenAiConfig() {
-          if (typeof window === 'undefined') {
-            return {
-              clear: false,
-              save: false,
-              hasOverride: false,
-              config: {}
-            };
-          }
-          var params = new URLSearchParams(window.location.search);
-          var config = {};
-          var hasOverride = false;
-          var keyMap = [
-            ['openai_base_url', 'baseUrl'],
-            ['openai_api_path', 'apiPath'],
-            ['openai_api_key', 'apiKey'],
-            ['openai_model', 'model'],
-            ['openai_enabled', 'enabled']
-          ];
-          for (var i = 0; i < keyMap.length; ++i) {
-            var queryKey = keyMap[i][0];
-            var configKey = keyMap[i][1];
-            if (params.has(queryKey)) {
-              config[configKey] = params.get(queryKey);
-              hasOverride = true;
-            }
-          }
-          return {
-            clear: isTruthyQueryValue((params.get('openai_clear') || '').toLowerCase()),
-            save: isTruthyQueryValue((params.get('openai_save') || '').toLowerCase()),
-            hasOverride: hasOverride,
-            config: config
-          };
-        }
-
-        function resolveWebOpenAiConfig() {
-          var resolved = normalizeWebOpenAiConfig({});
-          if (typeof window !== 'undefined' && window.UYA_GUI_OPENAI_CONFIG) {
-            resolved = mergeWebOpenAiConfig(resolved, window.UYA_GUI_OPENAI_CONFIG);
-          }
-          var stored = loadStoredWebOpenAiConfig();
-          if (stored) {
-            resolved = mergeWebOpenAiConfig(resolved, stored);
-          }
-          var query = readQueryWebOpenAiConfig();
-          if (query.clear) {
-            clearStoredWebOpenAiConfig();
-            resolved = normalizeWebOpenAiConfig(window.UYA_GUI_OPENAI_CONFIG || {});
-          }
-          if (query.hasOverride) {
-            resolved = mergeWebOpenAiConfig(resolved, query.config);
-          }
-          if (query.save && query.hasOverride) {
-            saveStoredWebOpenAiConfig(resolved);
-          }
-          return normalizeWebOpenAiConfig(resolved);
-        }
-
         var defaultCanvasId = findArgValue(bootArgs, '--canvas-id', 'uya-gui-canvas');
         var defaultFontAsset = findArgValue(bootArgs, '--font-asset', 'system_ui_cjk_font.data');
-        var requestedDemo = findArgValue(bootArgs, '--demo', '');
-        var mobileModeParam = null;
-        if (typeof window !== 'undefined') {
-          mobileModeParam = new URLSearchParams(window.location.search).get('mobile');
-        }
-        var mobileDoudizhuMode = false;
-        if (isTruthyQueryValue(mobileModeParam)) {
-          mobileDoudizhuMode = true;
-        } else if (isFalsyQueryValue(mobileModeParam)) {
-          mobileDoudizhuMode = false;
-        } else {
-          mobileDoudizhuMode = requestedDemo === 'doudizhu' && isLikelyMobileDevice();
-        }
-        if (mobileDoudizhuMode && !requestedDemo) {
-          upsertArgValue(bootArgs, '--demo', 'doudizhu');
-          requestedDemo = 'doudizhu';
-        }
-        applyMobileDoudizhuMode(mobileDoudizhuMode);
         var bitmapFontSizes = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 25, 26, 29, 31, 35];
         var bitmapFontAssetsBySize = Object.create(null);
         for (var bitmapFontIndex = 0; bitmapFontIndex < bitmapFontSizes.length; bitmapFontIndex += 1) {
@@ -806,7 +488,6 @@
         }
         var fitWindow = resolveBoolFlag(bootArgs, '--fit-window', '--fixed-window', true);
         var persistData = resolveBoolFlag(bootArgs, '--persist-data', '--no-persist-data', false);
-        var webOpenAiConfig = resolveWebOpenAiConfig();
         var outputElement = null;
         var statusElement = null;
         var loadingElement = null;
@@ -959,13 +640,7 @@
           uyaGuiAutoDownload: true,
           uyaGuiCanvasId: defaultCanvasId,
           uyaGuiFitWindow: fitWindow,
-          uyaGuiMobileDoudizhuMode: mobileDoudizhuMode,
           uyaGuiPersistData: persistData,
-          uyaGuiOpenAiConfig: webOpenAiConfig,
-          uyaGuiOpenAiRequests: {
-            nextHandle: 1,
-            byHandle: Object.create(null)
-          },
           uyaGuiFontAsset: resolveAssetUrl(defaultFontAsset),
           uyaGuiBitmapFontAssetsBySize: bitmapFontAssetsBySize,
           uyaGuiBitmapFontStates: Object.create(null),
@@ -974,7 +649,6 @@
           uyaGuiCompleted: false,
           uyaGuiCompletion: null,
           uyaGuiHasPresented: false,
-          uyaGuiMobileControlsBound: false,
           uyaGuiViewControlsBound: false,
           uyaGuiFullscreenAutoAttempted: false,
           uyaGuiRunDependencyMax: 0,
@@ -1043,166 +717,6 @@
           return 0;
         };
 
-        Module.uyaGuiOpenAiBuildUrl = function() {
-          var config = Module.uyaGuiOpenAiConfig;
-          if (!config || !config.enabled || !config.baseUrl) {
-            return '';
-          }
-          try {
-            return new URL(config.apiPath || '/ddz/decision', config.baseUrl).toString();
-          } catch (err) {
-            try {
-              return new URL(config.apiPath || '/ddz/decision', config.baseUrl + '/').toString();
-            } catch (err2) {
-              return '';
-            }
-          }
-        };
-
-        Module.uyaGuiOpenAiIsAvailable = function() {
-          var config = Module.uyaGuiOpenAiConfig;
-          return !!(config && config.enabled && config.baseUrl && Module.uyaGuiOpenAiBuildUrl());
-        };
-
-        Module.uyaGuiOpenAiModelName = function() {
-          var config = Module.uyaGuiOpenAiConfig;
-          if (!config || !config.model) {
-            return 'gpt-5.4-mini';
-          }
-          return config.model;
-        };
-
-        Module.uyaGuiOpenAiStartRequest = function(requestPtr, requestLen) {
-          if (!Module.uyaGuiOpenAiIsAvailable()) {
-            return -2;
-          }
-          if (!requestPtr || requestLen <= 0 || typeof UTF8ToString !== 'function' || typeof fetch !== 'function') {
-            return -1;
-          }
-          var body = UTF8ToString(requestPtr, requestLen);
-          if (!body) {
-            return -1;
-          }
-          var url = Module.uyaGuiOpenAiBuildUrl();
-          if (!url) {
-            return -2;
-          }
-          var config = Module.uyaGuiOpenAiConfig;
-          var handle = Module.uyaGuiOpenAiRequests.nextHandle++;
-          var state = {
-            handle: handle,
-            status: 1,
-            httpStatus: 0,
-            resultText: '',
-            errorText: '',
-            done: false,
-            controller: typeof AbortController !== 'undefined' ? new AbortController() : null
-          };
-          Module.uyaGuiOpenAiRequests.byHandle[handle] = state;
-
-          var headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          };
-          if (config.apiKey) {
-            headers.Authorization = 'Bearer ' + config.apiKey;
-          }
-
-          fetch(url, {
-            method: 'POST',
-            headers: headers,
-            body: body,
-            cache: 'no-store',
-            credentials: 'omit',
-            signal: state.controller ? state.controller.signal : undefined
-          }).then(function(response) {
-            state.httpStatus = response.status | 0;
-            return response.text().then(function(text) {
-              if (state.status === -5) {
-                return;
-              }
-              if (!response.ok) {
-                state.errorText = text || ('HTTP ' + response.status);
-                state.status = -7;
-                return;
-              }
-              if (!text) {
-                state.status = -10;
-                return;
-              }
-              state.resultText = text;
-              state.status = 0;
-            });
-          }).catch(function(err) {
-            if (state.status === -5) {
-              return;
-            }
-            state.errorText = err && err.message ? err.message : String(err);
-            state.status = -6;
-          }).finally(function() {
-            state.done = true;
-          });
-
-          return handle;
-        };
-
-        Module.uyaGuiOpenAiPollRequest = function(handle, outBodyPtr, outCap, outLenPtr) {
-          if (outLenPtr) {
-            Module.HEAP32[outLenPtr >> 2] = 0;
-          }
-          var state = Module.uyaGuiOpenAiRequests.byHandle[handle | 0];
-          if (!state) {
-            return -4;
-          }
-          if (state.status === 1) {
-            return 1;
-          }
-          if (state.status === 0) {
-            var text = state.resultText || '';
-            var needed = typeof lengthBytesUTF8 === 'function' ? lengthBytesUTF8(text) : text.length;
-            if (needed + 1 > outCap) {
-              delete Module.uyaGuiOpenAiRequests.byHandle[handle | 0];
-              return -8;
-            }
-            if (typeof stringToUTF8 === 'function') {
-              stringToUTF8(text, outBodyPtr, outCap);
-            }
-            if (outLenPtr) {
-              Module.HEAP32[outLenPtr >> 2] = needed;
-            }
-            delete Module.uyaGuiOpenAiRequests.byHandle[handle | 0];
-            return 0;
-          }
-          var result = state.status | 0;
-          delete Module.uyaGuiOpenAiRequests.byHandle[handle | 0];
-          return result;
-        };
-
-        Module.uyaGuiOpenAiCancelRequest = function(handle) {
-          var state = Module.uyaGuiOpenAiRequests.byHandle[handle | 0];
-          if (!state) {
-            return;
-          }
-          state.status = -5;
-          state.done = true;
-          if (state.controller) {
-            try {
-              state.controller.abort();
-            } catch (err) {
-            }
-          }
-        };
-
-        if (Module.uyaGuiOpenAiIsAvailable()) {
-          setTimeout(function() {
-            Module.print('[web] Dou Dizhu online bridge enabled:', Module.uyaGuiOpenAiBuildUrl());
-          }, 0);
-        } else {
-          setTimeout(function() {
-            Module.print('[web] Dou Dizhu online bridge disabled: deploy the Cloudflare Worker and set openai_base_url in query or localStorage to enable web AI.');
-          }, 0);
-        }
-
         Module.uyaGuiIsFullscreen = function() {
           if (typeof document === 'undefined') {
             return false;
@@ -1225,16 +739,6 @@
             return false;
           }
           return viewportWidth >= screenWidth - 2 && viewportHeight >= screenHeight - 2;
-        };
-
-        Module.uyaGuiTryLockLandscape = function() {
-          if (!Module.uyaGuiMobileDoudizhuMode || typeof screen === 'undefined' || !screen.orientation || !screen.orientation.lock) {
-            return;
-          }
-          try {
-            screen.orientation.lock('landscape').catch(function() {});
-          } catch (err) {
-          }
         };
 
         Module.uyaGuiGetRotationQuarterTurns = function() {
@@ -1301,22 +805,6 @@
             return;
           }
           document.body.classList.toggle('uya-gui-fullscreen-active', Module.uyaGuiIsFullscreenLike());
-        };
-
-        Module.uyaGuiUpdateMobileViewportState = function() {
-          if (typeof document !== 'undefined' && document.body) {
-            Module.uyaGuiUpdateFullscreenUi();
-          }
-          if (!Module.uyaGuiMobileDoudizhuMode || typeof document === 'undefined' || !document.body) {
-            return;
-          }
-          var fullscreenButton = document.getElementById('uya-gui-mobile-fullscreen');
-          if (fullscreenButton) {
-            fullscreenButton.textContent = '进入全屏';
-          }
-          if (typeof window !== 'undefined') {
-            window.scrollTo(0, 0);
-          }
         };
 
         Module.uyaGuiRequestBitmapFont = function(pixelHeight) {
@@ -1621,8 +1109,7 @@
             document.title = title;
           }
           Module.uyaGuiUpdateCanvasCss();
-          Module.uyaGuiUpdateMobileViewportState();
-          Module.uyaGuiBindMobileControls();
+          Module.uyaGuiUpdateFullscreenUi();
           Module.uyaGuiBindViewControls();
           if (canvas.__uyaGuiBound) {
             return 1;
@@ -2354,27 +1841,27 @@
                 feed(7, 0, 0, 0, 0, 0);
               } else {
                 Module.uyaGuiUpdateCanvasCss();
-                Module.uyaGuiUpdateMobileViewportState();
+                Module.uyaGuiUpdateFullscreenUi();
                 feed(8, 0, 0, 0, 0, 0);
               }
             });
             window.addEventListener('resize', function() {
               Module.uyaGuiUpdateCanvasCss();
-              Module.uyaGuiUpdateMobileViewportState();
+              Module.uyaGuiUpdateFullscreenUi();
               feed(8, 0, 0, 0, 0, 0);
             });
             window.addEventListener('orientationchange', function() {
               setTimeout(function() {
                 Module.uyaGuiUpdateCanvasCss();
-                Module.uyaGuiUpdateMobileViewportState();
+                Module.uyaGuiUpdateFullscreenUi();
                 feed(8, 0, 0, 0, 0, 0);
               }, 40);
             });
             document.addEventListener('fullscreenchange', function() {
               Module.uyaGuiUpdateCanvasCss();
-              Module.uyaGuiUpdateMobileViewportState();
+              Module.uyaGuiUpdateFullscreenUi();
               if (Module.uyaGuiIsFullscreen()) {
-                Module.uyaGuiTryLockLandscape();
+                Module.uyaGuiUpdateFullscreenUi();
               }
             });
             Module.uyaGuiWindowBound = true;
@@ -2473,43 +1960,6 @@
           }
         };
 
-        Module.uyaGuiBindMobileControls = function() {
-          if (!Module.uyaGuiMobileDoudizhuMode || Module.uyaGuiMobileControlsBound || typeof document === 'undefined') {
-            return;
-          }
-          var root = document.getElementById('uya-gui-root');
-          var fullscreenButton = document.getElementById('uya-gui-mobile-fullscreen');
-
-          function requestMobileFullscreen() {
-            if (!Module.uyaGuiIsFullscreen()) {
-              Module.uyaGuiRequestFullscreen();
-            }
-          }
-
-          function maybeAutoFullscreen() {
-            if (Module.uyaGuiFullscreenAutoAttempted || typeof window === 'undefined') {
-              return;
-            }
-            if (window.innerHeight > window.innerWidth) {
-              return;
-            }
-            Module.uyaGuiFullscreenAutoAttempted = true;
-            requestMobileFullscreen();
-          }
-
-          if (fullscreenButton) {
-            fullscreenButton.addEventListener('click', function(evt) {
-              requestMobileFullscreen();
-              evt.preventDefault();
-            });
-          }
-          if (root) {
-            root.addEventListener('pointerdown', maybeAutoFullscreen, true);
-            root.addEventListener('touchstart', maybeAutoFullscreen, { capture: true, passive: true });
-          }
-          Module.uyaGuiMobileControlsBound = true;
-        };
-
         Module.uyaGuiBindViewControls = function() {
           if (Module.uyaGuiViewControlsBound || typeof document === 'undefined') {
             return;
@@ -2538,12 +1988,10 @@
             var result = request.call(target);
             if (result && typeof result.then === 'function') {
               result.then(function() {
-                Module.uyaGuiTryLockLandscape();
-                Module.uyaGuiUpdateMobileViewportState();
+                Module.uyaGuiUpdateFullscreenUi();
               }).catch(function() {});
             } else {
-              Module.uyaGuiTryLockLandscape();
-              Module.uyaGuiUpdateMobileViewportState();
+              Module.uyaGuiUpdateFullscreenUi();
             }
           } catch (err) {
             return 0;
@@ -2659,9 +2107,6 @@
             </div>
           </div>
         </div>
-      </div>
-      <div id="uya-gui-mobile-hud" aria-live="polite">
-        <button id="uya-gui-mobile-fullscreen" class="uya-gui-view-button" type="button">进入全屏</button>
       </div>
     </div>
     <pre id="uya-gui-log"></pre>

@@ -34,15 +34,6 @@ use examples.demo_custom.custom_retained_new;
 use examples.demo_custom.custom_retained_sync;
 use examples.demo_custom.render_demo_custom_retained_state;
 use examples.demo_custom.render_demo_custom_state;
-use examples.demo_doudizhu.DdzPageRetained;
-use examples.demo_doudizhu.doudizhu_page_retained_handle_touch;
-use examples.demo_doudizhu.doudizhu_page_retained_init;
-use examples.demo_doudizhu.doudizhu_page_retained_next_wake_delay_ms;
-use examples.demo_doudizhu.doudizhu_page_retained_new;
-use examples.demo_doudizhu.doudizhu_page_retained_toggle_autoplay;
-use examples.demo_doudizhu.doudizhu_page_retained_update;
-use examples.demo_doudizhu.render_demo_doudizhu_retained_state;
-use examples.demo_doudizhu.run_demo_doudizhu;
 use examples.demo_dashboard.DashboardRetained;
 use examples.demo_dashboard.dashboard_retained_init;
 use examples.demo_dashboard.dashboard_retained_new;
@@ -221,7 +212,7 @@ const DASHBOARD_BUTTON_Y: i16 = 110;
 const DASHBOARD_BUTTON_W: i16 = 128;
 const DASHBOARD_BUTTON_H: i16 = 56;
 const DASHBOARD_BUTTON_STEP_Y: i16 = 66;
-const HOME_NAV_BUTTON_COUNT: i32 = 12;
+const HOME_NAV_BUTTON_COUNT: i32 = 11;
 const HOME_NAV_BUTTON_COLS: i32 = 4;
 const HOME_NAV_BUTTON_ROWS: i32 = 3;
 const HOME_NAV_BUTTON_GAP: i32 = 8;
@@ -258,7 +249,6 @@ export struct SimApp {
     richtext_demo: RichTextRetained,
     game_page: GamePageRetained,
     novel_page: NovelPageRetained,
-    doudizhu_page: DdzPageRetained,
     title_text: [byte: 160],
     phase_text: [byte: 160],
     status_text: [byte: 160],
@@ -645,7 +635,7 @@ SimApp {
         if index == 10 {
             return SimDemoKind.RichText;
         }
-        return SimDemoKind.Doudizhu;
+        return SimDemoKind.RichText;
     }
 
     fn home_nav_button_label(self: &Self, index: i32) &const byte {
@@ -683,7 +673,7 @@ SimApp {
         if index == 10 {
             return "富文本";
         }
-        return "斗地主";
+        return "富文本";
     }
 
     fn home_nav_status_text(self: &Self, demo: SimDemoKind) &const byte {
@@ -698,8 +688,8 @@ SimApp {
             return "已切到设置 demo";
         }
         if demo == SimDemoKind.Dashboard {
-        return "已切到看板 demo";
-    }
+            return "已切到看板 demo";
+        }
         if demo == SimDemoKind.Game {
             return "已切到 2048 demo";
         }
@@ -717,9 +707,6 @@ SimApp {
         }
         if demo == SimDemoKind.RichText {
             return "已切到富文本 demo";
-        }
-        if demo == SimDemoKind.Doudizhu {
-            return "已切到斗地主 demo";
         }
         return "已切到自定义控件 demo";
     }
@@ -904,7 +891,7 @@ SimApp {
         _ = sim_copy_cstr(
             &self.help_text[0],
             SIM_TEXT_CAPACITY as usize,
-            "Esc退出 | P截图 | R录制 | L回放 | 点输入框键入单行文本 | Z斗地主 | T托管"
+            "Esc退出 | P截图 | R录制 | L回放 | 点输入框键入单行文本"
         );
         self.help_label.set_text(&self.help_text[0]);
     }
@@ -1062,9 +1049,6 @@ SimApp {
         if self.config.demo == SimDemoKind.Game {
             return &self.game_page.tree;
         }
-        if self.config.demo == SimDemoKind.Doudizhu {
-            return &self.doudizhu_page.tree;
-        }
         if self.config.demo == SimDemoKind.Novel {
             return &self.novel_page.tree;
         }
@@ -1116,10 +1100,6 @@ SimApp {
         }
         if self.config.demo == SimDemoKind.Game {
             game_page_retained_sync(&self.game_page, &self.game_demo);
-            return;
-        }
-        if self.config.demo == SimDemoKind.Doudizhu {
-            doudizhu_page_retained_init(&self.doudizhu_page);
             return;
         }
         if self.config.demo == SimDemoKind.Novel {
@@ -1181,10 +1161,6 @@ SimApp {
         }
         if self.config.demo == SimDemoKind.Game {
             render_demo_game_retained_state(&self.game_page, &self.game_demo, ctx, origin_x, origin_y);
-            return;
-        }
-        if self.config.demo == SimDemoKind.Doudizhu {
-            render_demo_doudizhu_retained_state(&self.doudizhu_page, ctx, origin_x, origin_y);
             return;
         }
         if self.config.demo == SimDemoKind.Perf {
@@ -1252,7 +1228,6 @@ SimApp {
         self.dashboard_metric = 0;
         game_retained_reset(&self.game_demo);
         novel_retained_reset_state(&self.novel_demo);
-        self.doudizhu_page = doudizhu_page_retained_new();
         self.standalone_drag_target = STANDALONE_DRAG_NONE;
         self.standalone_anim_tick_ms = 0u32;
     }
@@ -1658,10 +1633,6 @@ SimApp {
         game_retained_handle_touch(&self.game_demo, evt, local);
     }
 
-    fn handle_doudizhu_demo_touch(self: &Self, evt: &Event, local: Point) void {
-        doudizhu_page_retained_handle_touch(&self.doudizhu_page, evt, local);
-    }
-
     fn handle_home_nav_click(self: &Self, point: Point) bool {
         if !sim_demo_is_phase(self.config.demo) {
             return false;
@@ -1723,10 +1694,6 @@ SimApp {
         }
         if self.config.demo == SimDemoKind.Game {
             self.handle_game_demo_touch(evt, local);
-            return;
-        }
-        if self.config.demo == SimDemoKind.Doudizhu {
-            self.handle_doudizhu_demo_touch(evt, local);
             return;
         }
         if self.config.demo == SimDemoKind.Novel {
@@ -1842,9 +1809,6 @@ SimApp {
         if self.config.demo == SimDemoKind.Novel {
             novel_retained_update(&self.novel_demo, now_ms);
         }
-        if self.config.demo == SimDemoKind.Doudizhu {
-            doudizhu_page_retained_update(&self.doudizhu_page, now_ms);
-        }
         if sim_demo_is_phase(self.config.demo) && self.toggle.checked && (self.last_chart_tick_ms == 0u32 || now_ms - self.last_chart_tick_ms >= 140u32) {
             self.last_chart_tick_ms = now_ms;
             if self.chart.point_count >= 60u16 {
@@ -1888,9 +1852,6 @@ SimApp {
         if self.config.demo == SimDemoKind.Novel && self.novel_demo.auto_scroll {
             next_delay = sim_min_positive_delay(next_delay, sim_next_due_delay(now_ms, self.novel_demo.last_auto_tick_ms, 48u32));
         }
-        if self.config.demo == SimDemoKind.Doudizhu {
-            next_delay = sim_min_positive_delay(next_delay, doudizhu_page_retained_next_wake_delay_ms(&self.doudizhu_page, now_ms));
-        }
         next_delay = sim_min_positive_delay(next_delay, self.recorder.next_due_in(now_ms));
         return next_delay;
     }
@@ -1919,7 +1880,6 @@ SimApp {
             || self.config.demo == SimDemoKind.Settings
             || self.config.demo == SimDemoKind.Dashboard
             || self.config.demo == SimDemoKind.Game
-            || self.config.demo == SimDemoKind.Doudizhu
             || self.config.demo == SimDemoKind.Novel
             || self.config.demo == SimDemoKind.Perf
             || self.config.demo == SimDemoKind.Widgets
@@ -2288,12 +2248,6 @@ SimApp {
                 } else {
                     self.refresh_status_label("没有可用回放");
                 }
-            } else if (key_code == 't' as u16 || key_code == 'T' as u16) && self.config.demo == SimDemoKind.Doudizhu {
-                if doudizhu_page_retained_toggle_autoplay(&self.doudizhu_page) {
-                    self.refresh_status_label("斗地主托管已开启");
-                } else {
-                    self.refresh_status_label("斗地主托管已关闭");
-                }
             } else if key_code == '1' as u16 {
                 self.switch_demo(SimDemoKind.Phase4, "已切到阶段4");
             } else if key_code == '6' as u16 {
@@ -2320,8 +2274,6 @@ SimApp {
                 self.switch_demo(SimDemoKind.Widgets, "已切到控件总览 demo");
             } else if key_code == 'k' as u16 || key_code == 'K' as u16 {
                 self.switch_demo(SimDemoKind.Custom, "已切到自定义控件 demo");
-            } else if key_code == 'z' as u16 || key_code == 'Z' as u16 {
-                self.switch_demo(SimDemoKind.Doudizhu, "已切到斗地主 demo");
             }
         }
         self.refresh_input_label();
@@ -2482,7 +2434,6 @@ fn sim_app_init_defaults(app: &SimApp) void {
     app.richtext_demo = richtext_retained_new();
     app.game_page = game_page_retained_new();
     app.novel_page = novel_page_retained_new();
-    app.doudizhu_page = doudizhu_page_retained_new();
     app.preview_source = empty_image();
     app.preview_cached = empty_image();
     app.cache = image_cache_new(4, 4096u32);

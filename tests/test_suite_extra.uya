@@ -1,6 +1,4 @@
 use tests.test_dirty_region;
-use tests.test_doudizhu_ai;
-use tests.test_doudizhu_rules;
 use tests.test_widgets;
 use tests.test_web_backend;
 use tests.test_web_config;
@@ -8,8 +6,6 @@ use tests.test_style;
 
 test "phase4 extra suite loads" {
     const sentinel: i32 = TEST_DIRTY_REGION_MODULE
-        + TEST_DOUDIZHU_AI_MODULE
-        + TEST_DOUDIZHU_RULES_MODULE
         + TEST_WIDGET_MODULE
         + TEST_WEB_BACKEND_MODULE
         + TEST_WEB_CONFIG_MODULE

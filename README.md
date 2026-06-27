@@ -60,7 +60,6 @@ make dashboard-compare-report
 make docs-api
 make sim-web-build
 make sim-web-pages
-make ddz-openai-proxy-deploy-dev
 make release
 ```
 
@@ -75,9 +74,8 @@ make release
 - `make dashboard-compare-report`：生成 `build/dashboard_compare/dashboard_compare_report.{md,json}`
 - `make docs-api`：生成 API 索引文档 `docs/gui_uya_api_reference.md`
 - `make sim-web-build`：构建 Web 模拟器产物到 `build/web/`
-- `make sim-web-serve`：默认会先 `wrangler deploy` 到 Cloudflare `dev` Worker，再构建并启动本地静态服务
+- `make sim-web-serve`：构建 Web 产物并启动本地静态服务
 - `make sim-web-pages`：整理 GitHub Pages 可直接发布的站点文件到 `build/pages/`
-- `make ddz-openai-proxy-deploy-dev`：把斗地主 OpenAI Cloudflare Worker 发布到开发环境
 - `make release`：执行 `ci` 后打包发布产物到 `build/release/uyagui-<version>.tar.gz`，并生成 `.sha256` 校验文件
 
 ### 3. 启用仓库 hooks
@@ -127,104 +125,6 @@ make lvgl-dashboard-compare
 make dashboard-compare
 make dashboard-compare-report
 ```
-
-斗地主 OpenAI demo 也支持配置文件。运行时会按这个顺序取值：
-
-- 显式环境变量
-- `UYA_OPENAI_CONFIG_FILE` 指向的文件
-- 当前工作目录下的 `.uya_openai.env`
-- 当前工作目录下的 `openai.env`
-
-配置文件格式是简单的 `KEY=VALUE`，支持这些键：
-
-- `UYA_DDZ_USE_OPENAI`
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL`
-- `OPENAI_BASE_URL`
-- `OPENAI_API_PATH`
-
-当前推荐把 `OPENAI_BASE_URL` 指向你自己的 Cloudflare Worker 根地址，
-再把 `OPENAI_API_PATH` 设成斗地主专用接口 `/ddz/decision`。
-游戏侧发的是斗地主业务 JSON，Worker 再在服务端拼接上游 OpenAI chat 请求。
-
-如果你希望本地开发和线上环境都统一走 Cloudflare 接口层，推荐直接用仓库自带的 Wrangler 发布流：
-
-```bash
-cp .uya_openai.env.example .uya_openai.env
-
-# 先把 Worker secrets 写到 Cloudflare 的 dev 环境
-make ddz-openai-proxy-secrets-dev
-
-# 再把 dev Worker 部署上去
-make ddz-openai-proxy-deploy-dev
-```
-
-`make ddz-openai-proxy-deploy-dev` 完成后，Wrangler 会打印一个 dev Worker URL。
-脚本也会自动把这个 URL 回写到 `.uya_openai.env` 里的 `OPENAI_BASE_URL`，
-所以后续本地模拟器和 `make sim-web-build` 默认都会直接连到同一个 Worker，
-状态会直接显示在线。仍然保持 `OPENAI_API_PATH=/ddz/decision`。
-
-约定说明：
-
-- `UPSTREAM_OPENAI_API_KEY`：Worker 端真正访问上游模型时使用的密钥
-- `CLIENT_BEARER_TOKEN`：可选，Worker 对客户端额外要求的 Bearer token
-- `OPENAI_API_KEY`：客户端发给 Worker 的 Bearer token；如果 Worker 没开启 `CLIENT_BEARER_TOKEN`，这里可以留空
-
-Web / GitHub Pages 版本不会在浏览器运行时直接读取 `.uya_openai.env`。不过
-`make sim-web-build` 现在会把当前 `.uya_openai.env` / `openai.env` 里的
-`OPENAI_BASE_URL`、`OPENAI_API_PATH`、`OPENAI_API_KEY`、`OPENAI_MODEL`
-写进 `build/web/openai_config.js`，所以本地和云上发布的 Web 产物默认也会连到同一个
-Cloudflare Worker。浏览器侧仍然支持用 URL query 或 `localStorage` 覆盖，常用参数是：
-
-- `openai_base_url`
-- `openai_api_path`
-- `openai_api_key`
-- `openai_model`
-- `openai_save=1`
-
-例如首次在 GitHub Pages 上启用网页版 AI：
-
-```text
-https://uya-lang.github.io/gui-uya/?demo=doudizhu&openai_base_url=https%3A%2F%2Fpurple-hat-afd8.funnywwh-1fe.workers.dev%2F&openai_api_path=%2Fddz%2Fdecision&openai_save=1
-```
-
-访问一次后，浏览器会把这组配置保存到 `localStorage`，后续直接打开
-`https://uya-lang.github.io/gui-uya/` 也会保持在线。
-
-示例：
-
-```bash
-cp .uya_openai.env.example .uya_openai.env
-make sim-run SIM_ARGS="--demo doudizhu --scale 1"
-```
-
-或者：
-
-```bash
-UYA_OPENAI_CONFIG_FILE=/path/to/openai.env \
-make sim-run SIM_ARGS="--demo doudizhu --scale 1"
-```
-
-如需排查 OpenAI 请求慢、超时或响应格式问题，可以打开宿主调试日志：
-
-```bash
-UYA_OPENAI_DEBUG=1 \
-make sim-run SIM_ARGS="--demo doudizhu --scale 1"
-```
-
-如需在斗地主 demo 里直接把左右电脑位的真实手牌显示出来，便于调试出牌逻辑，可以额外打开：
-
-```bash
-UYA_DDZ_DEBUG_SHOW_HANDS=1 \
-make sim-run SIM_ARGS="--demo doudizhu --scale 1"
-```
-
-日志会输出到标准错误，包含这些关键信息：
-
-- 配置来源（环境变量 / `.uya_openai.env` / 自定义文件）
-- 请求开始时的 `base_url`、请求体长度和请求摘要
-- 请求结束时的耗时、`curl` 结果、HTTP 状态码、响应体摘要
-- 解析出的 assistant 内容摘要
 
 `make dashboard-compare` 会生成 `build/dashboard_compare/uya_dashboard.bmp`、
 `build/dashboard_compare/lvgl_dashboard.bmp`，并分别输出 UyaGUI / LVGL 在同一 `640x480`
@@ -291,7 +191,7 @@ make sim-web-pages
 ```
 
 - `make sim-web-build` 会生成 `build/web/index.html`、`index.js`、`index.wasm`、`index.data`，以及独立的 `build/web/gui/render/generated/wqy_microhei_demo_*.{fnt,a8}` 外部字体资源
-- `make sim-web-run` / `make sim-web-serve` 默认会先把 dev Cloudflare Worker 部署一次，再生成带 `openai_config.js` 的 Web 产物并启动本地静态服务器
+- `make sim-web-run` / `make sim-web-serve` 会生成 Web 产物并启动本地静态服务器
 - `make sim-web-pages` 会把 GitHub Pages 需要的公开文件整理到 `build/pages/`，并写入 `.nojekyll`
 - 仓库内置 `.github/workflows/sim-web-pages.yml`，推送到 `main` 后会自动构建并部署 Pages
 - 页面支持用查询参数直接切换 demo，例如 `index.html?demo=dashboard`、`index.html?demo=music&debug=1`
@@ -299,7 +199,6 @@ make sim-web-pages
 - Web 运行时不再 preload 整个 `gui/` 目录；`index.data` 仅保留最小运行时子集，WQY demo 位图字体会作为独立静态资源在启动前注入到 `/app/gui/render/generated/`
 - 如需兼容旧版 Android WebView / 内置浏览器，可在构建前附加 `WEB_LEGACY_VM_SUPPORT=1`
 - 如需改成别的字体，可在构建前覆盖 `WEB_CJK_FONT_SRC=/path/to/font.ttf`
-- 如需临时跳过默认的 Cloudflare dev deploy，可加 `SIM_WEB_AUTO_DEPLOY_OPENAI=0`
 
 ## 交叉编译入口
 

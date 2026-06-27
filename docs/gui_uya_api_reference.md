@@ -147,20 +147,6 @@
 - L241: `export fn run_demo_dashboard() i32 {`
   说明: 运行 `dashboard` demo 并返回退出码。
 
-## `examples/demo_doudizhu.uya`
-
-- L81: `export struct DdzPageRetained {`
-- L1103: `export fn doudizhu_page_retained_new() DdzPageRetained {`
-- L1132: `export fn doudizhu_page_retained_init(page: &DdzPageRetained) void {`
-- L1143: `export fn doudizhu_page_retained_update(page: &DdzPageRetained, now_ms: u32) void {`
-- L1233: `export fn doudizhu_page_retained_autoplay_step(page: &DdzPageRetained, now_ms: u32) bool {`
-- L1265: `export fn doudizhu_page_retained_toggle_autoplay(page: &DdzPageRetained) bool {`
-- L1279: `export fn doudizhu_page_retained_next_wake_delay_ms(page: &DdzPageRetained, now_ms: u32) i32 {`
-- L1291: `export fn doudizhu_page_retained_handle_touch(page: &DdzPageRetained, evt: &Event, local: Point) void {`
-- L1350: `export fn render_demo_doudizhu_retained_state(page: &DdzPageRetained, ctx: &RenderCtx, origin_x: i16, origin_y: i16) void {`
-- L1359: `export fn run_demo_doudizhu() i32 {`
-- L1378: `export fn run_demo_doudizhu_full_round() i32 {`
-
 ## `examples/demo_game.uya`
 
 - L60: `export enum GameMoveDir {`
@@ -306,67 +292,6 @@
   说明: 将 `widgets` demo 渲染到指定上下文。
 - L551: `export fn run_demo_widgets() i32 {`
   说明: 运行 `widgets` demo 并返回退出码。
-
-## `examples/doudizhu/ai.uya`
-
-- L33: `export const DDZ_PROMPT_BYTES: i32 = 32768;`
-- L34: `export const DDZ_OPENAI_RESPONSE_BYTES: i32 = 1024;`
-- L36: `export enum DdzAiSource {`
-- L42: `export enum DdzAiStatus {`
-- L50: `export struct DdzAiDecision {`
-- L57: `export struct DdzAiState {`
-- L142: `export fn ddz_ai_state_new() DdzAiState {`
-- L155: `export fn ddz_ai_cancel_pending(state: &DdzAiState) void {`
-- L170: `export fn ddz_ai_bid_score(hand: &DdzHand) i32 {`
-- L327: `export fn ddz_ai_action_id_valid(legal: &DdzActionList, action_index: i32) bool {`
-- L479: `export fn ddz_ai_choose_action(state: &DdzAiState, game: &DdzGameState, player: i32) DdzAiDecision {`
-- L1261: `export fn ddz_ai_step_action(state: &DdzAiState, game: &DdzGameState, player: i32) DdzAiDecision {`
-
-## `examples/doudizhu/rules.uya`
-
-- L3: `export const DDZ_PLAYER_COUNT: i32 = 3;`
-- L4: `export const DDZ_DECK_COUNT: i32 = 54;`
-- L5: `export const DDZ_BOTTOM_COUNT: i32 = 3;`
-- L6: `export const DDZ_INITIAL_HAND_COUNT: i32 = 17;`
-- L7: `export const DDZ_MAX_CARDS_PER_HAND: i32 = 20;`
-- L8: `export const DDZ_RANK_COUNT: i32 = 15;`
-- L9: `export const DDZ_MAX_COMBO_CARDS: i32 = 20;`
-- L10: `export const DDZ_MAX_ACTIONS: i32 = 128;`
-- L11: `export const DDZ_MAX_HISTORY: i32 = 256;`
-- L12: `export const DDZ_ACTION_LABEL_BYTES: i32 = 48;`
-- L13: `export const DDZ_NO_PLAYER: i32 = -1;`
-- L14: `export const DDZ_RANK_2: i32 = 12;`
-- L15: `export const DDZ_RANK_BJ: i32 = 13;`
-- L16: `export const DDZ_RANK_RJ: i32 = 14;`
-- L18: `export enum DdzComboKind {`
-- L32: `export enum DdzActionKind {`
-- L37: `export enum DdzGamePhase {`
-- L43: `export struct DdzCard {`
-- L49: `export struct DdzHand {`
-- L55: `export struct DdzCombo {`
-- L65: `export struct DdzAction {`
-- L74: `export struct DdzActionList {`
-- L80: `export struct DdzHistoryEntry {`
-- L94: `export struct DdzGameState {`
-- L128: `export fn ddz_rank_name(rank: i32) &const byte {`
-- L189: `export fn ddz_combo_invalid() DdzCombo {`
-- L310: `export fn ddz_action_list_new() DdzActionList {`
-- L331: `export fn ddz_history_entry_new() DdzHistoryEntry {`
-- L400: `export fn ddz_hand_sort(hand: &DdzHand) void {`
-- L429: `export fn ddz_hand_recount(hand: &DdzHand) void {`
-- L504: `export fn ddz_action_label_format(action: &DdzAction) void {`
-- L627: `export fn ddz_deck_init(game: &DdzGameState) bool {`
-- L661: `export fn ddz_deck_shuffle(game: &DdzGameState, seed: u32) bool {`
-- L690: `export fn ddz_game_deal(game: &DdzGameState) bool {`
-- L721: `export fn ddz_combo_detect(card_ranks: &i32, count: i32) DdzCombo {`
-- L883: `export fn ddz_combo_can_beat(candidate: DdzCombo, target: DdzCombo) bool {`
-- L1200: `export fn ddz_generate_bid_actions(game: &DdzGameState, player: i32, out_list: &DdzActionList) bool {`
-- L1215: `export fn ddz_generate_play_actions(game: &DdzGameState, player: i32, out_list: &DdzActionList) bool {`
-- L1292: `export fn ddz_game_apply_bid(game: &DdzGameState, player: i32, bid: i32) bool {`
-- L1369: `export fn ddz_game_apply_action(game: &DdzGameState, player: i32, action: &DdzAction) bool {`
-- L1439: `export fn ddz_game_new() DdzGameState {`
-- L1461: `export fn ddz_game_restart(game: &DdzGameState, seed: u32) bool {`
-- L1482: `export fn ddz_action_validate_in_hand(hand: &DdzHand, action: &DdzAction) bool {`
 
 ## `examples/phase0_smoke.uya`
 
@@ -743,17 +668,6 @@
   说明: 返回不做变换的触摸校准参数。
 - L475: `export fn touch_filter_default() TouchMedianFilter {`
   说明: 返回默认的触摸中值滤波器。
-
-## `src/gui/platform/openai/chat.uya`
-
-- L9: `export enum UyaOpenAiChatStatus {`
-- L24: `export struct UyaOpenAiChatPollResult {`
-- L66: `export fn uya_openai_chat_is_available() bool {`
-- L70: `export fn uya_openai_chat_start_request(request_body: &const byte, request_len: usize) i32 {`
-- L77: `export fn uya_openai_chat_poll_request(handle: i32, out_body: &byte, out_cap: i32) UyaOpenAiChatPollResult {`
-- L89: `export fn uya_openai_chat_cancel_request(handle: i32) void {`
-- L96: `export fn uya_openai_chat_model_name(out_model: &byte, out_cap: i32) bool {`
-- L108: `export fn uya_openai_chat_parse_action_id(text: &const byte, out_action_id: &i32) bool {`
 
 ## `src/gui/platform/sdl2/disp_sdl.uya`
 
@@ -1180,12 +1094,12 @@
 
 ## `src/gui/sim/app.uya`
 
-- L233: `export struct SimApp {`
-- L2516: `export fn sim_app_alloc() &SimApp {`
+- L224: `export struct SimApp {`
+- L2467: `export fn sim_app_alloc() &SimApp {`
   说明: 在堆上创建模拟器应用状态对象，避免大型状态压占调用栈。
-- L2527: `export fn sim_app_free(app: &SimApp) void {`
+- L2478: `export fn sim_app_free(app: &SimApp) void {`
   说明: 释放 `sim_app_alloc` 创建的模拟器应用状态对象。
-- L2534: `export fn sim_app_new() SimApp {`
+- L2485: `export fn sim_app_new() SimApp {`
   说明: 创建模拟器应用状态对象。
 
 ## `src/gui/sim/common.uya`
@@ -1232,27 +1146,27 @@
 ## `src/gui/sim/config.uya`
 
 - L19: `export enum SimDemoKind {`
-- L36: `export enum SimBackendKind {`
-- L42: `export enum SimGpuKind {`
-- L48: `export struct SimConfig {`
-- L77: `export fn sim_demo_name(kind: SimDemoKind) &const byte {`
+- L35: `export enum SimBackendKind {`
+- L41: `export enum SimGpuKind {`
+- L47: `export struct SimConfig {`
+- L76: `export fn sim_demo_name(kind: SimDemoKind) &const byte {`
   说明: 返回指定 demo 的显示名称。
-- L121: `export fn sim_demo_default_width(kind: SimDemoKind) u16 {`
+- L117: `export fn sim_demo_default_width(kind: SimDemoKind) u16 {`
   说明: 返回指定 demo 的默认宽度。
-- L127: `export fn sim_demo_default_height(kind: SimDemoKind) u16 {`
+- L123: `export fn sim_demo_default_height(kind: SimDemoKind) u16 {`
   说明: 返回指定 demo 的默认高度。
-- L133: `export fn sim_demo_is_phase(kind: SimDemoKind) bool {`
+- L129: `export fn sim_demo_is_phase(kind: SimDemoKind) bool {`
   说明: 判断指定 demo 是否属于 phase 首页场景。
-- L138: `export fn sim_backend_name(kind: SimBackendKind) &const byte {`
+- L134: `export fn sim_backend_name(kind: SimBackendKind) &const byte {`
   说明: 返回指定模拟器后端的显示名称。
-- L149: `export fn sim_gpu_name(kind: SimGpuKind) &const byte {`
+- L145: `export fn sim_gpu_name(kind: SimGpuKind) &const byte {`
   说明: 返回指定 GPU 模式的显示名称。
-- L160: `export fn sim_cpu_backend_name(kind: CpuRenderBackendKind) &const byte {`
+- L156: `export fn sim_cpu_backend_name(kind: CpuRenderBackendKind) &const byte {`
   说明: 返回指定 CPU 渲染后端的显示名称。
-- L172: `export fn sim_config_default() SimConfig {`
+- L168: `export fn sim_config_default() SimConfig {`
   说明: 返回默认的模拟器配置。
-- L202: `export fn sim_config_apply_backend_defaults(cfg: &SimConfig) void {`
-- L216: `export fn sim_config_from_runtime() SimConfig {`
+- L198: `export fn sim_config_apply_backend_defaults(cfg: &SimConfig) void {`
+- L212: `export fn sim_config_from_runtime() SimConfig {`
   说明: 从环境变量和命令行参数构建模拟器配置。
 
 ## `src/gui/sim/dashboard_compare.uya`
@@ -1529,14 +1443,6 @@
 
 - L9: `export const TEST_DIRTY_REGION_MODULE: i32 = 1;`
 
-## `tests/test_doudizhu_ai.uya`
-
-- L24: `export const TEST_DOUDIZHU_AI_MODULE: i32 = 1;`
-
-## `tests/test_doudizhu_rules.uya`
-
-- L27: `export const TEST_DOUDIZHU_RULES_MODULE: i32 = 1;`
-
 ## `tests/test_event.uya`
 
 - L27: `export const TEST_EVENT_MODULE: i32 = 1;`
@@ -1571,7 +1477,7 @@
 
 ## `tests/test_phase6_examples.uya`
 
-- L21: `export const TEST_PHASE6_EXAMPLES_MODULE: i32 = 1;`
+- L19: `export const TEST_PHASE6_EXAMPLES_MODULE: i32 = 1;`
 
 ## `tests/test_pool.uya`
 

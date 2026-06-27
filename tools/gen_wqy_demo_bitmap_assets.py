@@ -23,10 +23,7 @@ STRING_RE = re.compile(r'"([^"\\]*(?:\\.[^"\\]*)*)"')
 
 
 def collect_source_files(root: pathlib.Path) -> list[pathlib.Path]:
-    files = sorted(root.glob("demo_*.uya"))
-    ddz_dir = root / "doudizhu"
-    files.extend(sorted(ddz_dir.rglob("*.uya")))
-    return files
+    return sorted(root.glob("demo_*.uya"))
 
 
 def collect_codepoints(root: pathlib.Path) -> list[int]:

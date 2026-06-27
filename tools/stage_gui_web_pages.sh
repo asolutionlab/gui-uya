@@ -53,7 +53,6 @@ declare -a RUNTIME_ASSETS=()
 declare -a RUNTIME_PATTERNS=(
     "index.html"
     "index.js"
-    "openai_config.js"
     "index.wasm"
     "index.data"
     "*.data"
@@ -79,49 +78,5 @@ for asset in "${RUNTIME_ASSETS[@]}"; do
 done
 
 : > "$PAGES_DIR/.nojekyll"
-
-cat > "$PAGES_DIR/doudizhu-mobile.html" <<'EOF'
-<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <title>UyaGUI 斗地主手机版</title>
-    <meta http-equiv="refresh" content="0; url=./?demo=doudizhu&mobile=1">
-    <script>
-      window.location.replace('./?demo=doudizhu&mobile=1');
-    </script>
-    <style>
-      html, body {
-        margin: 0;
-        width: 100%;
-        height: 100%;
-        background: #0b0f16;
-        color: #f4f7fb;
-        font: 16px/1.5 system-ui, sans-serif;
-      }
-
-      body {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        text-align: center;
-        padding: 24px;
-        box-sizing: border-box;
-      }
-
-      a {
-        color: #9ec1ff;
-      }
-    </style>
-  </head>
-  <body>
-    <div>
-      <p>正在打开横屏全屏版斗地主…</p>
-      <p><a href="./?demo=doudizhu&mobile=1">如果没有自动跳转，点这里进入</a></p>
-    </div>
-  </body>
-</html>
-EOF
 
 echo "$PAGES_DIR"

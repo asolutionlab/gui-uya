@@ -5,8 +5,6 @@ use examples.demo_game.game_retained_move;
 use examples.demo_game.game_retained_new;
 use examples.demo_clock.run_demo_clock;
 use examples.demo_custom.run_demo_custom;
-use examples.demo_doudizhu.run_demo_doudizhu;
-use examples.demo_doudizhu.run_demo_doudizhu_full_round;
 use examples.demo_dashboard.run_demo_dashboard;
 use examples.demo_game.run_demo_game;
 use examples.demo_music.run_demo_music;
@@ -31,11 +29,6 @@ test "phase6 demos render successfully" {
     try assert_eq_i32(run_demo_novel(), 0);
     try assert_eq_i32(run_demo_widgets(), 0);
     try assert_eq_i32(run_demo_custom(), 0);
-    try assert_eq_i32(run_demo_doudizhu(), 0);
-}
-
-test "doudizhu demo can autoplay a full offline round" {
-    try assert_eq_i32(run_demo_doudizhu_full_round(), 0);
 }
 
 test "phase6 smoke aggregates all examples" {
