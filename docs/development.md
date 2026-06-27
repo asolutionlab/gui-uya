@@ -39,11 +39,9 @@ Phase 0 adds the following convenience targets:
 
 ```bash
 make build-arm
-make build-riscv
-make build-esp32
 ```
 
-`build-arm` emits C99 for downstream Cortex-M toolchains, while `build-riscv` and `build-esp32` emit microapp artifacts for the currently supported bare-metal profiles.
+`build-arm` emits C99 for downstream Cortex-M toolchains.
 
 ## Phase 6 Docs
 

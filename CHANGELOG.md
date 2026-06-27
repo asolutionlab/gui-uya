@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   canvas-based face rendering.
 - **Release build pipeline** (`Makefile`).
   - `make release` runs full CI then packages cross-platform artifacts:
-    x86_64 simulator, ARM Cortex-M, RISC-V, and ESP32 microapp objects.
+    x86_64 simulator and ARM Cortex-M C99 handoff output.
   - Generates `RELEASE_MANIFEST.txt`, tarball, and SHA-256 checksum.
 - **Public API documentation comments** across the entire `gui/` tree;
   `docs/gui_uya_api_reference.md` is now auto-generated with line-number anchors.

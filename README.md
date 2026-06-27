@@ -206,15 +206,11 @@ make sim-web-pages
 
 ```bash
 make build-arm
-make build-riscv
-make build-esp32
 ```
 
 说明：
 
 - `build-arm`：导出 C99，便于 Cortex-M 侧工具链继续处理
-- `build-riscv`：导出 `rv32_baremetal_softvm` microapp
-- `build-esp32`：导出 `xtensa_baremetal_softvm` microapp
 
 ## 目录结构
 

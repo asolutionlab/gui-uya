@@ -36,7 +36,7 @@ UYA_DASHBOARD_COMPARE_DIR ?= $(BUILD_DIR)/dashboard_compare
 UYA_DASHBOARD_COMPARE_BIN ?= $(UYA_DASHBOARD_COMPARE_DIR)/uya_dashboard_compare
 DASHBOARD_COMPARE_REPORT ?= $(BUILD_DIR)/dashboard_compare/dashboard_compare_report.md
 
-.PHONY: check-uya uya-version stage-uya build test bench bench-report bench-json bench-snapshot bench-verify docs-api ci release release-artifacts clean hooks build-arm build-riscv build-esp32 sim-build sim-run sim-debug sim-headless sim-web-build sim-web-run sim-web-serve sim-web-smoke sim-web-richtext-smoke sim-web-pages text-compare lvgl-text-compare uya-dashboard-compare-build uya-dashboard-compare lvgl-dashboard-compare-build lvgl-dashboard-compare dashboard-compare dashboard-compare-report font-backend-compare demo-font-atlas
+.PHONY: check-uya uya-version stage-uya build test bench bench-report bench-json bench-snapshot bench-verify docs-api ci release release-artifacts clean hooks build-arm sim-build sim-run sim-debug sim-headless sim-web-build sim-web-run sim-web-serve sim-web-smoke sim-web-richtext-smoke sim-web-pages text-compare lvgl-text-compare uya-dashboard-compare-build uya-dashboard-compare lvgl-dashboard-compare-build lvgl-dashboard-compare dashboard-compare dashboard-compare-report font-backend-compare demo-font-atlas
 
 SIM_BUILD_DIR ?= $(BUILD_DIR)/sim
 SIM_BIN ?= $(SIM_BUILD_DIR)/gui_uya_sim
@@ -166,17 +166,13 @@ release: ci release-artifacts
 
 release-artifacts:
 	@rm -rf $(RELEASE_DIR) $(RELEASE_TARBALL) $(RELEASE_TARBALL).sha256
-	@mkdir -p $(RELEASE_DIR)/bin $(RELEASE_DIR)/c99 $(RELEASE_DIR)/microapp $(RELEASE_DIR)/docs
+	@mkdir -p $(RELEASE_DIR)/bin $(RELEASE_DIR)/c99 $(RELEASE_DIR)/docs
 	$(MAKE) build MODE=release BUILD_DIR=$(BUILD_DIR)/release-build
 	$(MAKE) sim-build MODE=release SIM_BUILD_DIR=$(BUILD_DIR)/release-sim
 	$(MAKE) build-arm MODE=release BUILD_DIR=$(BUILD_DIR)/release-build
-	-$(MAKE) build-riscv MODE=release BUILD_DIR=$(BUILD_DIR)/release-build
-	-$(MAKE) build-esp32 MODE=release BUILD_DIR=$(BUILD_DIR)/release-build
 	cp $(BUILD_DIR)/release-build/phase6_smoke $(RELEASE_DIR)/bin/
 	cp $(BUILD_DIR)/release-sim/gui_uya_sim $(RELEASE_DIR)/bin/
 	cp $(BUILD_DIR)/release-build/c99/phase6_smoke_arm.c $(RELEASE_DIR)/c99/
-	@if [ -f $(BUILD_DIR)/release-build/microapp/phase6_smoke_rv32.pobj ]; then cp $(BUILD_DIR)/release-build/microapp/phase6_smoke_rv32.pobj $(RELEASE_DIR)/microapp/; else echo "phase6_smoke_rv32.pobj: not built; phase6 demo imports host APIs not allowed by microapp mode" > $(RELEASE_DIR)/microapp/README.txt; fi
-	@if [ -f $(BUILD_DIR)/release-build/microapp/phase6_smoke_xtensa.pobj ]; then cp $(BUILD_DIR)/release-build/microapp/phase6_smoke_xtensa.pobj $(RELEASE_DIR)/microapp/; else echo "phase6_smoke_xtensa.pobj: not built; phase6 demo imports host APIs not allowed by microapp mode" >> $(RELEASE_DIR)/microapp/README.txt; fi
 	cp README.md uya.toml $(RELEASE_DIR)/
 	cp docs/gui_uya_release_plan.md docs/gui_uya_quickstart.md docs/gui_uya_api_reference.md $(RELEASE_DIR)/docs/
 	@printf 'UyaGUI %s\nBuilt at: %s\nUya compiler: %s\n' '$(RELEASE_VERSION)' "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$($(UYA) --version)" > $(RELEASE_DIR)/RELEASE_MANIFEST.txt
@@ -195,14 +191,6 @@ hooks:
 build-arm: check-uya stage-uya
 	@mkdir -p $(BUILD_DIR)/c99
 	TARGET_ARCH=arm TARGET_OS=none $(UYA) build --c99 $(call stage_path,$(SMOKE_APP)) $(UYA_OPT) -o $(BUILD_DIR)/c99/phase6_smoke_arm.c
-
-build-riscv: check-uya stage-uya
-	@mkdir -p $(BUILD_DIR)/microapp
-	$(UYA) build --app microapp --microapp-profile rv32_baremetal_softvm $(call stage_path,$(SMOKE_APP)) $(UYA_OPT) -o $(BUILD_DIR)/microapp/phase6_smoke_rv32.pobj
-
-build-esp32: check-uya stage-uya
-	@mkdir -p $(BUILD_DIR)/microapp
-	$(UYA) build --app microapp --microapp-profile xtensa_baremetal_softvm $(call stage_path,$(SMOKE_APP)) $(UYA_OPT) -o $(BUILD_DIR)/microapp/phase6_smoke_xtensa.pobj
 
 sim-build: check-uya stage-uya
 	@mkdir -p $(SIM_BUILD_DIR)

@@ -60,7 +60,7 @@
   - [x] 配置 git hooks (pre-commit 格式化)
 - [x] 编写构建脚本
   - [x] `Makefile` - 定义 build/test/bench/clean 目标
-  - [x] 支持目标平台交叉编译 (ARM Cortex-M, ESP32, RISC-V)
+  - [x] 支持 ARM Cortex-M C99 交叉编译交接产物
   - [x] 调试/发布模式配置
 
 #### Day 3-4: 基础类型与工具函数

@@ -23,7 +23,6 @@
 
 - 提供 `phase6_smoke` 宿主可执行产物
 - 提供 `build-arm` 生成的 C99 交接产物
-- 提供 `build-riscv` / `build-esp32` 的 microapp 产物
 
 ## 社区公告草案
 
